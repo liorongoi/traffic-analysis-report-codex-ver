@@ -57,6 +57,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200,library.exports(query['mission'][0]))
                 if parsed.path == '/api/monitoring':
                     return self.reply(200,monitor.status(query['mission'][0]))
+                if parsed.path == '/api/scan-windows':
+                    return self.reply(200,library.scan_windows(query['mission'][0]))
                 if parsed.path == '/api/inference/report':
                     mission=query['mission'][0]
                     jobs=inference.status(mission)
@@ -120,6 +122,11 @@ def serve(workspace, web, port=8765, open_browser=False):
                     result = library.export_csv(mission, data.get('run'))
                 elif self.path == '/api/import':
                     result = library.import_folder(data['mission'],data['path'],data['preset'])
+                elif self.path == '/api/scan-windows':
+                    if data.get('action') == 'delete':
+                        result = library.delete_scan_window(data['mission'],data['id'])
+                    else:
+                        result = library.add_scan_window(data['mission'],data['window'])
                 elif self.path == '/api/review':
                     result = library.review(data['mission'],data['image'],data['revision'],data['annotations'],data['operator'],data['role'],data['status'],data.get('prediction_run'))
                 elif self.path == '/api/inference/start':

@@ -93,6 +93,11 @@ class Library:
             id INTEGER PRIMARY KEY CHECK(id=1), status TEXT NOT NULL,
             last_scan TEXT, last_import TEXT, error TEXT
         )''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS scan_windows(
+            id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
+            start_date TEXT, end_date TEXT, weekdays TEXT NOT NULL,
+            start_time TEXT NOT NULL, end_time TEXT NOT NULL, created TEXT NOT NULL
+        )''')
         return conn
 
     def create(self, name, country, zone, settings=None):
@@ -170,6 +175,11 @@ class Library:
                     last_scan TEXT, last_import TEXT, error TEXT
                 );
                 INSERT INTO monitor_state(id,status) VALUES (1,'stopped');
+                CREATE TABLE scan_windows(
+                    id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
+                    start_date TEXT, end_date TEXT, weekdays TEXT NOT NULL,
+                    start_time TEXT NOT NULL, end_time TEXT NOT NULL, created TEXT NOT NULL
+                );
                 CREATE TABLE runs(id TEXT PRIMARY KEY,preset TEXT,source_root TEXT,status TEXT,created TEXT,error TEXT);
                 CREATE TABLE images(id TEXT PRIMARY KEY,run_id TEXT REFERENCES runs(id),name TEXT,capture_utc TEXT,
                     precision TEXT,sha256 TEXT,snapshot TEXT,provenance TEXT,UNIQUE(run_id,name));
@@ -223,6 +233,28 @@ class Library:
             return [dict(row) for row in conn.execute(
                 'SELECT * FROM exports WHERE mission_id=? ORDER BY created DESC', (mission,)
             )]
+
+    def scan_windows(self, mission):
+        with self.connect(mission) as conn:
+            return [{**dict(row), 'weekdays': json.loads(row['weekdays'])} for row in
+                conn.execute('SELECT * FROM scan_windows WHERE mission_id=? ORDER BY created,id', (mission,))]
+
+    def add_scan_window(self, mission, window):
+        from .schedules import validate_window
+        normalized = validate_window(window)
+        identifier = str(uuid.uuid4())
+        with self.connect(mission) as conn:
+            conn.execute('INSERT INTO scan_windows VALUES (?,?,?,?,?,?,?,?)',
+                (identifier, mission, normalized['start_date'], normalized['end_date'],
+                 json.dumps(normalized['weekdays']), normalized['start_time'], normalized['end_time'], now()))
+        return next(window for window in self.scan_windows(mission) if window['id'] == identifier)
+
+    def delete_scan_window(self, mission, identifier):
+        with self.connect(mission) as conn:
+            cursor = conn.execute('DELETE FROM scan_windows WHERE id=? AND mission_id=?', (identifier, mission))
+            if not cursor.rowcount:
+                raise ValueError('Schedule window not found')
+        return {'id': identifier, 'deleted': True}
 
     def reconcile_exports(self):
         """Mark exports left in `writing` by a stopped process as incomplete."""

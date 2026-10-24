@@ -38,11 +38,11 @@ Fintraffic samples supplied by the user are imported locally into `workspace/sam
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-See [verification record](docs/09-verification.md). 59 Python checks and `node --check web/app.js` pass for the current build. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
+See [verification record](docs/09-verification.md). 64 Python checks and `node --check web/app.js` pass for the current build. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
 
 ## Not implemented yet
 
-The first continuous still-image intake increment runs in the backend: it polls configured image folders, waits for stable files, checkpoints paths and content hashes, and imports changed versions into separate source runs. Automatic analysis, filesystem notifications, operator alerts, rename/reconciliation policy, video monitoring, validated night traffic counting, automatic camera-view discovery, ROI scheduling, tracking, ALPR, local chat, YOLOX fine-tuning/automatic model promotion, XLSX export, offline geographic timezone map and authenticated LAN operation remain outstanding. Experimental light candidates are not validated detections.
+Continuous still-image intake runs in the backend, and local-time scanning windows can now be configured per mission and applied to inference runs. Overnight windows use the selected start weekday; boundaries are start-inclusive/end-exclusive; daylight saving uses the mission's IANA zone. Automatic inference of continuously ingested batches, filesystem notifications, operator alerts, rename/reconciliation policy, video monitoring, validated night traffic counting, automatic camera-view discovery, ROI editing, tracking, ALPR, local chat, YOLOX fine-tuning/automatic model promotion, XLSX export, offline geographic timezone map and authenticated LAN operation remain outstanding. Experimental light candidates are not validated detections.
 
 The current development inference runtime is the independently staged `.venv`. `requirements-inference-macos.lock.txt` records its packages; installed runtime code never invokes pip.
 

@@ -39,15 +39,25 @@ def prepare(library,mission):
 def create_run(library,mission,config):
     prepare(library,mission)
     run=str(uuid.uuid4())
+    windows=library.scan_windows(mission)
+    with library.connect(mission) as conn:
+        zone=conn.execute('SELECT zone FROM mission WHERE id=?',(mission,)).fetchone()['zone']
     with library.connect(mission) as conn:
         conn.execute('BEGIN IMMEDIATE')
-        rows=conn.execute('SELECT id,sha256 FROM images ORDER BY capture_utc,name').fetchall()
+        rows=conn.execute('SELECT id,sha256,capture_utc FROM images ORDER BY capture_utc,name').fetchall()
         if not rows:raise ValueError('Import images before running inference')
+        from .schedules import compile_windows,eligible_compiled
+        compiled=compile_windows(windows)
+        eligible_rows=[row for row in rows if eligible_compiled(row['capture_utc'],zone,compiled)]
+        if not eligible_rows:
+            raise ValueError('No imported images fall within the configured local-time scan windows')
         if conn.execute("SELECT 1 FROM inference_runs WHERE status IN ('queued','running')").fetchone():
             raise ValueError('This mission already has an active inference run')
+        recorded_config={**config,'scan_schedule_snapshot':{'timezone':zone,'windows':windows,
+            'excluded_image_count':len(rows)-len(eligible_rows)}}
         conn.execute('INSERT INTO inference_runs(id,status,stage,total,config,created) VALUES (?,?,?,?,?,?)',
-            (run,'queued','queued',len(rows),json.dumps(config),now()))
-        conn.executemany('INSERT INTO inference_inputs VALUES (?,?,?)',[(run,r['id'],r['sha256']) for r in rows])
+            (run,'queued','queued',len(eligible_rows),json.dumps(recorded_config),now()))
+        conn.executemany('INSERT INTO inference_inputs VALUES (?,?,?)',[(run,r['id'],r['sha256']) for r in eligible_rows])
     return run
 
 
@@ -76,7 +86,11 @@ def enrich(library,mission,rows,selected=None):
             row['predictions']=json.loads(pred['annotations']) if pred else []
             row['inference_details']=json.loads(pred['details']) if pred else None
             row['inference_error']=pred['error'] if pred else None
-            row['inference_status']='failed' if pred and pred['error'] else 'completed' if pred else 'not_run'
+            included = bool(prediction_run and conn.execute(
+                'SELECT 1 FROM inference_inputs WHERE inference_id=? AND image_id=?',
+                (prediction_run, row['id'])).fetchone())
+            row['inference_included']=included
+            row['inference_status']='failed' if pred and pred['error'] else 'completed' if pred else 'not_run' if included or not prediction_run else 'excluded_by_schedule'
             # Never replace a saved human review with newer model outputs.
             if not review:row['annotations']=pred['annotations'] if pred else '[]'
     return rows

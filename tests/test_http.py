@@ -69,6 +69,26 @@ class HttpTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'x','country':'Israel','zone':'bad/zone'})
         self.assertEqual(exc.exception.code,400)
 
+    def test_scan_window_api_round_trip_and_validation(self):
+        with self.request('/api/missions',{'name':'Schedule fixture','country':'Latvia','zone':'Europe/Riga'}) as response:
+            mission=json.load(response)['id']
+        window={'weekdays':[6],'start_date':'2026-01-01','end_date':'2026-12-31',
+            'start_time':'17:00','end_time':'05:00'}
+        with self.request('/api/scan-windows',{'mission':mission,'window':window}) as response:
+            created=json.load(response)
+        with self.request('/api/scan-windows?mission='+mission) as response:
+            rows=json.load(response)
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['id'],created['id'])
+        self.assertEqual(rows[0]['weekdays'],[6])
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            self.request('/api/scan-windows',{'mission':mission,'window':{**window,'end_time':'17:00'}})
+        self.assertEqual(exc.exception.code,400)
+        with self.request('/api/scan-windows',{'mission':mission,'action':'delete','id':created['id']}) as response:
+            self.assertTrue(json.load(response)['deleted'])
+        with self.request('/api/scan-windows?mission='+mission) as response:
+            self.assertEqual(json.load(response),[])
+
     def test_selected_report_and_rejected_export_counts(self):
         from road_traffic.store import Library
         from road_traffic.inference_store import create_run
