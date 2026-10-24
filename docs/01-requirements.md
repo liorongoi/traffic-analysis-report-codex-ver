@@ -21,7 +21,7 @@ This table is the initial foundation-stage mapping, not a current completeness c
 | PLATE-01 | Iran/Lebanon/Israel/Latvia ALPR with Unicode, raw/normalized values, uncertain results | P | Country-specific authorized ground truth |
 | NIGHT-01 | Separate light components, candidates and confirmed vehicles; background by view | P | Nighttime candidate and false-alarm tests |
 | NIGHT-02 | One unresolved light → paired headlights → visible body; do not double count | P | Annotated nighttime sequence and still-image grouping cases |
-| VID-01 | Bounded decoding, real PTS, chunk-continuous tracking, deduplicated events | P | VFR/chunk-boundary/occlusion/long-video tests |
+| VID-01 | Bounded decoding, real PTS, chunk-continuous tracking, deduplicated events | P | Exact rational PTS/time-base to UTC arithmetic is implemented and unit-tested; recording UTC origin must be explicit. Demux/decode, bounded chunking, tracking, event persistence/deduplication, clips, and representative-media acceptance remain pending |
 | RUN-01 | Durable states/progress/errors; pause/resume/cancel independent of browser | F/P | Per-image prediction commits preserve progress; startup reconciliation detects missing workers; failed/stopped runs resume the same immutable input/config and skip saved predictions. Recovery/resume tests pass; native Windows process-liveness handling remains untested |
 | REVIEW-01 | Image/event tables, rectangles, false positives, classes/OCR, navigation, approvals | F/P | Audit store tests; manual rectangle review preview implemented; actual inference/video/OCR review pending |
 | REVIEW-02 | Bulk approval clearly unreviewed, snapshot export excludes later arrivals | F/P | Label-eligibility tests; export workflow pending |
