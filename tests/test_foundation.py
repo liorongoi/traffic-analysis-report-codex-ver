@@ -60,6 +60,16 @@ class StoreTests(unittest.TestCase):
         self.file.write_bytes(b'changed')
         self.assertEqual(self.lib.image_path(self.mission,self.image['id']).read_bytes(),b'explicit-test-fixture-not-real-image')
 
+    def test_export_image_iterator_is_bounded_and_excludes_later_imports(self):
+        iterator=self.lib.iter_images(self.mission,batch_size=1)
+        first=next(iterator)
+        later=self.source/'17052026-1605-later.jpg';later.write_bytes(b'later import')
+        self.lib.import_folder(self.mission,self.source,'camera')
+        remaining=list(iterator)
+        self.assertEqual([first['id'],*[row['id'] for row in remaining]],[self.image['id']])
+        with self.assertRaisesRegex(ValueError,'batch size'):
+            next(self.lib.iter_images(self.mission,batch_size=0))
+
     def test_hash_corruption_detected(self):
         path=self.lib.image_path(self.mission,self.image['id'])
         path.write_bytes(b'tampered')

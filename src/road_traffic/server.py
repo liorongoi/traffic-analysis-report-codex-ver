@@ -81,8 +81,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                 if parsed.path == '/api/export':
                     mission = query['mission'][0]
                     formats = library.settings(mission)['export_formats']
-                    if 'xlsx' in formats:
-                        raise ValueError('This mission requests XLSX output, which is not implemented yet; no export was generated')
+                    if 'csv' not in formats:
+                        raise ValueError('This route does not stream XLSX output; use the configured export action to create XLSX files')
                     rows = library.images(mission,query.get('run',[None])[0])
                     stream = io.StringIO(newline='')
                     writer = csv.writer(stream)
@@ -127,7 +127,7 @@ def serve(workspace, web, port=8765, open_browser=False):
                     mission = data['mission']
                     if any(job['status'] in ('queued', 'running') for job in inference.status(mission)):
                         raise ValueError('Wait for processing to finish before exporting a stable review snapshot')
-                    result = library.export_csv(mission, data.get('run'))
+                    result = library.export_configured(mission, data.get('run'))
                 elif self.path == '/api/import':
                     result = library.import_folder(data['mission'],data['path'],data['preset'])
                 elif self.path == '/api/scan-windows':

@@ -10,8 +10,10 @@ import shutil
 import sqlite3
 import tempfile
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from .domain import capture_time, named_zone
+from xml.sax.saxutils import escape
 
 
 def now():
@@ -481,10 +483,8 @@ class Library:
                     reconciled += 1
         return reconciled
 
-    def export_csv(self, mission, inference_run=None):
+    def export_csv(self, mission, inference_run=None, snapshot_rowid=None):
         settings = self.settings(mission)
-        if 'xlsx' in settings['export_formats']:
-            raise ValueError('This mission requests XLSX output, which is not implemented yet; no export was generated')
         if 'csv' not in settings['export_formats']:
             raise ValueError('CSV is not configured for this mission')
         if not settings['output_root']:
@@ -495,7 +495,7 @@ class Library:
         if self.root.is_relative_to(Path(output_root)) or Path(output_root).is_relative_to(self.root):
             raise ValueError('Choose an output outside application-managed storage')
 
-        rows = self.images(mission, inference_run)
+        rows = self.iter_images(mission, inference_run,snapshot_rowid=snapshot_rowid)
         export_id = str(uuid.uuid4())
         target = Path(output_root) / f'traffic-analysis-{mission[:8]}-{export_id}.csv'
         created = now()
@@ -544,6 +544,108 @@ class Library:
                 conn.execute('UPDATE exports SET row_count=?,status=?,finished=?,error=? WHERE id=?',
                     (row_count, status, now(), error, export_id))
             raise ValueError(f'Export {export_id} {status}: {error}') from exc
+
+    def export_xlsx(self, mission, inference_run=None, snapshot_rowid=None):
+        """Write a dependency-free, Unicode-safe XLSX snapshot without formula cells."""
+        settings=self.settings(mission)
+        if 'xlsx' not in settings['export_formats']:
+            raise ValueError('XLSX is not configured for this mission')
+        if not settings['output_root']:
+            raise ValueError('Set an output directory in the mission settings before exporting')
+        output_root=self._configured_directory(settings['output_root'],'output',writable=True)
+        if output_root!=settings['output_root']:
+            raise ValueError('Configured output directory changed; update the mission settings before exporting')
+        if self.root.is_relative_to(Path(output_root)) or Path(output_root).is_relative_to(self.root):
+            raise ValueError('Choose an output outside application-managed storage')
+
+        with self.connect(mission) as conn:
+            if snapshot_rowid is None:
+                snapshot_rowid=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM images').fetchone()[0]
+            count=conn.execute('SELECT COUNT(*) FROM images WHERE rowid<=?',(snapshot_rowid,)).fetchone()[0]
+        rows=self.iter_images(mission,inference_run,snapshot_rowid=snapshot_rowid)
+        headers=['mission_id','inference_run','source_id','source_run_id','source_sha256','filename','capture_utc',
+            'timestamp_precision','review_status','revision','confirmed_vehicle_count','candidate_count','light_count',
+            'annotations','prediction_run','inference_status','original_predictions','review_prediction_run','evidence_role','operator']
+        max_data_rows=1_048_575
+        sheet_count=max(1,(count+max_data_rows-1)//max_data_rows)
+        sheet_names=['Traffic' if sheet_count==1 else f'Traffic {number+1}' for number in range(sheet_count)]
+        export_id=str(uuid.uuid4());target=Path(output_root)/f'traffic-analysis-{mission[:8]}-{export_id}.xlsx';created=now()
+        with self.connect(mission) as conn:
+            conn.execute('INSERT INTO exports(id,mission_id,inference_run,format,output_path,row_count,status,created) VALUES (?,?,?,?,?,?,?,?)',
+                (export_id,mission,inference_run,'xlsx',str(target),0,'writing',created))
+        row_count=0
+        try:
+            with zipfile.ZipFile(target,'x',compression=zipfile.ZIP_DEFLATED,allowZip64=True) as archive:
+                archive.writestr('[Content_Types].xml','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'''+''.join(
+                    f'<Override PartName="/xl/worksheets/sheet{i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' for i in range(sheet_count))+'</Types>')
+                archive.writestr('_rels/.rels','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>''')
+                archive.writestr('xl/workbook.xml','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'''+''.join(
+                    f'<sheet name="{name}" sheetId="{i+1}" r:id="rId{i+1}"/>' for i,name in enumerate(sheet_names))+'</sheets></workbook>')
+                archive.writestr('xl/_rels/workbook.xml.rels','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'''+''.join(
+                    f'<Relationship Id="rId{i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i+1}.xml"/>' for i in range(sheet_count))+'</Relationships>')
+
+                def cell_xml(column,row_number,value):
+                    reference=f'{column}{row_number}'
+                    if isinstance(value,int):return f'<c r="{reference}"><v>{value}</v></c>'
+                    value='' if value is None else str(value)
+                    if len(value)>32767:raise ValueError(f'Cell {reference} exceeds the XLSX 32,767-character limit')
+                    if any((ord(char)<32 and char not in '\t\n\r') or ord(char) in (0xfffe,0xffff) for char in value):
+                        raise ValueError(f'Cell {reference} contains a character Excel cannot store')
+                    return f'<c r="{reference}" t="inlineStr"><is><t xml:space="preserve">{escape(value)}</t></is></c>'
+
+                def column_name(number):
+                    name=''
+                    while number:
+                        number,remainder=divmod(number-1,26);name=chr(65+remainder)+name
+                    return name
+
+                for sheet_index in range(sheet_count):
+                    sheet_rows=min(max_data_rows,max(0,count-sheet_index*max_data_rows))
+                    with archive.open(f'xl/worksheets/sheet{sheet_index+1}.xml','w') as sheet:
+                        sheet.write(b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>')
+                        header_xml=''.join(cell_xml(column_name(i+1),1,value) for i,value in enumerate(headers))
+                        sheet.write(f'<row r="1">{header_xml}</row>'.encode('utf-8'))
+                        for row_number in range(2,sheet_rows+2):
+                            row=next(rows)
+                            annotations=json.loads(row['annotations']);active=[item for item in annotations if not item.get('rejected')]
+                            values=[mission,inference_run or '',row['id'],row['run_id'],row['sha256'],row['name'],row['capture_utc'],
+                                row['precision'],row['review_status'],row['revision'],sum(item['kind']=='vehicle' for item in active),
+                                sum(item['kind']=='candidate' for item in active),sum(item['kind']=='light' for item in active),
+                                json.dumps(annotations,ensure_ascii=False),row.get('prediction_run'),row.get('inference_status'),
+                                json.dumps(row.get('predictions',[]),ensure_ascii=False),row.get('review_prediction_run'),
+                                row.get('evidence_role'),row.get('operator')]
+                            content=''.join(cell_xml(column_name(i+1),row_number,value) for i,value in enumerate(values))
+                            sheet.write(f'<row r="{row_number}">{content}</row>'.encode('utf-8'));row_count+=1
+                        sheet.write(b'</sheetData></worksheet>')
+            with target.open('rb') as stream:os.fsync(stream.fileno())
+            snapshot_hash=digest(target)
+            with self.connect(mission) as conn:
+                conn.execute("UPDATE exports SET snapshot_sha256=?,row_count=?,status='completed',finished=? WHERE id=?",
+                    (snapshot_hash,row_count,now(),export_id))
+            return {'id':export_id,'path':str(target),'format':'xlsx','snapshot_sha256':snapshot_hash,
+                'row_count':row_count,'status':'completed','sheets':sheet_count}
+        except Exception as exc:
+            status='partial' if target.exists() else 'failed';error=str(exc)[:1000]
+            with self.connect(mission) as conn:
+                conn.execute('UPDATE exports SET row_count=?,status=?,finished=?,error=? WHERE id=?',
+                    (row_count,status,now(),error,export_id))
+            raise ValueError(f'Export {export_id} {status}: {error}') from exc
+
+    def export_configured(self,mission,inference_run=None):
+        formats=self.settings(mission)['export_formats'];files=[];errors=[]
+        with self.connect(mission) as conn:
+            snapshot_rowid=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM images').fetchone()[0]
+        for format_name in formats:
+            try:files.append(self.export_csv(mission,inference_run,snapshot_rowid) if format_name=='csv' else self.export_xlsx(mission,inference_run,snapshot_rowid))
+            except ValueError as exc:errors.append(str(exc))
+        if errors:raise ValueError('Some configured exports failed: '+'; '.join(errors))
+        result={'files':files,'status':'completed'}
+        if len(files)==1:result.update(files[0])
+        return result
 
     def missions(self):
         result = []
@@ -641,6 +743,33 @@ class Library:
                 ORDER BY capture_utc,name''').fetchall()
         from .inference_store import enrich
         return enrich(self,mission,[dict(row) for row in rows],prediction_run)
+
+    def iter_images(self,mission,prediction_run=None,batch_size=250,snapshot_rowid=None):
+        """Yield a bounded image snapshot; later continuous imports are excluded."""
+        if type(batch_size) is not int or not 1<=batch_size<=2000:
+            raise ValueError('Image export batch size must be between 1 and 2000')
+        if snapshot_rowid is None:
+            with self.connect(mission) as conn:
+                snapshot_rowid=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM images').fetchone()[0]
+        last=None
+        while True:
+            with self.connect(mission) as conn:
+                query='''SELECT images.*, images.rowid source_rowid, COALESCE(reviews.revision,0) revision,
+                    COALESCE(reviews.status,'unreviewed') review_status, COALESCE(reviews.annotations,'[]') annotations,
+                    COALESCE(reviews.role,'none') evidence_role, COALESCE(reviews.operator,'') operator
+                    FROM images LEFT JOIN reviews ON reviews.image_id=images.id AND reviews.revision=
+                    (SELECT MAX(r.revision) FROM reviews r WHERE r.image_id=images.id)
+                    WHERE images.rowid<=?'''
+                if last is not None:
+                    query+=' AND (capture_utc,name,images.rowid)>(?,?,?)'
+                    parameters=(snapshot_rowid,*last,batch_size)
+                else:parameters=(snapshot_rowid,batch_size)
+                rows=conn.execute(query+' ORDER BY capture_utc,name,images.rowid LIMIT ?',parameters).fetchall()
+            if not rows:break
+            from .inference_store import enrich
+            batch=enrich(self,mission,[dict(row) for row in rows],prediction_run)
+            yield from batch
+            last=(rows[-1]['capture_utc'],rows[-1]['name'],rows[-1]['source_rowid'])
 
     def image_path(self, mission, image):
         with self.connect(mission) as conn:

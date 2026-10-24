@@ -12,6 +12,8 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+import zipfile
+import xml.etree.ElementTree as ET
 
 
 class HttpTests(unittest.TestCase):
@@ -195,10 +197,8 @@ class HttpTests(unittest.TestCase):
                 self.request('/api/inference/start',{'mission':mission})
             self.assertEqual(exc.exception.code,400)
             self.assertIn('still-image General Traffic',exc.exception.read().decode())
-            with self.assertRaises(urllib.error.HTTPError) as exc:
-                self.request('/api/export?mission='+mission)
-            self.assertEqual(exc.exception.code,400)
-            self.assertIn('XLSX output',exc.exception.read().decode())
+            with self.request('/api/export?mission='+mission) as response:
+                self.assertIn('text/csv',response.headers['Content-Type'])
 
     def test_csv_export_writes_traceable_non_overwriting_snapshot(self):
         with tempfile.TemporaryDirectory() as external:
@@ -227,3 +227,29 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(len(history),2)
             self.assertEqual(history[0]['status'],'completed')
             self.assertEqual(history[0]['snapshot_sha256'],first['snapshot_sha256'])
+
+    def test_configured_xlsx_and_csv_exports_preserve_unicode_without_formula_cells(self):
+        with tempfile.TemporaryDirectory() as external:
+            source=Path(external)/'source';source.mkdir()
+            output=Path(external)/'output';output.mkdir()
+            image=source/'17052026-1604-0007.jpg';image.write_bytes(b'xlsx export fixture')
+            data={'name':'Saved XLSX export','country':'Israel','zone':'Asia/Jerusalem',
+                'source_root':str(source),'include_subdirectories':True,'processing_mode':'once',
+                'output_root':str(output),'export_formats':['xlsx','csv']}
+            with self.request('/api/missions',data) as response:mission=json.load(response)['id']
+            with self.request('/api/import',{'mission':mission,'path':str(source),'preset':'camera'}):pass
+            with self.request('/api/images?mission='+mission) as response:image_id=json.load(response)[0]['id']
+            with self.request('/api/review',{'mission':mission,'image':image_id,'revision':0,'annotations':[],
+                'operator':'=מפעיל','role':'none','status':'partial'}):pass
+            with self.request('/api/export',{'mission':mission,'run':None}) as response:result=json.load(response)
+            files={entry['format']:entry for entry in result['files']}
+            self.assertEqual(set(files),{'csv','xlsx'})
+            self.assertEqual(files['xlsx']['row_count'],1)
+            with zipfile.ZipFile(files['xlsx']['path']) as book:
+                self.assertIn('xl/worksheets/sheet1.xml',book.namelist())
+                sheet=ET.fromstring(book.read('xl/worksheets/sheet1.xml'))
+            ns={'x':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+            cells={cell.attrib['r']:cell for cell in sheet.findall('.//x:sheetData/x:row[@r="2"]/x:c',ns)}
+            self.assertEqual(cells['F2'].findtext('x:is/x:t',namespaces=ns),image.name)
+            self.assertEqual(cells['T2'].findtext('x:is/x:t',namespaces=ns),'=מפעיל')
+            self.assertIsNone(sheet.find('.//x:f',ns))
