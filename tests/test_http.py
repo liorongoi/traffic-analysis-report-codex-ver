@@ -14,6 +14,11 @@ import urllib.error
 import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
+from PIL import Image
+
+
+def write_test_image(path,color=(45,85,125)):
+    Image.new('RGB',(8,8),color).save(path,'JPEG')
 
 
 class HttpTests(unittest.TestCase):
@@ -97,7 +102,7 @@ class HttpTests(unittest.TestCase):
             mission=json.load(response)['id']
         lib=Library(self.tmp.name)
         with tempfile.TemporaryDirectory() as source:
-            (Path(source)/'17052026-1604-view.jpg').write_bytes(b'view api fixture')
+            write_test_image(Path(source)/'17052026-1604-view.jpg')
             lib.import_folder(mission,source,'camera')
         image=lib.images(mission)[0]['id']
         with self.request('/api/views',{'mission':mission,'action':'create','name':'Gate A','operator':'Operator'}) as response:
@@ -116,7 +121,7 @@ class HttpTests(unittest.TestCase):
             mission=json.load(response)['id']
         lib=Library(self.tmp.name)
         with tempfile.TemporaryDirectory() as source:
-            (Path(source)/'17052026-1604-region.jpg').write_bytes(b'region api fixture')
+            write_test_image(Path(source)/'17052026-1604-region.jpg')
             lib.import_folder(mission,source,'camera')
         image=lib.images(mission)[0]['id']
         with self.request('/api/views',{'mission':mission,'action':'create','name':'Gate B','operator':'Operator'}) as response:
@@ -148,7 +153,7 @@ class HttpTests(unittest.TestCase):
             mission=json.load(response)['id']
         lib=Library(self.tmp.name)
         with tempfile.TemporaryDirectory() as source:
-            (Path(source)/'17052026-1604-fixture.jpg').write_bytes(b'explicit-http-ledger-fixture')
+            write_test_image(Path(source)/'17052026-1604-fixture.jpg')
             lib.import_folder(mission,source,'camera')
         image=lib.images(mission)[0]['id'];run=create_run(lib,mission,{'adapter':'explicit-test-fixture'})
         original=[{'kind':'candidate','label':'car','box':[.1,.1,.1,.1],'origin':'model'},
@@ -204,7 +209,7 @@ class HttpTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as external:
             source=Path(external)/'source';source.mkdir()
             output=Path(external)/'output';output.mkdir()
-            image=source/'17052026-1604-0007.jpg';image.write_bytes(b'export fixture')
+            image=source/'17052026-1604-0007.jpg';write_test_image(image)
             data={'name':'Saved CSV export','country':'Israel','zone':'Asia/Jerusalem',
                 'input_type':'images','analysis_mode':'general_traffic','location':'Jerusalem',
                 'source_root':str(source),'include_subdirectories':True,
@@ -232,7 +237,7 @@ class HttpTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as external:
             source=Path(external)/'source';source.mkdir()
             output=Path(external)/'output';output.mkdir()
-            image=source/'17052026-1604-0007.jpg';image.write_bytes(b'xlsx export fixture')
+            image=source/'17052026-1604-0007.jpg';write_test_image(image)
             data={'name':'Saved XLSX export','country':'Israel','zone':'Asia/Jerusalem',
                 'source_root':str(source),'include_subdirectories':True,'processing_mode':'once',
                 'output_root':str(output),'export_formats':['xlsx','csv']}

@@ -3,6 +3,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from PIL import Image
 from unittest.mock import patch
 from road_traffic.store import Library
 from road_traffic.inference_store import create_run,enrich,runs
@@ -45,7 +46,7 @@ class InferenceLedgerTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();root=Path(self.temp.name)
         self.lib=Library(root/'workspace');self.m=self.lib.create('Test','Israel','Asia/Jerusalem')
-        source=root/'source';source.mkdir();(source/'17052026-1604-test.jpg').write_bytes(b'ledger-only-fixture')
+        source=root/'source';source.mkdir();Image.new('RGB',(8,8),(25,50,75)).save(source/'17052026-1604-test.jpg','JPEG')
         self.lib.import_folder(self.m,source,'camera');self.image=self.lib.images(self.m)[0]['id']
         self.run=create_run(self.lib,self.m,{'model':'explicit-test-double'})
         self.pred=[{'kind':'candidate','label':'car','box':[.1,.1,.2,.2],'score':.7,'prediction_id':'fixture-1','origin':'model'}]

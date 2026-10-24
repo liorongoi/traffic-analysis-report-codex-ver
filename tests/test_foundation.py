@@ -6,6 +6,11 @@ import tempfile
 import unittest
 from road_traffic.domain import capture_time, named_zone, budget
 from road_traffic.store import Library, safe_file
+from PIL import Image
+
+
+def write_test_image(path,color=(40,80,120)):
+    Image.new('RGB',(8,8),color).save(path,'JPEG')
 
 
 class TimeTests(unittest.TestCase):
@@ -46,7 +51,8 @@ class StoreTests(unittest.TestCase):
         self.source=self.root/'source'
         self.source.mkdir()
         self.file=self.source/'17052026-1604-vehicle.jpg'
-        self.file.write_bytes(b'explicit-test-fixture-not-real-image')
+        write_test_image(self.file)
+        self.original_bytes=self.file.read_bytes()
         self.mission=self.lib.create('Test','Israel','Asia/Jerusalem')
         self.lib.import_folder(self.mission,self.source,'camera')
         self.image=self.lib.images(self.mission)[0]
@@ -58,12 +64,12 @@ class StoreTests(unittest.TestCase):
 
     def test_copy_survives_source_changes(self):
         self.file.write_bytes(b'changed')
-        self.assertEqual(self.lib.image_path(self.mission,self.image['id']).read_bytes(),b'explicit-test-fixture-not-real-image')
+        self.assertEqual(self.lib.image_path(self.mission,self.image['id']).read_bytes(),self.original_bytes)
 
     def test_export_image_iterator_is_bounded_and_excludes_later_imports(self):
         iterator=self.lib.iter_images(self.mission,batch_size=1)
         first=next(iterator)
-        later=self.source/'17052026-1605-later.jpg';later.write_bytes(b'later import')
+        later=self.source/'17052026-1605-later.jpg';write_test_image(later,(80,20,10))
         self.lib.import_folder(self.mission,self.source,'camera')
         remaining=list(iterator)
         self.assertEqual([first['id'],*[row['id'] for row in remaining]],[self.image['id']])
@@ -111,9 +117,17 @@ class StoreTests(unittest.TestCase):
 
     def test_checksum_failure_is_atomic(self):
         fintraffic=self.source/'C0450701_20261020T194513Z.jpg'
-        fintraffic.write_bytes(b'explicit-test-fixture')
+        write_test_image(fintraffic)
         (self.source/'manifest.json').write_text(json.dumps({'downloads':[{'file':fintraffic.name,'sha256':'wrong'}]}))
         with self.assertRaises(ValueError):self.lib.import_folder(self.mission,self.source,'fintraffic')
+        self.assertEqual(len(self.lib.images(self.mission)),1)
+        with self.lib.connect(self.mission) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM runs WHERE status='failed'").fetchone()[0],1)
+
+    def test_corrupt_image_import_reports_filename_and_rolls_back_batch(self):
+        corrupt=self.source/'17052026-1606-corrupt.jpg';corrupt.write_bytes(b'not a decodable image')
+        with self.assertRaisesRegex(ValueError,'Corrupt or unsupported image 17052026-1606-corrupt.jpg'):
+            self.lib.import_folder(self.mission,self.source,'camera')
         self.assertEqual(len(self.lib.images(self.mission)),1)
         with self.lib.connect(self.mission) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM runs WHERE status='failed'").fetchone()[0],1)
@@ -139,7 +153,7 @@ class StoreTests(unittest.TestCase):
 
     def test_nonrecursive_import_honors_mission_setting(self):
         nested=self.source/'subfolder';nested.mkdir()
-        (nested/'17052026-1605-nested.jpg').write_bytes(b'nested fixture')
+        write_test_image(nested/'17052026-1605-nested.jpg')
         mission=self.lib.create('Flat import','Israel','Asia/Jerusalem',{
             'source_root':str(self.source),'include_subdirectories':False})
         imported=self.lib.import_folder(mission,self.source,'camera')
@@ -190,7 +204,7 @@ class StoreTests(unittest.TestCase):
         mission=self.lib.create('Continuous images','Israel','Asia/Jerusalem',{
             'source_root':str(source),'include_subdirectories':True,'processing_mode':'continuous'})
         image=source/'17052026-1605-camera-a.jpg'
-        image.write_bytes(b'first stable image version')
+        write_test_image(image,(10,20,30))
         monitor=SourceMonitor(self.lib,stability_seconds=0)
         first=monitor.scan(mission)
         self.assertEqual(len(self.lib.images(mission)),1)
@@ -199,11 +213,22 @@ class StoreTests(unittest.TestCase):
         monitor=SourceMonitor(self.lib,stability_seconds=0)
         monitor.scan(mission)
         self.assertEqual(len(self.lib.images(mission)),1)
-        image.write_bytes(b'replaced stable image version')
+        write_test_image(image,(30,20,10))
         monitor.scan(mission)
         rows=self.lib.images(mission)
         self.assertEqual(len(rows),2)
         self.assertEqual(len({row['sha256'] for row in rows}),2)
         self.assertEqual(monitor.status(mission)['files']['imported'],1)
+
+    def test_monitor_keeps_corrupt_image_visible_as_per_file_error(self):
+        from road_traffic.monitor import SourceMonitor
+        source=self.root/'corrupt-monitor';source.mkdir()
+        mission=self.lib.create('Corrupt monitor','Israel','Asia/Jerusalem',{
+            'source_root':str(source),'processing_mode':'continuous'})
+        (source/'17052026-1605-corrupt.jpg').write_bytes(b'not an image')
+        state=SourceMonitor(self.lib,stability_seconds=0).scan(mission)
+        self.assertEqual(state['files']['error'],1)
+        self.assertIn('Corrupt or unsupported image',state['recent_errors'][0]['error'])
+        self.assertEqual(self.lib.images(mission),[])
 
 if __name__=='__main__':unittest.main()

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from PIL import Image
 from road_traffic.schedules import eligible, validate_window
 from road_traffic.store import Library
 from road_traffic.inference_store import create_run
@@ -35,8 +36,8 @@ class ScheduleWindowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);library=Library(root/'workspace')
             source=root/'source';source.mkdir()
-            (source/'17052026-1604-sunday.jpg').write_bytes(b'sunday fixture')
-            (source/'18052026-1200-monday.jpg').write_bytes(b'monday fixture')
+            Image.new('RGB',(8,8),(10,20,30)).save(source/'17052026-1604-sunday.jpg','JPEG')
+            Image.new('RGB',(8,8),(30,20,10)).save(source/'18052026-1200-monday.jpg','JPEG')
             mission=library.create('Scheduled','Israel','UTC')
             library.import_folder(mission,source,'camera')
             library.add_scan_window(mission,{'weekdays':[6],'start_time':'16:00','end_time':'22:00'})

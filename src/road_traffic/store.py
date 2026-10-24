@@ -28,6 +28,22 @@ def digest(path):
     return h.hexdigest()
 
 
+def validate_image_file(path, relative_name):
+    """Fully decode supported still-image formats before accepting a source."""
+    try:
+        from PIL import Image
+        with Image.open(path) as image:
+            if image.format not in ('JPEG','PNG'):
+                raise ValueError(f'Unsupported image format {image.format!r}')
+            if image.width*image.height>24_000_000:
+                raise ValueError('Image exceeds the current 24-megapixel processing limit')
+            image.verify()
+        with Image.open(path) as image:
+            image.load()
+    except Exception as exc:
+        raise ValueError(f'Corrupt or unsupported image {relative_name}: {exc}') from exc
+
+
 def safe_file(root, relative):
     root = Path(root).resolve(strict=True)
     relative = Path(relative)
@@ -716,6 +732,7 @@ class Library:
                     image = str(uuid.uuid4())
                     target = folder / (image + source.suffix.lower())
                     shutil.copyfile(source, target)
+                    validate_image_file(target,relative)
                     actual = digest(target)
                     after = source.stat()
                     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):

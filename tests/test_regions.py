@@ -3,6 +3,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from PIL import Image
 
 from road_traffic.inference_store import create_run
 from road_traffic.regions import filter_proposals, point_in_polygon, validate_polygon
@@ -37,7 +38,7 @@ class RegionHistoryTests(unittest.TestCase):
         self.library=Library(self.root/'workspace')
         self.mission=self.library.create('Regions','Israel','Asia/Jerusalem')
         source=self.root/'source';source.mkdir()
-        (source/'17052026-1604-camera-a.jpg').write_bytes(b'region fixture')
+        Image.new('RGB',(8,8),(20,40,60)).save(source/'17052026-1604-camera-a.jpg','JPEG')
         self.library.import_folder(self.mission,source,'camera')
         self.image=self.library.images(self.mission)[0]
         self.view=self.library.create_view(self.mission,'Entrance','Operator A')

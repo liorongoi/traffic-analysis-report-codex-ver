@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from PIL import Image
 from road_traffic.inference_store import create_run
 from road_traffic.store import Library
 
@@ -12,8 +13,8 @@ class CameraViewTests(unittest.TestCase):
             root=Path(temp);library=Library(root/'workspace')
             mission=library.create('Views','Israel','Asia/Jerusalem')
             source=root/'source';source.mkdir()
-            (source/'17052026-1604-view-a.jpg').write_bytes(b'view-a')
-            (source/'17052026-1605-view-b.jpg').write_bytes(b'view-b')
+            Image.new('RGB',(8,8),(10,20,30)).save(source/'17052026-1604-view-a.jpg','JPEG')
+            Image.new('RGB',(8,8),(30,20,10)).save(source/'17052026-1605-view-b.jpg','JPEG')
             library.import_folder(mission,source,'camera')
             rows=library.images(mission)
             first=library.create_view(mission,'North entrance','Operator A')

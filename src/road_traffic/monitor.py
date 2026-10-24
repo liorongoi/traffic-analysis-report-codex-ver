@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import os
 import threading
 from pathlib import Path
-from .store import digest, now, safe_file
+from .store import digest, now, safe_file, validate_image_file
 
 IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png'}
 
@@ -117,7 +117,9 @@ class SourceMonitor:
                     elapsed = (scan_time - datetime.fromisoformat(stable_since)).total_seconds()
                     if elapsed >= self.stability_seconds and status != 'imported':
                         try:
-                            checksum = digest(safe_file(root, relative))
+                            source_file=safe_file(root, relative)
+                            validate_image_file(source_file,relative)
+                            checksum = digest(source_file)
                             existing = conn.execute('''SELECT 1 FROM images WHERE name=? AND sha256=? LIMIT 1''',
                                 (relative, checksum)).fetchone()
                             if existing:
