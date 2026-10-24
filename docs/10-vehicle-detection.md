@@ -24,7 +24,7 @@ For the explicit fixed Fintraffic view, up to 32 compatible, non-held-out refere
 4. In **Editable review**, change a proposal's type to **Confirmed vehicle**, correct its class, reject a false positive, or draw a missed rectangle. Enter the operator and select review completeness/evidence role, then **Save review revision**.
 5. Switch **Overlay** to **Original predictions (read only)** to inspect the unchanged output. Saved reviews remain tied to their original inference run, including after a new run.
 6. Use opacity/zoom for inspection; these do not change source pixels or saved scientific coordinates.
-7. **Inference report** downloads configuration, original outputs, review lineage and source hashes as JSON. **Export CSV** exports the selected run with separate confirmed counts and original predictions. Rejected annotations remain in audit data and are excluded from counts.
+7. **Inference report** downloads configuration, original outputs, review lineage and source hashes as JSON. **Save CSV to output folder** writes a uniquely named snapshot with mission/source lineage, source checksums, review revision, original predictions and a stored snapshot hash. Rejected annotations remain in audit data and are excluded from counts. XLSX missions are blocked until an XLSX writer is implemented.
 
 Runs expose durable stage, done/total, errors and a progress bar. **Stop** cancels after the current image; cancellation and failed runs retain completed predictions. Closing the browser does not stop its worker. Automatic retraining is not implemented; no corrections are silently used for training.
 

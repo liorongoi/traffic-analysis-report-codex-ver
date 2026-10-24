@@ -14,6 +14,7 @@ from .store import Library
 
 def serve(workspace, web, port=8765, open_browser=False):
     library = Library(workspace)
+    library.reconcile_exports()
     from .inference import InferenceService
     inference=InferenceService(library,Path(web).parent/'model-packs'/'yolox-s')
     token = secrets.token_urlsafe(32)
@@ -49,6 +50,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200,{'inventory':inventory(library,m),'candidates':candidates(library,m)})
                 if parsed.path == '/api/inference':
                     return self.reply(200,inference.status(query['mission'][0]))
+                if parsed.path == '/api/exports':
+                    return self.reply(200,library.exports(query['mission'][0]))
                 if parsed.path == '/api/inference/report':
                     mission=query['mission'][0]
                     jobs=inference.status(mission)
@@ -105,6 +108,11 @@ def serve(workspace, web, port=8765, open_browser=False):
                         'include_subdirectories', 'processing_mode', 'output_root', 'export_formats'
                     ) if key in data}
                     result = {'id': library.create(data['name'],data['country'],data['zone'],settings)}
+                elif self.path == '/api/export':
+                    mission = data['mission']
+                    if any(job['status'] in ('queued', 'running') for job in inference.status(mission)):
+                        raise ValueError('Wait for processing to finish before exporting a stable review snapshot')
+                    result = library.export_csv(mission, data.get('run'))
                 elif self.path == '/api/import':
                     result = library.import_folder(data['mission'],data['path'],data['preset'])
                 elif self.path == '/api/review':

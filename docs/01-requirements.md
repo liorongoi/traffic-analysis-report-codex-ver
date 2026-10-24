@@ -9,7 +9,7 @@ This table is the initial foundation-stage mapping, not a current completeness c
 | ENV-01 | Independent application, offline Windows workstation, local/LAN browser access, one active user | P | Native Windows disconnected and two-computer session test |
 | ENV-02 | No runtime downloads/CDN/cloud services; staging separate | P | Installer/network-denial audit |
 | HW-01 | Detect 16/48 GB RAM and GPU support independently, preserve OS headroom | F/P | Budget unit tests; target measurements pending |
-| MIS-01 | Mission name, input type, country, named timezone, source/destination, recursion, one-time/continuous, XLSX/CSV | F/P | Mission settings form, persistence, path validation, and unsupported-mode guards are implemented; monitoring, output-folder export, XLSX execution, and offline location map remain pending |
+| MIS-01 | Mission name, input type, country, named timezone, source/destination, recursion, one-time/continuous, XLSX/CSV | F/P | Mission settings form, persistence, path validation, and unsupported-mode guards are implemented; continuous monitoring, XLSX execution, and offline location map remain pending |
 | MIS-02 | Separate database per mission, independent runs, no output mixing | F | SQLite isolation/lineage tests |
 | TIME-01 | Parse confirmed UTC filename and preserve minute precision | F | Valid/invalid filename tests |
 | TIME-02 | Historical local times, DST, multiple overnight windows | F/P | UTC filtering tests; offline geographic map pending |
@@ -27,7 +27,7 @@ This table is the initial foundation-stage mapping, not a current completeness c
 | REVIEW-02 | Bulk approval clearly unreviewed, snapshot export excludes later arrivals | F/P | Label-eligibility tests; export workflow pending |
 | LEARN-01 | Preserve every correction, revision/conflict resolution, provenance | F | Append-only correction and lineage tests |
 | LEARN-02 | Real adapter capabilities, protected splits, versioned candidates, controlled promotion | P | Training fixture/evaluation/rollback acceptance |
-| EXPORT-01 | XLSX/CSV and clips, Unicode/leading zeros, no truncation/overwrite, snapshot lineage | P | Round-trip exports and failure recovery |
+| EXPORT-01 | XLSX/CSV and clips, Unicode/leading zeros, no truncation/overwrite, snapshot lineage | P | CSV files now save with unique names, source IDs/checksums, snapshot hashes, and a mission-local export ledger; XLSX, clips, streaming large-table exports, and broader recovery testing remain pending |
 | UX-01 | Modern responsive wizard/review/progress/monitoring/Help; Hebrew/English RTL/LTR | P | Mission setup and review are partial; monitoring, Help, and full browser/operator acceptance remain pending |
 | DEP-01 | Complete offline media, small app updates, no implicit admin/Docker/WSL | P | Native clean-install/update/rollback tests |
 

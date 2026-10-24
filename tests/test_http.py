@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import io
 import json
 import os
@@ -128,3 +129,31 @@ class HttpTests(unittest.TestCase):
                 self.request('/api/export?mission='+mission)
             self.assertEqual(exc.exception.code,400)
             self.assertIn('XLSX output',exc.exception.read().decode())
+
+    def test_csv_export_writes_traceable_non_overwriting_snapshot(self):
+        with tempfile.TemporaryDirectory() as external:
+            source=Path(external)/'source';source.mkdir()
+            output=Path(external)/'output';output.mkdir()
+            image=source/'17052026-1604-0007.jpg';image.write_bytes(b'export fixture')
+            data={'name':'Saved CSV export','country':'Israel','zone':'Asia/Jerusalem',
+                'input_type':'images','analysis_mode':'general_traffic','location':'Jerusalem',
+                'source_root':str(source),'include_subdirectories':True,
+                'processing_mode':'once','output_root':str(output),'export_formats':['csv']}
+            with self.request('/api/missions',data) as response:mission=json.load(response)['id']
+            with self.request('/api/import',{'mission':mission,'path':str(source),'preset':'camera'}) as response:
+                self.assertEqual(json.load(response)['images'],1)
+            with self.request('/api/export',{'mission':mission,'run':None}) as response:first=json.load(response)
+            with self.request('/api/export',{'mission':mission,'run':None}) as response:second=json.load(response)
+            self.assertNotEqual(first['path'],second['path'])
+            self.assertEqual(first['status'],'completed')
+            self.assertEqual(first['row_count'],1)
+            self.assertTrue((output/Path(first['path']).name).is_file())
+            with Path(first['path']).open(encoding='utf-8-sig',newline='') as stream:
+                row=next(csv.DictReader(stream))
+            self.assertEqual(row['mission_id'],mission)
+            self.assertEqual(row['filename'],image.name)
+            self.assertEqual(row['source_sha256'],hashlib.sha256(image.read_bytes()).hexdigest())
+            with self.request('/api/exports?mission='+mission) as response:history=json.load(response)
+            self.assertEqual(len(history),2)
+            self.assertEqual(history[0]['status'],'completed')
+            self.assertEqual(history[0]['snapshot_sha256'],first['snapshot_sha256'])

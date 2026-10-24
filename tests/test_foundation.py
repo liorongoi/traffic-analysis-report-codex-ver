@@ -160,4 +160,18 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.lib.settings(mission)['input_type'],'images')
         self.assertEqual(self.lib.settings(mission)['export_formats'],['csv'])
 
+    def test_interrupted_exports_are_reconciled_after_restart(self):
+        mission=self.lib.create('Export recovery','Israel','Asia/Jerusalem')
+        partial=self.root/'partial.csv';partial.write_text('partial data')
+        missing=self.root/'missing.csv'
+        with self.lib.connect(mission) as conn:
+            conn.execute('INSERT INTO exports(id,mission_id,format,output_path,status,created) VALUES (?,?,?,?,?,?)',
+                ('partial-id',mission,'csv',str(partial),'writing','2026-01-01T00:00:00+00:00'))
+            conn.execute('INSERT INTO exports(id,mission_id,format,output_path,status,created) VALUES (?,?,?,?,?,?)',
+                ('missing-id',mission,'csv',str(missing),'writing','2026-01-01T00:00:00+00:00'))
+        self.assertEqual(self.lib.reconcile_exports(),2)
+        history={row['id']:row for row in self.lib.exports(mission)}
+        self.assertEqual(history['partial-id']['status'],'partial')
+        self.assertEqual(history['missing-id']['status'],'failed')
+
 if __name__=='__main__':unittest.main()

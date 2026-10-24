@@ -1,5 +1,7 @@
 """One database per mission, immutable source snapshots and revisioned human labels."""
+import csv
 import hashlib
+import io
 import json
 import math
 import os
@@ -76,6 +78,12 @@ class Library:
                 INSERT OR IGNORE INTO mission_settings(mission_id)
                 SELECT id FROM mission;
             ''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS exports(
+            id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
+            inference_run TEXT, format TEXT NOT NULL, output_path TEXT NOT NULL,
+            snapshot_sha256 TEXT, row_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL, created TEXT NOT NULL, finished TEXT, error TEXT
+        )''')
         return conn
 
     def create(self, name, country, zone, settings=None):
@@ -112,6 +120,11 @@ class Library:
             raise ValueError('Choose a source outside application-managed storage')
         if output_root and (self.root.is_relative_to(Path(output_root)) or Path(output_root).is_relative_to(self.root)):
             raise ValueError('Choose an output outside application-managed storage')
+        if source_root and output_root and (
+            Path(source_root).is_relative_to(Path(output_root)) or
+            Path(output_root).is_relative_to(Path(source_root))
+        ):
+            raise ValueError('Source and output directories must not overlap')
         mission = str(uuid.uuid4())
         folder = self.location(mission)
         folder.mkdir()
@@ -131,6 +144,12 @@ class Library:
                     processing_mode TEXT NOT NULL,
                     output_root TEXT NOT NULL,
                     export_formats TEXT NOT NULL
+                );
+                CREATE TABLE exports(
+                    id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
+                    inference_run TEXT, format TEXT NOT NULL, output_path TEXT NOT NULL,
+                    snapshot_sha256 TEXT, row_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL, created TEXT NOT NULL, finished TEXT, error TEXT
                 );
                 CREATE TABLE runs(id TEXT PRIMARY KEY,preset TEXT,source_root TEXT,status TEXT,created TEXT,error TEXT);
                 CREATE TABLE images(id TEXT PRIMARY KEY,run_id TEXT REFERENCES runs(id),name TEXT,capture_utc TEXT,
@@ -179,6 +198,92 @@ class Library:
         result['include_subdirectories'] = bool(result['include_subdirectories'])
         result['export_formats'] = json.loads(result['export_formats'])
         return result
+
+    def exports(self, mission):
+        with self.connect(mission) as conn:
+            return [dict(row) for row in conn.execute(
+                'SELECT * FROM exports WHERE mission_id=? ORDER BY created DESC', (mission,)
+            )]
+
+    def reconcile_exports(self):
+        """Mark exports left in `writing` by a stopped process as incomplete."""
+        reconciled = 0
+        for mission_path in self.root.glob('*/mission.sqlite3'):
+            mission = mission_path.parent.name
+            with self.connect(mission) as conn:
+                rows = [dict(row) for row in conn.execute(
+                    "SELECT id,output_path FROM exports WHERE status='writing' AND mission_id=?", (mission,)
+                )]
+                for row in rows:
+                    status = 'partial' if Path(row['output_path']).is_file() else 'failed'
+                    conn.execute('UPDATE exports SET status=?,finished=?,error=? WHERE id=?',
+                        (status, now(), 'Export process stopped before completion', row['id']))
+                    reconciled += 1
+        return reconciled
+
+    def export_csv(self, mission, inference_run=None):
+        settings = self.settings(mission)
+        if 'xlsx' in settings['export_formats']:
+            raise ValueError('This mission requests XLSX output, which is not implemented yet; no export was generated')
+        if 'csv' not in settings['export_formats']:
+            raise ValueError('CSV is not configured for this mission')
+        if not settings['output_root']:
+            raise ValueError('Set an output directory in the mission settings before exporting')
+        output_root = self._configured_directory(settings['output_root'], 'output', writable=True)
+        if output_root != settings['output_root']:
+            raise ValueError('Configured output directory changed; update the mission settings before exporting')
+        if self.root.is_relative_to(Path(output_root)) or Path(output_root).is_relative_to(self.root):
+            raise ValueError('Choose an output outside application-managed storage')
+
+        rows = self.images(mission, inference_run)
+        export_id = str(uuid.uuid4())
+        target = Path(output_root) / f'traffic-analysis-{mission[:8]}-{export_id}.csv'
+        created = now()
+        with self.connect(mission) as conn:
+            conn.execute('INSERT INTO exports(id,mission_id,inference_run,format,output_path,row_count,status,created) VALUES (?,?,?,?,?,?,?,?)',
+                (export_id, mission, inference_run, 'csv', str(target), 0, 'writing', created))
+        row_count = 0
+        try:
+            with target.open('x', encoding='utf-8-sig', newline='') as stream:
+                writer = csv.writer(stream)
+                writer.writerow(['mission_id','inference_run','source_id','source_run_id','source_sha256',
+                    'filename','capture_utc','timestamp_precision','review_status','revision',
+                    'confirmed_vehicle_count','candidate_count','light_count','annotations',
+                    'prediction_run','inference_status','original_predictions','review_prediction_run',
+                    'evidence_role','operator'])
+                for row in rows:
+                    annotations = json.loads(row['annotations'])
+                    active = [annotation for annotation in annotations if not annotation.get('rejected')]
+                    filename = row['name']
+                    operator = row.get('operator', '')
+                    if filename.lstrip().startswith(('=', '+', '-', '@')):
+                        filename = "'" + filename
+                    if operator.lstrip().startswith(('=', '+', '-', '@')):
+                        operator = "'" + operator
+                    writer.writerow([mission, inference_run or '', row['id'], row['run_id'], row['sha256'],
+                        filename, row['capture_utc'], row['precision'], row['review_status'], row['revision'],
+                        sum(annotation['kind']=='vehicle' for annotation in active),
+                        sum(annotation['kind']=='candidate' for annotation in active),
+                        sum(annotation['kind']=='light' for annotation in active),
+                        json.dumps(annotations, ensure_ascii=False), row.get('prediction_run'),
+                        row.get('inference_status'), json.dumps(row.get('predictions', []), ensure_ascii=False),
+                        row.get('review_prediction_run'), row.get('evidence_role'), operator])
+                    row_count += 1
+                stream.flush()
+                os.fsync(stream.fileno())
+            snapshot_hash = digest(target)
+            with self.connect(mission) as conn:
+                conn.execute("UPDATE exports SET snapshot_sha256=?,row_count=?,status='completed',finished=? WHERE id=?",
+                    (snapshot_hash, row_count, now(), export_id))
+            return {'id': export_id, 'path': str(target), 'format': 'csv',
+                'snapshot_sha256': snapshot_hash, 'row_count': row_count, 'status': 'completed'}
+        except Exception as exc:
+            status = 'partial' if target.exists() else 'failed'
+            error = str(exc)[:1000]
+            with self.connect(mission) as conn:
+                conn.execute('UPDATE exports SET row_count=?,status=?,finished=?,error=? WHERE id=?',
+                    (row_count, status, now(), error, export_id))
+            raise ValueError(f'Export {export_id} {status}: {error}') from exc
 
     def missions(self):
         result = []
