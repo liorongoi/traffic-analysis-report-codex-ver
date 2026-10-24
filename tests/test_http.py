@@ -62,7 +62,7 @@ class HttpTests(unittest.TestCase):
         with self.request('/') as response:
             page=response.read().decode('utf-8')
             self.assertIn('id="helpPanel"',page)
-            for key in ('helpImport','helpSchedule','helpViews','helpReview','helpScope'):
+            for key in ('keyboardHelp','helpImport','helpSchedule','helpViews','helpReview','helpScope'):
                 self.assertIn(f'data-t="{key}"',page)
     def test_write_requires_session_token(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},token=False)
