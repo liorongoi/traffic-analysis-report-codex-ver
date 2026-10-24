@@ -447,6 +447,39 @@ class Library:
                  json.dumps({'image_id':image,'revision':revision},ensure_ascii=False),operator,created))
             return {'image_id':image,'view_id':view_id,'revision':revision,'created':created}
 
+    def assign_views(self, mission, images, view_id, operator):
+        """Atomically reassign a bounded image selection, preserving per-image history."""
+        operator=operator.strip() if isinstance(operator,str) else ''
+        if not 1 <= len(operator) <= 120:raise ValueError('Operator is required for view history')
+        if not isinstance(images,list) or not images or len(images)>1000:
+            raise ValueError('Choose between 1 and 1000 images')
+        if any(not isinstance(image,str) or not image for image in images):
+            raise ValueError('Image IDs must be non-empty strings')
+        images=list(dict.fromkeys(images))
+        with self.connect(mission) as conn:
+            if view_id and not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=?',(view_id,mission)).fetchone():
+                raise ValueError('Camera view not found in this mission')
+            if not conn.execute('SELECT 1 FROM mission WHERE id=?',(mission,)).fetchone():
+                raise ValueError('Mission not found')
+            placeholders=','.join('?' for _ in images)
+            found={row['id'] for row in conn.execute(
+                f'SELECT id FROM images WHERE id IN ({placeholders})',images)}
+            if found!=set(images):
+                raise ValueError('One or more images were not found in this mission')
+            changed=[]
+            for image in images:
+                previous=conn.execute('SELECT view_id FROM image_view_history WHERE mission_id=? AND image_id=? ORDER BY revision DESC LIMIT 1',(mission,image)).fetchone()
+                if previous and previous['view_id']==view_id:continue
+                revision=conn.execute('SELECT COALESCE(MAX(revision),0)+1 FROM image_view_history WHERE mission_id=? AND image_id=?',(mission,image)).fetchone()[0]
+                created=now()
+                conn.execute('INSERT INTO image_view_history(mission_id,image_id,view_id,revision,operator,created) VALUES (?,?,?,?,?,?)',
+                    (mission,image,view_id,revision,operator,created))
+                conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
+                    (mission,view_id,'images_assigned' if view_id else 'images_unassigned',
+                     json.dumps({'image_id':image,'revision':revision,'selection_size':len(images)},ensure_ascii=False),operator,created))
+                changed.append({'image_id':image,'view_id':view_id,'revision':revision})
+            return {'requested':len(images),'changed':len(changed),'unchanged':len(images)-len(changed),'assignments':changed}
+
     def view_regions(self, mission, view_id):
         with self.connect(mission) as conn:
             if not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=?',(view_id,mission)).fetchone():

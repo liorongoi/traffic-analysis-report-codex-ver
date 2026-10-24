@@ -1,6 +1,6 @@
 # 04 — UI workflow and wireframes
 
-Confirmed: Hebrew and English, full RTL/LTR. Mission setup records input type, one analysis mode, location/timezone, source/output folders, recursion, processing preference, and export-format preference. The wizard includes a bundled map of supported countries, map-click coordinate selection, an IANA-zone assignment, and UTC-to-local/DST preview. Local scan windows, persistent continuous-monitor pause/resume controls, automatic inference batch status, durable in-app alerts, manual camera-view groups/assignments, and versioned view-specific inclusion/exclusion polygons are available. Automatic view proposals, a worldwide timezone polygon atlas, native OS notifications, video, chat, and plate workflows remain planned or partial.
+Confirmed: Hebrew and English, full RTL/LTR. Mission setup records input type, one analysis mode, location/timezone, source/output folders, recursion, processing preference, and export-format preference. The wizard includes a bundled map of supported countries, map-click coordinate selection, an IANA-zone assignment, and UTC-to-local/DST preview. Local scan windows, persistent continuous-monitor pause/resume controls, automatic inference batch status, durable in-app alerts, manual camera-view groups with individual or selected-image reassignment, and versioned view-specific inclusion/exclusion polygons are available. Automatic view proposals, a worldwide timezone polygon atlas, native OS notifications, video, chat, and plate workflows remain planned or partial.
 
 ```
 Mission library

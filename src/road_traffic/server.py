@@ -151,8 +151,10 @@ def serve(workspace, web, port=8765, open_browser=False):
                         result=library.rename_view(data['mission'],data['id'],data['name'],data['operator'])
                     elif action == 'assign':
                         result=library.assign_view(data['mission'],data['image_id'],data.get('view_id'),data['operator'])
+                    elif action == 'assign_many':
+                        result=library.assign_views(data['mission'],data.get('image_ids'),data.get('view_id'),data['operator'])
                     else:
-                        raise ValueError('Choose create, rename, or assign action')
+                        raise ValueError('Choose create, rename, assign, or assign_many action')
                 elif self.path == '/api/view-regions':
                     action=data.get('action')
                     if action == 'create':

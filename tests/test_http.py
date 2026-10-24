@@ -119,6 +119,27 @@ class HttpTests(unittest.TestCase):
         with self.request('/api/views?mission='+mission) as response:
             self.assertEqual(json.load(response)[0]['image_count'],1)
 
+    def test_batch_camera_view_api_assignment(self):
+        from road_traffic.store import Library
+        with self.request('/api/missions',{'name':'Batch view fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        lib=Library(self.tmp.name)
+        with tempfile.TemporaryDirectory() as source:
+            write_test_image(Path(source)/'17052026-1604-view-a.jpg')
+            write_test_image(Path(source)/'17052026-1605-view-b.jpg',(55,85,125))
+            lib.import_folder(mission,source,'camera')
+        images=lib.images(mission)
+        with self.request('/api/views',{'mission':mission,'action':'create','name':'Approach A','operator':'Operator'}) as response:
+            view=json.load(response)
+        with self.request('/api/views',{'mission':mission,'action':'assign_many','image_ids':[row['id'] for row in images],
+            'view_id':view['id'],'operator':'Operator'}) as response:
+            self.assertEqual(json.load(response)['changed'],2)
+        with self.request('/api/views?mission='+mission) as response:
+            self.assertEqual(json.load(response)[0]['image_count'],2)
+        for row in images:
+            with self.request('/api/view-history?mission='+mission+'&image='+row['id']) as response:
+                self.assertEqual(json.load(response)[0]['view_name'],'Approach A')
+
     def test_view_region_api_round_trip_and_append_only_history(self):
         from road_traffic.store import Library
         with self.request('/api/missions',{'name':'Region fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
