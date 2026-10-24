@@ -50,22 +50,46 @@ def prepare(library,mission):
     with library.connect(mission) as conn:schema(conn)
 
 
+def _mission_snapshot(conn,mission):
+    row=conn.execute('''SELECT m.id,m.name,m.country,m.zone,m.created,
+            s.input_type,s.analysis_mode,s.location,s.source_root,s.include_subdirectories,
+            s.processing_mode,s.output_root,s.export_formats
+        FROM mission m JOIN mission_settings s ON s.mission_id=m.id WHERE m.id=?''',(mission,)).fetchone()
+    if not row:raise ValueError('Mission not found')
+    snapshot=dict(row)
+    snapshot['include_subdirectories']=bool(snapshot['include_subdirectories'])
+    snapshot['export_formats']=json.loads(snapshot['export_formats'])
+    return snapshot
+
+
+def _source_run_snapshots(conn,image_ids):
+    image_ids=sorted(set(image_ids))
+    if not image_ids:return []
+    placeholders=','.join('?' for _ in image_ids)
+    run_ids=[row['run_id'] for row in conn.execute(
+        f'SELECT DISTINCT run_id FROM images WHERE id IN ({placeholders}) AND run_id IS NOT NULL',image_ids)]
+    if not run_ids:return []
+    placeholders=','.join('?' for _ in run_ids)
+    return [dict(row) for row in conn.execute(
+        f'SELECT id,preset,source_root,status,created,error FROM runs WHERE id IN ({placeholders}) ORDER BY created,id',run_ids)]
+
+
 def create_run(library,mission,config,source_run=None):
     prepare(library,mission)
     run=str(uuid.uuid4())
-    windows=library.scan_windows(mission)
-    with library.connect(mission) as conn:
-        zone=conn.execute('SELECT zone FROM mission WHERE id=?',(mission,)).fetchone()['zone']
     with library.connect(mission) as conn:
         conn.execute('BEGIN IMMEDIATE')
+        mission_snapshot=_mission_snapshot(conn,mission)
+        windows=[{**dict(row),'weekdays':json.loads(row['weekdays'])} for row in conn.execute(
+            'SELECT * FROM scan_windows WHERE mission_id=? ORDER BY created,id',(mission,))]
         if source_run and not conn.execute('SELECT 1 FROM runs WHERE id=?',(source_run,)).fetchone():
             raise ValueError('Source batch not found in this mission')
-        rows=conn.execute('SELECT id,sha256,capture_utc FROM images WHERE (? IS NULL OR run_id=?) ORDER BY capture_utc,name',
+        rows=conn.execute('SELECT id,run_id,sha256,capture_utc FROM images WHERE (? IS NULL OR run_id=?) ORDER BY capture_utc,name',
             (source_run,source_run)).fetchall()
         if not rows:raise ValueError('Import images before running inference')
         from .schedules import compile_windows,eligible_compiled
         compiled=compile_windows(windows)
-        eligible_rows=[row for row in rows if eligible_compiled(row['capture_utc'],zone,compiled)]
+        eligible_rows=[row for row in rows if eligible_compiled(row['capture_utc'],mission_snapshot['zone'],compiled)]
         if not eligible_rows:
             raise ValueError('No imported images fall within the configured local-time scan windows')
         if conn.execute("SELECT 1 FROM inference_runs WHERE status IN ('queued','running')").fetchone():
@@ -78,7 +102,10 @@ def create_run(library,mission,config,source_run=None):
             AND h.revision=(SELECT MAX(x.revision) FROM view_region_history x WHERE x.region_key=h.region_key)''',(mission,)):
             regions.setdefault(item['view_id'],[]).append({'id':item['region_key'],'revision':item['revision'],
                 'kind':item['kind'],'polygon':json.loads(item['polygon'])})
-        recorded_config={**config,'source_run_id':source_run,'scan_schedule_snapshot':{'timezone':zone,'windows':windows,
+        recorded_config={**config,'run_config_schema_version':1,'mission_snapshot':mission_snapshot,
+            'mission_snapshot_provenance':'captured_at_run_start','source_run_id':source_run,
+            'source_runs_snapshot':_source_run_snapshots(conn,[row['id'] for row in eligible_rows]),
+            'scan_schedule_snapshot':{'timezone':mission_snapshot['zone'],'windows':windows,
             'excluded_image_count':len(rows)-len(eligible_rows)},'view_regions_snapshot':regions}
         conn.execute('INSERT INTO inference_runs(id,status,stage,total,config,created) VALUES (?,?,?,?,?,?)',
             (run,'queued','queued',len(eligible_rows),json.dumps(recorded_config),now()))
@@ -182,6 +209,11 @@ def create_roi_rerun(library,mission,source_run,operator):
         used={row['view_id'] for row in conn.execute(
             'SELECT DISTINCT view_id FROM inference_input_views WHERE inference_id=? AND view_id IS NOT NULL',(source_run,))}
         config=json.loads(source['config']);config['rerun_of']=source_run
+        if 'mission_snapshot' not in config:
+            config['run_config_schema_version']=1
+            config['mission_snapshot']=_mission_snapshot(conn,mission)
+            config['mission_snapshot_provenance']='captured_at_roi_rerun_for_legacy_source'
+        config.setdefault('source_runs_snapshot',_source_run_snapshots(conn,[row['image_id'] for row in inputs]))
         config['view_regions_snapshot']=_current_regions(conn,mission,used)
         conn.execute('INSERT INTO inference_runs(id,status,stage,total,config,created) VALUES (?,?,?,?,?,?)',
             (run,'queued','queued',len(inputs),json.dumps(config,ensure_ascii=False),created))

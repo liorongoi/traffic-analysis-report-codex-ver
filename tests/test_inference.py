@@ -59,6 +59,23 @@ class InferenceLedgerTests(unittest.TestCase):
         row=self.lib.images(self.m)[0]
         self.assertEqual(row['revision'],0);self.assertEqual(row['review_status'],'unreviewed')
         self.assertEqual(json.loads(row['annotations']),self.pred)
+
+    def test_run_configuration_includes_immutable_mission_and_source_snapshots(self):
+        row=self.lib.images(self.m)[0]
+        with self.lib.connect(self.m) as conn:
+            raw=conn.execute('SELECT config FROM inference_runs WHERE id=?',(self.run,)).fetchone()['config']
+            config=json.loads(raw)
+            source=conn.execute('SELECT preset,source_root,status,created,error FROM runs WHERE id=?',(row['run_id'],)).fetchone()
+            self.assertEqual(config['run_config_schema_version'],1)
+            self.assertEqual((config['mission_snapshot']['id'],config['mission_snapshot']['name']),
+                (self.m,'Test'))
+            self.assertEqual((config['mission_snapshot']['country'],config['mission_snapshot']['zone']),
+                ('Israel','Asia/Jerusalem'))
+            self.assertEqual(config['mission_snapshot']['input_type'],'images')
+            self.assertEqual(config['mission_snapshot']['export_formats'],['csv'])
+            self.assertEqual(config['source_runs_snapshot'],[dict(id=row['run_id'],**dict(source))])
+            with self.assertRaisesRegex(sqlite3.IntegrityError,'immutable run configuration'):
+                conn.execute('UPDATE inference_runs SET config=? WHERE id=?',('{}',self.run))
     def test_correction_survives_restart_and_keeps_original(self):
         changed=[{**self.pred[0],'kind':'vehicle','label':'truck','reviewed':True}]
         self.lib.review(self.m,self.image,0,changed,'Test operator',prediction_run=self.run)

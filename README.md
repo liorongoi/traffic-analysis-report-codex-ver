@@ -38,7 +38,7 @@ Fintraffic samples supplied by the user are imported locally into `workspace/sam
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-See [verification record](docs/09-verification.md). 90 Python checks and `node --check web/app.js` pass for the current build. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
+See [verification record](docs/09-verification.md). 91 Python checks and `node --check web/app.js` pass for the current build. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
 
 ## Not implemented yet
 
