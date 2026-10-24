@@ -37,6 +37,7 @@ class ContinuousBatchTests(unittest.TestCase):
         source_run = state['last_batch']['run']
         self.assertEqual(state['batches'], {'queued': 1})
         self.assertEqual(len(created), 1)
+        self.assertEqual([alert['kind'] for alert in state['alerts']], ['new_data'])
         with self.library.connect(self.mission) as conn:
             inference_run = conn.execute('SELECT id FROM inference_runs').fetchone()['id']
             inputs = conn.execute('SELECT COUNT(*) FROM inference_inputs WHERE inference_id=?', (inference_run,)).fetchone()[0]
@@ -44,6 +45,9 @@ class ContinuousBatchTests(unittest.TestCase):
             conn.execute("UPDATE inference_runs SET status='completed',stage='finished' WHERE id=?", (inference_run,))
         state = monitor.status(self.mission)
         self.assertEqual(state['batches'], {'completed': 1})
+        self.assertEqual([alert['kind'] for alert in state['alerts']], ['new_data', 'completed'])
+        monitor.acknowledge(self.mission,[alert['id'] for alert in state['alerts']])
+        self.assertEqual(monitor.status(self.mission)['alerts'],[])
         monitor.scan(self.mission)
         self.assertEqual(len(created), 1)
         self.assertNotEqual(source_run, inference_run)

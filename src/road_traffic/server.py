@@ -136,9 +136,12 @@ def serve(workspace, web, port=8765, open_browser=False):
                     else:
                         result = library.add_scan_window(data['mission'],data['window'])
                 elif self.path == '/api/monitoring':
-                    if data.get('action') not in ('pause','resume'):
-                        raise ValueError('Choose pause or resume monitoring')
-                    result=monitor.set_enabled(data['mission'],data['action']=='resume')
+                    action=data.get('action')
+                    if action in ('pause','resume'):
+                        result=monitor.set_enabled(data['mission'],action=='resume')
+                    elif action=='acknowledge_alerts':
+                        result=monitor.acknowledge(data['mission'],data.get('ids'))
+                    else:raise ValueError('Choose pause, resume, or acknowledge_alerts')
                 elif self.path == '/api/views':
                     action=data.get('action')
                     if action == 'create':

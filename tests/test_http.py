@@ -219,6 +219,15 @@ class HttpTests(unittest.TestCase):
                 self.assertEqual(json.load(response)['status'],'paused')
             with self.request('/api/monitoring',{'mission':mission,'action':'resume'}) as response:
                 self.assertTrue(json.load(response)['enabled'])
+            from road_traffic.store import Library
+            library=Library(Path(self.tmp.name))
+            with library.connect(mission) as conn:
+                conn.execute("INSERT INTO monitor_events(source_run_id,kind,details,created) VALUES ('fixture','new_data','Imported fixture batch','now')")
+            with self.request('/api/monitoring?mission='+mission) as response:
+                alerts=json.load(response)['alerts']
+                self.assertEqual(alerts[0]['details'],'Imported fixture batch')
+            with self.request('/api/monitoring',{'mission':mission,'action':'acknowledge_alerts','ids':[alerts[0]['id']]}) as response:
+                self.assertEqual(json.load(response)['alerts'],[])
 
     def test_csv_export_writes_traceable_non_overwriting_snapshot(self):
         with tempfile.TemporaryDirectory() as external:

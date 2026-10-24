@@ -74,6 +74,8 @@ class SourceMonitor:
                 'SELECT status,COUNT(*) count FROM monitor_batches GROUP BY status')}
             state['recent_errors'].extend({'relative_path':'source batch '+row['source_run_id'],'error':row['error']}
                 for row in conn.execute("SELECT source_run_id,error FROM monitor_batches WHERE status IN ('failed','completed_with_errors') AND error IS NOT NULL ORDER BY created DESC LIMIT 20"))
+            state['alerts']=[dict(row) for row in conn.execute(
+                'SELECT id,source_run_id,kind,details,created FROM monitor_events WHERE acknowledged=0 ORDER BY id LIMIT 100')]
             return state
 
     def _sync_batches(self,mission):
@@ -86,8 +88,14 @@ class SourceMonitor:
                 if row['status'] in ('completed','completed_with_errors','failed','cancelled'):
                     error=(row['error'] or row['status']) if row['status']!='completed' else None
                     batch_status='completed' if row['status']=='completed' else row['status']
-                    conn.execute('UPDATE monitor_batches SET status=?,error=? WHERE source_run_id=?',
-                        (batch_status,error,row['source_run_id']))
+                    previous=conn.execute('SELECT status FROM monitor_batches WHERE source_run_id=?',(row['source_run_id'],)).fetchone()['status']
+                    if previous!=batch_status:
+                        conn.execute('UPDATE monitor_batches SET status=?,error=? WHERE source_run_id=?',
+                            (batch_status,error,row['source_run_id']))
+                        kind={'completed':'completed','completed_with_errors':'completed_with_errors','failed':'failed','cancelled':'failed'}[row['status']]
+                        details=error or 'Inference batch finished successfully'
+                        conn.execute('INSERT OR IGNORE INTO monitor_events(source_run_id,kind,details,created) VALUES (?,?,?,?)',
+                            (row['source_run_id'],kind,details,now()))
 
     def _dispatch_batches(self,mission):
         if not self.on_batch:return
@@ -102,6 +110,8 @@ class SourceMonitor:
                 with self.library.connect(mission) as conn:
                     conn.execute("UPDATE monitor_batches SET status='failed',error=? WHERE source_run_id=? AND status='pending'",
                         (str(exc)[:1000],source_run))
+                    conn.execute("INSERT OR IGNORE INTO monitor_events(source_run_id,kind,details,created) VALUES (?,'failed',?,?)",
+                        (source_run,str(exc)[:1000],now()))
                 continue
             with self.library.connect(mission) as conn:
                 conn.execute("UPDATE monitor_batches SET status='queued',inference_run_id=?,error=NULL WHERE source_run_id=? AND status='pending'",
@@ -191,6 +201,8 @@ class SourceMonitor:
                         if self.on_batch:
                             conn.execute("INSERT OR IGNORE INTO monitor_batches(source_run_id,status,created) VALUES (?,'pending',?)",
                                 (result['run'],now()))
+                            conn.execute("INSERT OR IGNORE INTO monitor_events(source_run_id,kind,details,created) VALUES (?,'new_data',?,?)",
+                                (result['run'],f'{len(ready)} image(s) imported and awaiting inference.',now()))
                     self._state(mission, 'active', imported=True)
                     self._dispatch_batches(mission)
                     return {**self.status(mission), 'last_batch': result}
@@ -204,3 +216,11 @@ class SourceMonitor:
             self._dispatch_batches(mission)
             self._state(mission, 'active')
             return self.status(mission)
+
+    def acknowledge(self,mission,identifiers):
+        if not isinstance(identifiers,list) or len(identifiers)>100 or any(type(value) is not int or value<1 for value in identifiers):
+            raise ValueError('Alert identifiers must be a list of up to 100 positive integers')
+        if identifiers:
+            with self.library.connect(mission) as conn:
+                conn.executemany('UPDATE monitor_events SET acknowledged=1 WHERE id=?',[(value,) for value in identifiers])
+        return self.status(mission)

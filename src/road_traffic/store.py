@@ -115,6 +115,11 @@ class Library:
             id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1))
         )''')
         conn.execute('INSERT OR IGNORE INTO monitor_control(id,enabled) VALUES (1,1)')
+        conn.execute('''CREATE TABLE IF NOT EXISTS monitor_events(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, source_run_id TEXT, kind TEXT NOT NULL,
+            details TEXT NOT NULL, created TEXT NOT NULL, acknowledged INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(source_run_id,kind)
+        )''')
         conn.execute('''CREATE TABLE IF NOT EXISTS monitor_state(
             id INTEGER PRIMARY KEY CHECK(id=1), status TEXT NOT NULL,
             last_scan TEXT, last_import TEXT, error TEXT
