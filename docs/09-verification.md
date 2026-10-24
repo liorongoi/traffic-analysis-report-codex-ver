@@ -19,6 +19,8 @@ English and Hebrew UI, full bidirectional layout. Current-user Windows installat
 
 The Fintraffic sample set has no human ground-truth labels. No precision/recall/F1, night detection accuracy, throughput, GPU compatibility or video performance has been measured. Annotation geometry is stored as normalized original-image coordinates. Manual camera-view groups and individual/selected-image assignments, versioned view-specific inclusion/exclusion polygons, append-only history, proposal filtering, inference-run snapshots, and warnings when an affected view's current ROI geometry differs from a saved run are implemented. An operator can acknowledge a changed ROI and create an audited rerun using the same saved input images and model settings; model drift blocks this shortcut. Automatic view discovery/grouping remains future work.
 
+Manual browser smoke on 2026-10-25 used a disposable local mission and two generated JPEGs: the mission imported both images, a camera group was created and refreshed in the list, and the selected-image batch assignment updated its image count to two. The browser console showed no errors after fixing the form refresh. This checks the local browser workflow only; it does not establish native Windows or packaged deployment acceptance.
+
 No actual Windows runtime was staged, setup EXE compiled/extracted, target installed, native runtime checked or no-admin policy exercised. Installer scripts are source only. Network-share behavior and production LAN authentication remain unverified/unimplemented.
 
 The initial failed sample import was followed by a corrected successful 143-image import; failure evidence was retained. Initial test failures identified an INSERT placeholder mismatch, which was fixed before the successful suite.
