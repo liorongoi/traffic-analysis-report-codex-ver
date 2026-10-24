@@ -560,8 +560,12 @@ def fail_worker(library, mission, run_id, error):
             (now(), now(), reason, mission, run_id))
 
 
-def events(library, mission, run_id):
+def events(library, mission, run_id, *, limit=100, offset=0):
     prepare(library, mission)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError('event page limit must be between 1 and 100')
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise ValueError('event page offset must be a non-negative integer')
     with library.connect(mission) as conn:
         if not conn.execute('SELECT 1 FROM video_runs WHERE id=? AND mission_id=?',
                 (run_id, mission)).fetchone():
@@ -569,8 +573,8 @@ def events(library, mission, run_id):
         rows = conn.execute('''SELECT e.*,r.revision,r.operator,r.action,r.payload,r.created reviewed_at
             FROM video_events e LEFT JOIN video_event_reviews r ON r.event_id=e.id
             AND r.revision=(SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id)
-            WHERE e.mission_id=? AND e.run_id=? ORDER BY e.id''',
-            (mission, run_id)).fetchall()
+            WHERE e.mission_id=? AND e.run_id=? ORDER BY (1.0*e.first_offset_num/e.first_offset_den),e.id LIMIT ? OFFSET ?''',
+            (mission, run_id, limit, offset)).fetchall()
     result = []
     for row in rows:
         item = dict(row)

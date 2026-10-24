@@ -62,6 +62,9 @@ class HttpTests(unittest.TestCase):
         with self.request('/') as response:
             page=response.read().decode('utf-8')
             self.assertIn('id="helpPanel"',page)
+            self.assertIn('id="videoWorkflow"',page)
+            self.assertIn('id="videoRunForm"',page)
+            self.assertIn('id="videoEventList"',page)
             for key in ('keyboardHelp','helpImport','helpSchedule','helpViews','helpReview','helpScope'):
                 self.assertIn(f'data-t="{key}"',page)
     def test_write_requires_session_token(self):

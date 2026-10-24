@@ -61,7 +61,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                 if parsed.path == '/api/video/runs':
                     return self.reply(200,video_inference.status(query['mission'][0]))
                 if parsed.path == '/api/video/events':
-                    return self.reply(200,video_store.events(library,query['mission'][0],query['run'][0]))
+                    return self.reply(200,video_store.events(library,query['mission'][0],query['run'][0],
+                        limit=int(query.get('limit',['100'])[0]),offset=int(query.get('offset',['0'])[0])))
                 if parsed.path == '/api/exports':
                     return self.reply(200,library.exports(query['mission'][0]))
                 if parsed.path == '/api/monitoring':

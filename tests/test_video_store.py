@@ -108,6 +108,9 @@ class VideoStoreTests(unittest.TestCase):
         self.assertEqual(saved_run['status'], 'completed')
         saved_events = events(self.library, self.mission, run['id'])
         self.assertEqual(len(saved_events), 1)
+        self.assertEqual(len(events(self.library, self.mission, run['id'], limit=1, offset=0)), 1)
+        with self.assertRaisesRegex(ValueError, 'between 1 and 100'):
+            events(self.library, self.mission, run['id'], limit=101)
         item = saved_events[0]
         expected_origin = datetime(2026, 5, 17, 16, 4, tzinfo=timezone.utc)
         self.assertEqual(item['first_utc'], expected_origin.isoformat())
