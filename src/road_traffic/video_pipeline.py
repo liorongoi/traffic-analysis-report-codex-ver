@@ -56,9 +56,10 @@ class VideoAnalysisPipeline:
         self.detector = detector
         self.tracker = tracker
         self.decoder_factory = decoder_factory
+        self.metadata = None
 
     def analyze(self, path, *, recording_start_utc=None, should_cancel=None,
-                progress_callback=None):
+                progress_callback=None, start_frame_index=0, expected_previous_timestamp=None):
         """Yield per-frame analyses and a final track-closure record.
 
         `recording_start_utc` must be a timezone-aware origin confirmed from
@@ -75,12 +76,27 @@ class VideoAnalysisPipeline:
             raise TypeError('should_cancel must be callable')
         if progress_callback is not None and not callable(progress_callback):
             raise TypeError('progress_callback must be callable')
+        if (isinstance(start_frame_index, bool) or not isinstance(start_frame_index, int)
+                or start_frame_index < 0):
+            raise ValueError('start_frame_index must be a non-negative integer')
+        if start_frame_index == 0 and expected_previous_timestamp is not None:
+            raise ValueError('A fresh video run cannot include a previous-frame checkpoint')
+        if start_frame_index > 0 and not isinstance(expected_previous_timestamp, VideoTimestamp):
+            raise ValueError('Resuming video analysis requires its saved previous-frame timestamp')
 
         started = time.monotonic()
         with self.decoder_factory(path) as decoder:
             metadata = decoder.metadata
+            self.metadata = metadata
             frame_count = metadata.frame_count if metadata.frame_count > 0 else None
+            verified_previous = start_frame_index == 0
             for decoded in decoder.frames():
+                if decoded.index < start_frame_index:
+                    if decoded.index == start_frame_index - 1:
+                        if decoded.timestamp != expected_previous_timestamp:
+                            raise ValueError('Video source timeline changed since the saved checkpoint')
+                        verified_previous = True
+                    continue
                 if should_cancel is not None and should_cancel():
                     raise VideoAnalysisCancelled('Video analysis cancelled between frames')
                 detections = self.detector.infer(decoded.image)
@@ -89,9 +105,11 @@ class VideoAnalysisPipeline:
                 tracking = self.tracker.update(decoded.timestamp, detections)
                 elapsed = max(0.0, time.monotonic() - started)
                 processed = decoded.index + 1
+                processed_this_session = processed - start_frame_index
                 eta = None
-                if frame_count is not None and processed < frame_count and processed:
-                    eta = elapsed / processed * (frame_count - processed)
+                if (frame_count is not None and processed < frame_count
+                        and processed_this_session > 0):
+                    eta = elapsed / processed_this_session * (frame_count - processed)
                 progress = VideoProgress(
                     frames_processed=processed,
                     total_frames=frame_count,
@@ -113,4 +131,6 @@ class VideoAnalysisPipeline:
                     closed_tracks=tracking.closed_tracks,
                     progress=progress,
                 )
+            if not verified_previous:
+                raise ValueError('Video is shorter than the saved checkpoint; refusing an unsafe resume')
         yield VideoTrackClosure(self.tracker.finish())

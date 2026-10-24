@@ -372,6 +372,82 @@ def checkpoint(library, mission, run_id, *, frame_index, timestamp, tracker_stat
     return {'duplicate': False, 'frames_done': frame_index + 1, 'events_inserted': events_inserted}
 
 
+def set_total_frames(library, mission, run_id, total_frames):
+    prepare(library, mission)
+    if isinstance(total_frames, bool) or not isinstance(total_frames, int) or total_frames < 1:
+        raise ValueError('total_frames must be a positive integer')
+    with library.connect(mission) as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        run = conn.execute('SELECT status,total_frames FROM video_runs WHERE mission_id=? AND id=?',
+            (mission, run_id)).fetchone()
+        if not run:
+            raise ValueError('Video run not found')
+        if run['status'] != 'running':
+            raise ValueError('Video run must be running before setting its frame total')
+        if run['total_frames'] is not None and run['total_frames'] != total_frames:
+            raise ValueError('Video frame total changed after processing started')
+        conn.execute('UPDATE video_runs SET total_frames=?,updated=? WHERE id=?',
+            (total_frames, now(), run_id))
+
+
+def execute_video_run(library, mission, run_id, detector, *, should_cancel=None,
+                      progress_callback=None):
+    """Execute or resume one persisted run synchronously in a worker process."""
+    from .tracking import TrackerPolicy, VideoTrackManager
+    from .video_pipeline import (VideoAnalysisCancelled, VideoAnalysisPipeline,
+        VideoFrameAnalysis, VideoTrackClosure)
+
+    run = run_detail(library, mission, run_id)
+    if run['status'] in ('failed', 'cancelled'):
+        transition(library, mission, run_id, 'queued')
+        run = run_detail(library, mission, run_id)
+    if run['status'] not in ('queued', 'paused'):
+        raise ValueError(f'Video run cannot start from {run["status"]}')
+    transition(library, mission, run_id, 'running')
+    run = run_detail(library, mission, run_id)
+    try:
+        source = run['config']['source_snapshot']
+        path = source_path(library, mission, run['source_id'])
+        policy = TrackerPolicy.from_config(run['config']['tracker_policy'])
+        state = run['tracker_checkpoint'] if run['frames_done'] else None
+        tracker = VideoTrackManager(policy, run_id=run_id, state=state)
+        pipeline = VideoAnalysisPipeline(detector, tracker)
+        previous = None
+        if run['frames_done']:
+            previous = VideoTimestamp(run['current_pts'], run['current_time_base_num'],
+                run['current_time_base_den'])
+
+        def progress(item):
+            if item.total_frames is not None and run['total_frames'] is None:
+                set_total_frames(library, mission, run_id, item.total_frames)
+                run['total_frames'] = item.total_frames
+            if progress_callback is not None:
+                progress_callback(item)
+
+        for record in pipeline.analyze(path,
+                recording_start_utc=(datetime.fromisoformat(source['recording_start_utc'])
+                    if source['recording_start_utc'] else None),
+                should_cancel=should_cancel, progress_callback=progress,
+                start_frame_index=run['frames_done'], expected_previous_timestamp=previous):
+            if isinstance(record, VideoFrameAnalysis):
+                checkpoint(library, mission, run_id, frame_index=record.frame_index,
+                    timestamp=record.timestamp, tracker_state=tracker.state(),
+                    closed_tracks=record.closed_tracks)
+            elif isinstance(record, VideoTrackClosure):
+                transition(library, mission, run_id, 'completed', final_tracks=record.tracks)
+        return run_detail(library, mission, run_id)
+    except VideoAnalysisCancelled as exc:
+        current = run_detail(library, mission, run_id)
+        if current['status'] == 'running':
+            transition(library, mission, run_id, 'cancelled', error=str(exc))
+        return run_detail(library, mission, run_id)
+    except Exception as exc:
+        current = run_detail(library, mission, run_id)
+        if current['status'] == 'running':
+            transition(library, mission, run_id, 'failed', error=f'{type(exc).__name__}: {exc}')
+        raise
+
+
 def transition(library, mission, run_id, target, *, error=None, final_tracks=()):
     allowed = {'queued': {'running', 'cancelled', 'failed'},
         'running': {'paused', 'completed', 'cancelled', 'failed'},

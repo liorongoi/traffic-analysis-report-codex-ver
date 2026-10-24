@@ -2,14 +2,16 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 from fractions import Fraction
 from pathlib import Path
+import subprocess
 import sqlite3
+import sys
 import tempfile
 import unittest
 
 from road_traffic.store import Library
 from road_traffic.tracking import TrackerPolicy, VideoTrackManager
 from road_traffic.video_store import (checkpoint, create_run, events, register_video,
-    review_event, run_detail, source_path, transition)
+    execute_video_run, review_event, run_detail, source_path, transition)
 from road_traffic.video_timeline import VideoTimestamp
 
 
@@ -38,6 +40,14 @@ class VideoStoreTests(unittest.TestCase):
             'tracker_policy': {'max_gap_seconds': [1, 2], 'minimum_iou': .2,
                 'max_center_distance': .15, 'association_margin': .05,
                 'compatible_label_groups': []}}
+
+    class FakeDetector:
+        def __init__(self):
+            self.calls = 0
+
+        def infer(self, rgb):
+            self.calls += 1
+            return [{'label': 'car', 'box': [.2 + self.calls * .002, .2, .1, .1]}]
 
     def test_source_snapshot_run_checkpoint_events_and_utc_are_durable(self):
         source = register_video(self.library, self.mission, 'clip.mkv',
@@ -179,6 +189,29 @@ class VideoStoreTests(unittest.TestCase):
         (nested / 'clip.mkv').write_bytes(self.original)
         with self.assertRaisesRegex(ValueError, 'not configured to include video subdirectories'):
             register_video(self.library, flat_mission, 'camera-1/clip.mkv')
+
+    def test_persisted_video_run_cancels_and_resumes_without_duplicate_frames_or_events(self):
+        fixture = Path(__file__).with_name('create_vfr_fixture.py')
+        subprocess.run([sys.executable, str(fixture), str(self.video_file)], check=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        source = register_video(self.library, self.mission, 'clip.mkv',
+            recording_start_utc=self.origin, origin_provenance='operator confirmed')
+        run = create_run(self.library, self.mission, source['id'], self.config(), total_frames=4)
+        first_worker = self.FakeDetector()
+        cancelled = execute_video_run(self.library, self.mission, run['id'], first_worker,
+            should_cancel=lambda: first_worker.calls >= 1)
+        self.assertEqual(cancelled['status'], 'cancelled')
+        self.assertEqual(cancelled['frames_done'], 1)
+        self.assertEqual(first_worker.calls, 1)
+
+        second_worker = self.FakeDetector()
+        completed = execute_video_run(self.library, self.mission, run['id'], second_worker)
+        self.assertEqual(completed['status'], 'completed')
+        self.assertEqual(completed['frames_done'], 4)
+        self.assertEqual(second_worker.calls, 3)
+        saved_events = events(self.library, self.mission, run['id'])
+        self.assertEqual(len(saved_events), 1)
+        self.assertEqual(saved_events[0]['observation_count'], 4)
 
 
 if __name__ == '__main__':

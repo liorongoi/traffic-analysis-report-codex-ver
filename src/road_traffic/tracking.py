@@ -46,6 +46,21 @@ class TrackerPolicy:
         return previous == current or any(previous in group and current in group
                                           for group in self.compatible_label_groups)
 
+    @classmethod
+    def from_config(cls, config):
+        if not isinstance(config, dict):
+            raise ValueError('Tracker policy config must be a mapping')
+        required = ('max_gap_seconds', 'minimum_iou', 'max_center_distance', 'association_margin')
+        missing = [key for key in required if key not in config]
+        if missing:
+            raise ValueError('Tracker policy config is missing: ' + ', '.join(missing))
+        gap = config['max_gap_seconds']
+        if isinstance(gap, (list, tuple)):
+            gap = Fraction(*gap)
+        groups = tuple(frozenset(group) for group in config.get('compatible_label_groups', ()))
+        return cls(gap, config['minimum_iou'], config['max_center_distance'],
+            config['association_margin'], groups)
+
 
 @dataclass(frozen=True, slots=True)
 class TrackSummary:

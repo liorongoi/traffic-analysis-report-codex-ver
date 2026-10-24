@@ -10,6 +10,7 @@ from road_traffic.tracking import TrackerPolicy, VideoTrackManager
 from road_traffic.video_decoder import IsolatedVideoDecoder, VideoDecodeError
 from road_traffic.video_pipeline import (VideoAnalysisCancelled, VideoAnalysisPipeline,
     VideoFrameAnalysis, VideoTrackClosure)
+from road_traffic.video_timeline import VideoTimestamp
 
 
 def make_vfr_video(path):
@@ -93,6 +94,29 @@ class VideoAnalysisPipelineTests(unittest.TestCase):
                 list(decoder.frames())
                 with self.assertRaisesRegex(RuntimeError, 'only be consumed once'):
                     list(decoder.frames())
+
+    def test_resume_skips_saved_frames_and_checks_the_source_timeline(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'variable-rate.mkv'
+            make_vfr_video(path)
+            detector = FakeDetector()
+            processor, _ = pipeline(detector)
+            first = processor.tracker.update(VideoTimestamp(0, 1, 1000),
+                [{'label': 'car', 'box': [.202, .2, .1, .1]}]).assignments[0]
+            expected = VideoTimestamp(0, 1, 1000)
+            records = list(processor.analyze(path, start_frame_index=1,
+                expected_previous_timestamp=expected))
+            frames = [record for record in records if isinstance(record, VideoFrameAnalysis)]
+            self.assertEqual([item.frame_index for item in frames], [1, 2, 3])
+            self.assertEqual(detector.calls, 3)
+            self.assertTrue(all(item.assignments[0].track.track_id == first.track.track_id for item in frames))
+
+            detector = FakeDetector()
+            invalid, _ = pipeline(detector)
+            with self.assertRaisesRegex(ValueError, 'timeline changed'):
+                list(invalid.analyze(path, start_frame_index=1,
+                    expected_previous_timestamp=expected.__class__(1, 1, 1000)))
+            self.assertEqual(detector.calls, 0)
 
 
 if __name__ == '__main__':

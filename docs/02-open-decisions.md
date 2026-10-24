@@ -4,6 +4,7 @@
 
 - Confirmed: bilingual Hebrew/English with RTL/LTR. Filenames, timestamps and mixed-script OCR require directional isolation.
 - Received: 143 Fintraffic JPG samples with manifest checksums and timestamps. Still needed: representative videos, codecs, durations, video UTC origin, daily volume and expected history size.
+- Web search (2026-10-25): NATIX Multi-Camera Driving Dataset is the strongest located UTC-aligned MP4 candidate: approximately 1-minute clips, per-frame ISO-8601 GPS timestamps, trip Unix epoch start/end, and an IANA timezone. Access requires approval; its non-commercial license prohibits redistribution, so use only as an opt-in local acceptance source and do not commit footage. The Zenodo Dataset for Traffic Evaluation has road-monitoring MP4 files, but its record does not state a license or timezone; do not use it until the data manager confirms both. Neither source is yet an acquired/validated acceptance fixture.
 - Confirmed: installation must not require administrator rights. Source folders may be local or authorized network shares; credential handling and network-disconnection behavior require Windows testing.
 - Review/export retention and immutable evidence storage budget; no source deletion policy is approved.
 - Source rename reconciliation: identical bytes may represent distinct observations, so checksum equality alone cannot authorize merging or suppressing an import. A manual link policy must identify the source snapshot/path evidence and preserve both capture records.
