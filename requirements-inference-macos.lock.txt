@@ -1,3 +1,4 @@
+av==18.1.0
 flatbuffers==25.12.19
 numpy==2.5.4
 onnxruntime==1.31.0
