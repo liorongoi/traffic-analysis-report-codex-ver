@@ -55,6 +55,10 @@ class HttpTests(unittest.TestCase):
             with self.request(path) as response:
                 self.assertEqual(response.status,200)
                 self.assertIn("default-src 'self'",response.headers['Content-Security-Policy'])
+        with self.request('/timezone-countries.json') as response:
+            self.assertEqual(response.status,200)
+            self.assertIn('application/json',response.headers['Content-Type'])
+            self.assertEqual(len(json.load(response)['features']),5)
     def test_write_requires_session_token(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},token=False)
         self.assertEqual(exc.exception.code,403)

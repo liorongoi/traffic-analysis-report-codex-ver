@@ -99,7 +99,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                             sum(x['kind']=='light' for x in labels),payload,row.get('prediction_run'),row.get('inference_status'),json.dumps(row.get('predictions',[]),ensure_ascii=False),row.get('review_prediction_run'),row.get('evidence_role'),
                             ("'"+row.get('operator','')) if row.get('operator','').lstrip().startswith(('=','+','-','@')) else row.get('operator','')])
                     return self.reply(200, ('\ufeff'+stream.getvalue()).encode('utf-8'), 'text/csv; charset=utf-8')
-                files = {'/':'index.html','/app.js':'app.js','/style.css':'style.css'}
+                files = {'/':'index.html','/app.js':'app.js','/style.css':'style.css',
+                    '/timezone-countries.json':'data/timezone-countries.json'}
                 if parsed.path in files:
                     path = Path(web) / files[parsed.path]
                     return self.reply(200, path.read_bytes(), mimetypes.guess_type(path.name)[0]+'; charset=utf-8')
