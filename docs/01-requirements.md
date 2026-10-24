@@ -28,7 +28,7 @@ This table is the initial foundation-stage mapping, not a current completeness c
 | LEARN-01 | Preserve every correction, revision/conflict resolution, provenance | F | Append-only correction and lineage tests |
 | LEARN-02 | Real adapter capabilities, protected splits, versioned candidates, controlled promotion | P | Training fixture/evaluation/rollback acceptance |
 | EXPORT-01 | XLSX/CSV and clips, Unicode/leading zeros, no truncation/overwrite, snapshot lineage | P | CSV/XLSX files save with unique names, source IDs/checksums, snapshot hashes, and a mission-local export ledger; rows stream in bounded batches, and XLSX sheets split at the Excel row limit; video clips and broader recovery testing remain pending |
-| UX-01 | Modern responsive wizard/review/progress/monitoring/Help; Hebrew/English RTL/LTR | P | Mission setup, bilingual scan-window editor, monitor status, and review are partial; Help and full browser/operator acceptance remain pending |
+| UX-01 | Modern responsive wizard/review/progress/monitoring/Help; Hebrew/English RTL/LTR | P | Mission setup, bilingual scan-window editor, monitor status, review, and contextual bilingual operator help are implemented; full browser/operator and native Windows acceptance remain pending |
 | DEP-01 | Complete offline media, small app updates, no implicit admin/Docker/WSL | P | Native clean-install/update/rollback tests |
 
 No detection accuracy or throughput target is approved. Foundation tests do not establish model performance or Windows compatibility.

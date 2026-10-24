@@ -59,6 +59,11 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(response.status,200)
             self.assertIn('application/json',response.headers['Content-Type'])
             self.assertEqual(len(json.load(response)['features']),5)
+        with self.request('/') as response:
+            page=response.read().decode('utf-8')
+            self.assertIn('id="helpPanel"',page)
+            for key in ('helpImport','helpSchedule','helpViews','helpReview','helpScope'):
+                self.assertIn(f'data-t="{key}"',page)
     def test_write_requires_session_token(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},token=False)
         self.assertEqual(exc.exception.code,403)

@@ -1,6 +1,6 @@
 # 04 — UI workflow and wireframes
 
-Confirmed: Hebrew and English, full RTL/LTR. Mission setup records input type, one analysis mode, location/timezone, source/output folders, recursion, processing preference, and export-format preference. The wizard includes a bundled map of supported countries, map-click coordinate selection, an IANA-zone assignment, and UTC-to-local/DST preview. Local scan windows, persistent continuous-monitor pause/resume controls, automatic inference batch status, durable in-app alerts, manual camera-view groups with individual or selected-image reassignment, versioned view-specific inclusion/exclusion polygons, and an audited acknowledge-and-rerun flow for affected runs are available. Automatic view proposals, a worldwide timezone polygon atlas, native OS notifications, video, chat, and plate workflows remain planned or partial.
+Confirmed: Hebrew and English, full RTL/LTR. Mission setup records input type, one analysis mode, location/timezone, source/output folders, recursion, processing preference, and export-format preference. The wizard includes a bundled map of supported countries, map-click coordinate selection, an IANA-zone assignment, and UTC-to-local/DST preview. Local scan windows, persistent continuous-monitor pause/resume controls, automatic inference batch status, durable in-app alerts, manual camera-view groups with individual or selected-image reassignment, versioned view-specific inclusion/exclusion polygons, an audited acknowledge-and-rerun flow for affected runs, and contextual bilingual operator help are available. Automatic view proposals, a worldwide timezone polygon atlas, native OS notifications, video, chat, and plate workflows remain planned or partial.
 
 ```
 Mission library
@@ -32,4 +32,4 @@ Nighttime table shows confirmed vehicle count separately from unresolved light-b
 
 Bulk action says Approve without individual review and export, previews exact run/result IDs, and excludes later arrivals. Invalid/unknown timestamps and unsupported formats remain visible. Empty, loading, interrupted, unauthorized and model-unavailable states need distinct messages.
 
-Offline timezone map must use bundled geometry/tzdb/fonts, with named-zone search and historical offset/DST preview. No live tile or timezone API. This map and all interactive screens remain planned.
+Offline timezone map must use bundled geometry/tzdb/fonts, with named-zone search and historical offset/DST preview. No live tile or timezone API. The map is implemented for the supported countries. The contextual Help panel documents verified still-image import, UTC capture-time parsing, timezone windows, view/ROI revision behavior, human review, exports, and unsupported modes. Full browser/operator acceptance remains pending.
