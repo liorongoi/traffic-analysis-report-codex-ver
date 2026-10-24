@@ -134,6 +134,19 @@ class StoreTests(unittest.TestCase):
 
     def test_own_workspace_rejected(self):
         with self.assertRaises(ValueError):self.lib.import_folder(self.mission,self.lib.root,'camera')
+        with self.assertRaisesRegex(ValueError,'outside application-managed storage'):
+            self.lib.create('Workspace source','Israel','Asia/Jerusalem',{'source_root':str(self.lib.root)})
+        with self.assertRaisesRegex(ValueError,'outside application-managed storage'):
+            self.lib.create('Workspace output','Israel','Asia/Jerusalem',{'output_root':str(self.lib.root)})
+
+    def test_source_and_output_overlap_is_rejected_in_both_directions(self):
+        output=self.source/'generated-exports';output.mkdir()
+        with self.assertRaisesRegex(ValueError,'must not overlap'):
+            self.lib.create('Nested output','Israel','Asia/Jerusalem',{
+                'source_root':str(self.source),'output_root':str(output)})
+        with self.assertRaisesRegex(ValueError,'must not overlap'):
+            self.lib.create('Parent output','Israel','Asia/Jerusalem',{
+                'source_root':str(output),'output_root':str(self.source)})
 
     def test_mission_configuration_round_trip(self):
         output=self.root/'configured-output';output.mkdir()

@@ -18,7 +18,7 @@ Every correction requires valid mission/run/source lineage and a real operator i
 
 Run transitions: queued → running → completed/failed/cancelled; running ↔ paused only where adapters support checkpointing. Completed/failed runs are immutable historical executions; retry creates a new run. Browser status is fetched from persisted events/progress. Each planned run must declare its input snapshot and algorithm version.
 
-Foundation can create queued runs and store imported evidence but cannot execute model inference. Worker APIs and training are not yet implemented.
+Current still-image General Traffic runs execute through a durable local worker using a staged CPU YOLOX-S model pack; model boxes and experimental night-light outputs remain unconfirmed proposals. Per-image progress, cancellation/resume, and worker-exit reconciliation are implemented. Video decoding/tracking/events, country-specific plate OCR, YOLOX training and controlled model promotion remain unimplemented; a separate mission-local light-correction candidate can be refit only from explicit eligible labels.
 
 
 Continuous still-image monitoring uses backend-owned filesystem notifications to wake scans sooner when available. Periodic full reconciliation remains authoritative and visibly serves as fallback when notification setup fails or the source is unavailable. The watcher is dynamically reconfigured when mission monitoring settings change.
