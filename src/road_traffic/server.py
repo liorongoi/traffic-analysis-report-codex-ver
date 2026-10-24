@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from .store import Library
+from . import video_store
 
 
 def serve(workspace, web, port=8765, open_browser=False):
@@ -18,6 +19,8 @@ def serve(workspace, web, port=8765, open_browser=False):
     from .monitor import SourceMonitor
     from .inference import InferenceService
     inference=InferenceService(library,Path(web).parent/'model-packs'/'yolox-s')
+    from .video_inference import VideoInferenceService
+    video_inference=VideoInferenceService(library,Path(web).parent/'model-packs'/'yolox-s',inference)
     monitor = SourceMonitor(library,on_batch=inference.start_continuous_batch)
     monitor.start()
     token = secrets.token_urlsafe(32)
@@ -53,6 +56,12 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200,{'inventory':inventory(library,m),'candidates':candidates(library,m)})
                 if parsed.path == '/api/inference':
                     return self.reply(200,inference.status(query['mission'][0]))
+                if parsed.path == '/api/video/sources':
+                    return self.reply(200,video_store.sources(library,query['mission'][0]))
+                if parsed.path == '/api/video/runs':
+                    return self.reply(200,video_inference.status(query['mission'][0]))
+                if parsed.path == '/api/video/events':
+                    return self.reply(200,video_store.events(library,query['mission'][0],query['run'][0]))
                 if parsed.path == '/api/exports':
                     return self.reply(200,library.exports(query['mission'][0]))
                 if parsed.path == '/api/monitoring':
@@ -184,6 +193,20 @@ def serve(workspace, web, port=8765, open_browser=False):
                         with inference.lock:inference.training_active=False
                 elif self.path == '/api/inference/stop':
                     result=inference.stop(data['mission'],data['run'])
+                elif self.path == '/api/video/sources':
+                    result=video_store.register_video(library,data['mission'],data['relative_path'],
+                        metadata=data.get('metadata'),recording_start_utc=data.get('recording_start_utc'),
+                        origin_provenance=data.get('origin_provenance'))
+                elif self.path == '/api/video/runs':
+                    result=video_inference.start(data['mission'],data['source_id'],data['tracker_policy'],
+                        threshold=data['threshold'],tiled=data['tiled'])
+                elif self.path == '/api/video/runs/resume':
+                    result=video_inference.resume(data['mission'],data['run'])
+                elif self.path == '/api/video/runs/cancel':
+                    result=video_inference.cancel(data['mission'],data['run'])
+                elif self.path == '/api/video/events/review':
+                    result=video_store.review_event(library,data['mission'],data['event_id'],
+                        data['expected_revision'],data['operator'],data['action'],data.get('payload'))
                 else:
                     return self.reply(404, {'error':'Not found'})
                 self.reply(200,result)

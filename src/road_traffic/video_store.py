@@ -28,7 +28,7 @@ def schema(conn):
       stage TEXT NOT NULL,total_frames INTEGER,frames_done INTEGER NOT NULL DEFAULT 0,
       current_pts INTEGER,current_time_base_num INTEGER,current_time_base_den INTEGER,
       tracker_checkpoint TEXT NOT NULL,last_frame_fingerprint TEXT,config TEXT NOT NULL,created TEXT NOT NULL,
-      updated TEXT NOT NULL,finished TEXT,error TEXT);
+      updated TEXT NOT NULL,finished TEXT,error TEXT,worker_pid INTEGER,cancel_requested INTEGER NOT NULL DEFAULT 0);
     CREATE INDEX IF NOT EXISTS video_runs_mission_idx ON video_runs(mission_id,created,id);
     CREATE UNIQUE INDEX IF NOT EXISTS one_active_video_run ON video_runs(mission_id)
       WHERE status IN ('queued','running','paused');
@@ -66,6 +66,10 @@ def schema(conn):
     columns = {row['name'] for row in conn.execute('PRAGMA table_info(video_runs)')}
     if 'last_frame_fingerprint' not in columns:
         conn.execute('ALTER TABLE video_runs ADD COLUMN last_frame_fingerprint TEXT')
+    if 'worker_pid' not in columns:
+        conn.execute('ALTER TABLE video_runs ADD COLUMN worker_pid INTEGER')
+    if 'cancel_requested' not in columns:
+        conn.execute('ALTER TABLE video_runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0')
 
 
 def prepare(library, mission):
@@ -229,8 +233,8 @@ def create_run(library, mission, source_id, config, *, total_frames=None):
             (mission,)).fetchone()
         if not settings or settings['input_type'] != 'videos':
             raise ValueError('Video runs require a video mission')
-        if settings['analysis_mode'] not in ('video_traffic', 'object_search', 'license_plate'):
-            raise ValueError('Video mission mode is unsupported')
+        if settings['analysis_mode'] != 'video_traffic':
+            raise ValueError('Automatic analysis currently supports Video Traffic missions only')
         source = conn.execute('SELECT * FROM video_sources WHERE mission_id=? AND id=?',
             (mission, source_id)).fetchone()
         if not source:
@@ -484,8 +488,10 @@ def transition(library, mission, run_id, target, *, error=None, final_tracks=())
         elif error is not None:
             raise ValueError('Only failed or cancelled runs can include an error')
         finished = now() if target in ('completed', 'failed', 'cancelled') else None
-        conn.execute('UPDATE video_runs SET status=?,stage=?,updated=?,finished=?,error=? WHERE id=?',
-            (target, target, now(), finished, error, run_id))
+        worker_pid = None if target in ('queued', 'completed', 'failed', 'cancelled') else run['worker_pid']
+        cancel_requested = 0 if target == 'queued' else run['cancel_requested']
+        conn.execute('UPDATE video_runs SET status=?,stage=?,updated=?,finished=?,error=?,worker_pid=?,cancel_requested=? WHERE id=?',
+            (target, target, now(), finished, error, worker_pid, cancel_requested, run_id))
     return {'run': run_id, 'status': target, 'events_inserted': event_count}
 
 
@@ -500,6 +506,58 @@ def run_detail(library, mission, run_id):
     result['tracker_checkpoint'] = json.loads(result['tracker_checkpoint'])
     result['config'] = json.loads(result['config'])
     return result
+
+
+def sources(library, mission):
+    prepare(library, mission)
+    with library.connect(mission) as conn:
+        rows = conn.execute('SELECT * FROM video_sources WHERE mission_id=? ORDER BY created DESC,id',
+            (mission,)).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item['metadata'] = json.loads(item['metadata'])
+        result.append(item)
+    return result
+
+
+def runs(library, mission):
+    prepare(library, mission)
+    with library.connect(mission) as conn:
+        rows = conn.execute('SELECT id,mission_id,source_id,status,stage,total_frames,frames_done,created,updated,finished,error,worker_pid,cancel_requested FROM video_runs WHERE mission_id=? ORDER BY created DESC,id',
+            (mission,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def set_worker_pid(library, mission, run_id, pid):
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        raise ValueError('worker pid must be a positive integer')
+    prepare(library, mission)
+    with library.connect(mission) as conn:
+        conn.execute("UPDATE video_runs SET worker_pid=?,updated=? WHERE mission_id=? AND id=? AND status IN ('queued','running')",
+            (pid, now(), mission, run_id))
+
+
+def request_cancel(library, mission, run_id):
+    prepare(library, mission)
+    with library.connect(mission) as conn:
+        cursor = conn.execute("UPDATE video_runs SET cancel_requested=1,updated=? WHERE mission_id=? AND id=? AND status IN ('queued','running')",
+            (now(), mission, run_id))
+        if cursor.rowcount == 0:
+            row = conn.execute('SELECT status FROM video_runs WHERE mission_id=? AND id=?',
+                (mission, run_id)).fetchone()
+            if not row:
+                raise ValueError('Video run not found')
+            raise ValueError(f'Video run cannot be cancelled from {row["status"]}')
+    return {'run': run_id, 'cancel_requested': True}
+
+
+def fail_worker(library, mission, run_id, error):
+    prepare(library, mission)
+    reason = str(error).strip()[:2000] or 'Video worker stopped unexpectedly'
+    with library.connect(mission) as conn:
+        conn.execute("UPDATE video_runs SET status='failed',stage='failed',updated=?,finished=?,error=?,worker_pid=NULL WHERE mission_id=? AND id=? AND status IN ('queued','running')",
+            (now(), now(), reason, mission, run_id))
 
 
 def events(library, mission, run_id):

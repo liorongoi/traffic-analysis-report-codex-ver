@@ -81,6 +81,17 @@ class InferenceService:
                     if job['status']=='running' and self._pid_alive(job['worker_pid']):return True
                     conn.execute("UPDATE inference_runs SET status='failed',stage='failed',stop_requested=1,error=?,finished=? WHERE id=?",
                         (f'Worker process is no longer available; {job["done"]} of {job["total"]} image results are saved. Resume this run.',now(),job['id']))
+            from . import video_store
+            for job in video_store.runs(self.library, mission):
+                if job['status'] not in ('queued', 'running'):
+                    continue
+                process = self.processes.get((mission, job['id']))
+                if process is not None and process.poll() is None:
+                    return True
+                if self._pid_alive(job['worker_pid']):
+                    return True
+                video_store.fail_worker(self.library, mission, job['id'],
+                    f'Video worker is no longer available; {job["frames_done"]} frames are saved. Resume this run.')
         return False
 
     def start(self,mission,threshold=.18,tiled=True,night_lights=True,night_head_id=None,source_run=None):

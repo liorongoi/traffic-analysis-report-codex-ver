@@ -81,6 +81,23 @@ class HttpTests(unittest.TestCase):
             rows=list(csv.reader(io.StringIO(response.read().decode('utf-8-sig'))))
         self.assertEqual(len(rows),1)
         self.assertEqual(rows[0][0],'image')
+
+    def test_video_source_and_run_status_api(self):
+        with tempfile.TemporaryDirectory() as external:
+            source_root=Path(external)/'video-api-source'
+            source_root.mkdir()
+            (source_root/'intersection.mkv').write_bytes(b'video-fixture')
+            with self.request('/api/missions',{'name':'Video API fixture','country':'Israel','zone':'Asia/Jerusalem',
+                'input_type':'videos','analysis_mode':'video_traffic','source_root':str(source_root)}) as response:
+                mission=json.load(response)['id']
+            with self.request('/api/video/sources',{'mission':mission,'relative_path':'intersection.mkv',
+                'recording_start_utc':'2026-05-17T16:04:00+00:00','origin_provenance':'test metadata'}) as response:
+                source=json.load(response)
+            self.assertEqual(source['recording_start_utc'],'2026-05-17T16:04:00+00:00')
+            with self.request('/api/video/sources?mission='+mission) as response:
+                self.assertEqual(json.load(response)[0]['id'],source['id'])
+            with self.request('/api/video/runs?mission='+mission) as response:
+                self.assertEqual(json.load(response),[])
     def test_invalid_body_returns_error(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'x','country':'Israel','zone':'bad/zone'})
         self.assertEqual(exc.exception.code,400)
