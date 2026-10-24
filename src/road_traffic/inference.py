@@ -105,6 +105,30 @@ class InferenceService:
             self._spawn(mission,run)
         return {'run':run,'config':config}
 
+    def rerun_roi(self,mission,run,operator):
+        from .detector import model_pack,VERSION
+        settings=self.library.settings(mission)
+        if settings['input_type']!='images' or settings['analysis_mode']!='general_traffic':
+            raise ValueError('ROI reruns currently support still-image General Traffic missions only')
+        with self.lock:
+            if self.training_active:raise ValueError('Finish correction-head training before starting inference')
+            if self._has_active_worker():raise InferenceBusy('An inference worker is already running')
+            with self.library.connect(mission) as conn:
+                row=conn.execute('SELECT config FROM inference_runs WHERE id=?',(run,)).fetchone()
+            if not row:raise ValueError('Inference run not found')
+            config=json.loads(row['config'])
+            _,sha=model_pack(self.pack)
+            if config.get('adapter')!=VERSION or config.get('model_sha256')!=sha:
+                raise ValueError('The source model changed; start a new run to apply the current ROI')
+            if config.get('night_head_id'):
+                from .learning import load_head
+                _,head_hash=load_head(self.library,mission,config['night_head_id'])
+                if head_hash!=config.get('night_head_hash'):
+                    raise ValueError('The source correction head changed; start a new run to apply the current ROI')
+            result=inference_store.create_roi_rerun(self.library,mission,run,operator)
+            self._spawn(mission,result['run'])
+        return result
+
     def start_continuous_batch(self,mission,source_run):
         settings=self.library.settings(mission)
         if settings['processing_mode']!='continuous':raise ValueError('Mission is not configured for continuous processing')
@@ -165,9 +189,16 @@ class InferenceService:
                         (f'Worker process ended unexpectedly; {job["done"]} of {job["total"]} image results are saved. Resume this run.',now(),job['id']))
         jobs=inference_store.runs(self.library,mission)
         for job in jobs:
-            changed=inference_store.roi_drift(self.library,mission,job['id'])
-            job['roi_changed_views']=changed
-            job['roi_review_required']=bool(changed)
+            state=inference_store.roi_review_state(self.library,mission,job['id'])
+            job['roi_changed_views']=state['changed_views']
+            job['roi_stale']=state['stale']
+            job['roi_review_required']=state['review_required']
+            acknowledgment=state['acknowledgment']
+            job['roi_rerun_acknowledgment']=acknowledgment
+            if acknowledgment:
+                job['roi_rerun_id']=acknowledgment['rerun_run']
+                job['roi_rerun_status']=acknowledgment['rerun_status']
+                job['roi_rerun_operator']=acknowledgment['operator']
         return jobs
 
     def stop(self,mission,run):

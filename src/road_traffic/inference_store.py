@@ -1,5 +1,6 @@
 """Durable inference ledger. No ML frameworks are imported by the web service."""
 import json
+import hashlib
 import uuid
 from .store import now
 
@@ -25,6 +26,11 @@ def schema(conn):
     CREATE TABLE IF NOT EXISTS review_inference(
       review_id INTEGER PRIMARY KEY REFERENCES reviews(id),inference_id TEXT REFERENCES inference_runs(id),
       changes TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS roi_rerun_acknowledgments(
+      id INTEGER PRIMARY KEY,source_run TEXT NOT NULL REFERENCES inference_runs(id),
+      rerun_run TEXT NOT NULL UNIQUE REFERENCES inference_runs(id),operator TEXT NOT NULL,
+      drift_sha256 TEXT NOT NULL,changed_views TEXT NOT NULL,created TEXT NOT NULL,
+      UNIQUE(source_run,drift_sha256));
     CREATE UNIQUE INDEX IF NOT EXISTS one_active_inference ON inference_runs((1)) WHERE status IN ('queued','running');
     CREATE TRIGGER IF NOT EXISTS immutable_run_config BEFORE UPDATE OF id,config,total,created ON inference_runs BEGIN SELECT RAISE(ABORT,'immutable run configuration'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_predictions_u BEFORE UPDATE ON predictions BEGIN SELECT RAISE(ABORT,'immutable prediction'); END;
@@ -35,6 +41,8 @@ def schema(conn):
     CREATE TRIGGER IF NOT EXISTS immutable_input_views_d BEFORE DELETE ON inference_input_views BEGIN SELECT RAISE(ABORT,'immutable input view snapshot'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_review_link_u BEFORE UPDATE ON review_inference BEGIN SELECT RAISE(ABORT,'immutable review lineage'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_review_link_d BEFORE DELETE ON review_inference BEGIN SELECT RAISE(ABORT,'immutable review lineage'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_roi_ack_u BEFORE UPDATE ON roi_rerun_acknowledgments BEGIN SELECT RAISE(ABORT,'immutable ROI acknowledgment'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_roi_ack_d BEFORE DELETE ON roi_rerun_acknowledgments BEGIN SELECT RAISE(ABORT,'immutable ROI acknowledgment'); END;
     ''')
 
 
@@ -108,6 +116,82 @@ def roi_drift(library,mission,run):
         if saved!=current.get(view_id,{}):
             changed.append({'view_id':view_id,'view_name':names.get(view_id,view_id)})
     return changed
+
+
+def _current_regions(conn,mission,view_ids):
+    snapshot={view_id:[] for view_id in view_ids if view_id}
+    if not snapshot:return snapshot
+    for row in conn.execute('''SELECT h.region_key,h.view_id,h.revision,h.kind,h.polygon FROM view_region_history h
+        WHERE h.mission_id=? AND h.action='upsert'
+        AND h.revision=(SELECT MAX(x.revision) FROM view_region_history x WHERE x.region_key=h.region_key)
+        ORDER BY h.region_key,h.created''',(mission,)):
+        if row['view_id'] in snapshot:
+            snapshot[row['view_id']].append({'id':row['region_key'],'revision':row['revision'],
+                'kind':row['kind'],'polygon':json.loads(row['polygon'])})
+    return snapshot
+
+
+def _roi_review_state_conn(conn,mission,run):
+    job=conn.execute('SELECT config FROM inference_runs WHERE id=?',(run,)).fetchone()
+    if not job:raise ValueError('Inference run not found')
+    used={row['view_id'] for row in conn.execute(
+        'SELECT DISTINCT view_id FROM inference_input_views WHERE inference_id=? AND view_id IS NOT NULL',(run,))}
+    names={row['id']:row['name'] for row in conn.execute('SELECT id,name FROM views WHERE mission_id=?',(mission,))}
+    current=_current_regions(conn,mission,used);saved=json.loads(job['config']).get('view_regions_snapshot',{})
+    changed=[]
+    for view_id in sorted(used):
+        before={item['id']:(item['kind'],json.dumps(item['polygon'],sort_keys=True,separators=(',',':')))
+            for item in saved.get(view_id,[])}
+        after={item['id']:(item['kind'],json.dumps(item['polygon'],sort_keys=True,separators=(',',':')))
+            for item in current.get(view_id,[])}
+        if before!=after:changed.append({'view_id':view_id,'view_name':names.get(view_id,view_id)})
+    payload={'changed_views':[item['view_id'] for item in changed],
+        'current_regions':{key:current.get(key,[]) for key in sorted(item['view_id'] for item in changed)}}
+    digest=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    ack=conn.execute('''SELECT a.*,r.status rerun_status FROM roi_rerun_acknowledgments a
+        JOIN inference_runs r ON r.id=a.rerun_run WHERE a.source_run=? AND a.drift_sha256=?''',(run,digest)).fetchone()
+    return {'changed_views':changed,'stale':bool(changed),'review_required':bool(changed and not ack),
+        'acknowledgment':dict(ack) if ack else None,'drift_sha256':digest}
+
+
+def roi_review_state(library,mission,run):
+    """Return current drift and any acknowledgment for this exact effective ROI state."""
+    prepare(library,mission)
+    with library.connect(mission) as conn:return _roi_review_state_conn(conn,mission,run)
+
+
+def create_roi_rerun(library,mission,source_run,operator):
+    """Create a same-input rerun with current ROIs and durable operator acknowledgment."""
+    operator=operator.strip() if isinstance(operator,str) else ''
+    if not 1<=len(operator)<=120:raise ValueError('Operator is required for ROI acknowledgment')
+    prepare(library,mission)
+    run=str(uuid.uuid4());created=now()
+    with library.connect(mission) as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        state=_roi_review_state_conn(conn,mission,source_run)
+        if not state['stale']:raise ValueError('This run has no ROI changes to review')
+        if state['acknowledgment']:raise ValueError('This ROI change already has an acknowledged rerun')
+        changed=state['changed_views']
+        source=conn.execute('SELECT status,config FROM inference_runs WHERE id=?',(source_run,)).fetchone()
+        if not source:raise ValueError('Inference run not found')
+        if source['status'] in ('queued','running'):raise ValueError('Wait for the source inference run to finish before rerunning')
+        inputs=conn.execute('SELECT image_id,sha256 FROM inference_inputs WHERE inference_id=? ORDER BY image_id',(source_run,)).fetchall()
+        if not inputs:raise ValueError('Source inference run has no saved inputs')
+        if conn.execute("SELECT 1 FROM inference_runs WHERE status IN ('queued','running')").fetchone():
+            raise ValueError('Wait for the active inference run to finish before rerunning')
+        used={row['view_id'] for row in conn.execute(
+            'SELECT DISTINCT view_id FROM inference_input_views WHERE inference_id=? AND view_id IS NOT NULL',(source_run,))}
+        config=json.loads(source['config']);config['rerun_of']=source_run
+        config['view_regions_snapshot']=_current_regions(conn,mission,used)
+        conn.execute('INSERT INTO inference_runs(id,status,stage,total,config,created) VALUES (?,?,?,?,?,?)',
+            (run,'queued','queued',len(inputs),json.dumps(config,ensure_ascii=False),created))
+        conn.executemany('INSERT INTO inference_inputs VALUES (?,?,?)',[(run,row['image_id'],row['sha256']) for row in inputs])
+        conn.execute('''INSERT INTO inference_input_views(inference_id,image_id,view_id,view_revision)
+            SELECT ?,image_id,view_id,view_revision FROM inference_input_views WHERE inference_id=?''',(run,source_run))
+        conn.execute('''INSERT INTO roi_rerun_acknowledgments(source_run,rerun_run,operator,drift_sha256,changed_views,created)
+            VALUES (?,?,?,?,?,?)''',(source_run,run,operator,state['drift_sha256'],
+            json.dumps(changed,ensure_ascii=False),created))
+    return {'run':run,'rerun_of':source_run,'status':'queued','total':len(inputs),'changed_views':changed,'operator':operator}
 
 
 def enrich(library,mission,rows,selected=None):

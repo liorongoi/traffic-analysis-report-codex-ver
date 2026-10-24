@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from PIL import Image
 
-from road_traffic.inference_store import create_run,roi_drift
+from road_traffic.inference_store import create_run,roi_drift,roi_review_state,create_roi_rerun
 from road_traffic.regions import filter_proposals, point_in_polygon, validate_polygon
 from road_traffic.store import Library
 
@@ -81,6 +81,34 @@ class RegionHistoryTests(unittest.TestCase):
         run=create_run(self.library,self.mission,{'adapter':'roi-scope-fixture'})
         self.library.update_view_region(self.mission,region['region_key'],'exclude',[[.2,.2],[.8,.2],[.8,.8],[.2,.8]],'Operator B')
         self.assertEqual(roi_drift(self.library,self.mission,run),[])
+
+    def test_roi_acknowledgment_creates_same_input_rerun_and_tracks_later_changes(self):
+        polygon=[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]
+        region=self.library.add_view_region(self.mission,self.view['id'],'include',polygon,'Operator A')
+        source=create_run(self.library,self.mission,{'adapter':'roi-fixture','threshold':.2})
+        with self.library.connect(self.mission) as conn:
+            conn.execute("UPDATE inference_runs SET status='completed',stage='finished',done=1 WHERE id=?",(source,))
+        self.library.update_view_region(self.mission,region['region_key'],'exclude',[[.2,.2],[.8,.2],[.8,.8],[.2,.8]],'Operator B')
+        state=roi_review_state(self.library,self.mission,source)
+        self.assertTrue(state['review_required'])
+        rerun=create_roi_rerun(self.library,self.mission,source,'Operator C')
+        self.assertEqual((rerun['rerun_of'],rerun['status'],rerun['total']),(source,'queued',1))
+        self.assertFalse(roi_review_state(self.library,self.mission,source)['review_required'])
+        self.assertEqual(roi_review_state(self.library,self.mission,source)['acknowledgment']['operator'],'Operator C')
+        with self.library.connect(self.mission) as conn:
+            old=conn.execute('SELECT config FROM inference_runs WHERE id=?',(source,)).fetchone()
+            new=conn.execute('SELECT config FROM inference_runs WHERE id=?',(rerun['run'],)).fetchone()
+            old_inputs=conn.execute('SELECT image_id,sha256 FROM inference_inputs WHERE inference_id=?',(source,)).fetchall()
+            new_inputs=conn.execute('SELECT image_id,sha256 FROM inference_inputs WHERE inference_id=?',(rerun['run'],)).fetchall()
+            self.assertEqual(old_inputs,new_inputs)
+            self.assertEqual(json.loads(old['config'])['view_regions_snapshot'][self.view['id']][0]['revision'],1)
+            self.assertEqual(json.loads(new['config'])['view_regions_snapshot'][self.view['id']][0]['revision'],2)
+            with self.assertRaisesRegex(sqlite3.IntegrityError,'immutable'):
+                conn.execute('UPDATE roi_rerun_acknowledgments SET operator=? WHERE rerun_run=?',('tampered',rerun['run']))
+        with self.assertRaisesRegex(ValueError,'already has an acknowledged rerun'):
+            create_roi_rerun(self.library,self.mission,source,'Operator D')
+        self.library.update_view_region(self.mission,region['region_key'],'exclude',[[.3,.3],[.7,.3],[.7,.7],[.3,.7]],'Operator D')
+        self.assertTrue(roi_review_state(self.library,self.mission,source)['review_required'])
 
 
 if __name__=='__main__':
