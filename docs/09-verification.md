@@ -25,7 +25,7 @@ The initial failed sample import was followed by a corrected successful 143-imag
 
 ## Next implementation gates
 
-1. Finish mission configuration, durable monitoring and source health, view/ROI/schedule controls.
+1. Complete mission configuration behavior, then add durable monitoring and source health, view/ROI/schedule controls. Current settings are persisted, but continuous monitoring, output-folder export and XLSX execution are not implemented.
 2. Extend the existing local CPU detector and experimental night-light proposals only after collecting authorized, independently reviewed day/night references; measure accuracy and count error before treating outputs as operational results.
 3. Add video/ALPR adapters and protected learning pipeline.
 4. Build and test complete Windows offline media under a current-user account, including missing dependencies and process lifecycle checks.

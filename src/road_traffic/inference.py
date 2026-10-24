@@ -15,6 +15,9 @@ class InferenceService:
 
     def start(self,mission,threshold=.18,tiled=True,night_lights=True,night_head_id=None):
         from .detector import model_pack,VERSION
+        settings = self.library.settings(mission)
+        if settings['input_type'] != 'images' or settings['analysis_mode'] != 'general_traffic':
+            raise ValueError('Automatic detection currently supports still-image General Traffic missions only')
         if type(threshold) not in (float,int) or not .01<=threshold<=.9:raise ValueError('Threshold must be 0.01–0.90')
         if type(tiled) is not bool or type(night_lights) is not bool:raise ValueError('Expected boolean settings')
         _,sha=model_pack(self.pack)

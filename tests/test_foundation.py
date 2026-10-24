@@ -111,4 +111,53 @@ class StoreTests(unittest.TestCase):
     def test_own_workspace_rejected(self):
         with self.assertRaises(ValueError):self.lib.import_folder(self.mission,self.lib.root,'camera')
 
+    def test_mission_configuration_round_trip(self):
+        output=self.root/'configured-output';output.mkdir()
+        mission=self.lib.create('Configured','Latvia','Europe/Riga',{
+            'input_type':'images','analysis_mode':'object_search','location':'Riga bridge',
+            'source_root':str(self.source),'include_subdirectories':False,
+            'processing_mode':'continuous','output_root':str(output),
+            'export_formats':'both'})
+        settings=self.lib.settings(mission)
+        self.assertEqual(settings['input_type'],'images')
+        self.assertEqual(settings['analysis_mode'],'object_search')
+        self.assertEqual(settings['location'],'Riga bridge')
+        self.assertFalse(settings['include_subdirectories'])
+        self.assertEqual(settings['processing_mode'],'continuous')
+        self.assertEqual(settings['export_formats'],['csv','xlsx'])
+        self.assertEqual(self.lib.missions()[0]['source_root'],str(self.source.resolve()))
+
+    def test_nonrecursive_import_honors_mission_setting(self):
+        nested=self.source/'subfolder';nested.mkdir()
+        (nested/'17052026-1605-nested.jpg').write_bytes(b'nested fixture')
+        mission=self.lib.create('Flat import','Israel','Asia/Jerusalem',{
+            'source_root':str(self.source),'include_subdirectories':False})
+        imported=self.lib.import_folder(mission,self.source,'camera')
+        self.assertEqual(imported['images'],1)
+        self.assertEqual(self.lib.images(mission)[0]['name'],'17052026-1604-vehicle.jpg')
+
+    def test_video_mission_rejects_still_image_import(self):
+        mission=self.lib.create('Video','Israel','Asia/Jerusalem',{
+            'input_type':'videos','analysis_mode':'video_traffic'})
+        with self.assertRaisesRegex(ValueError,'video input'):
+            self.lib.import_folder(mission,self.source,'camera')
+
+    def test_mission_configuration_rejects_invalid_modes_and_paths(self):
+        with self.assertRaisesRegex(ValueError,'not valid'):
+            self.lib.create('Bad mode','Israel','Asia/Jerusalem',{'input_type':'videos','analysis_mode':'general_traffic'})
+        with self.assertRaisesRegex(ValueError,'absolute path'):
+            self.lib.create('Relative','Israel','Asia/Jerusalem',{'source_root':'relative/source'})
+        with self.assertRaisesRegex(ValueError,'unavailable'):
+            self.lib.create('Missing','Israel','Asia/Jerusalem',{'output_root':str(self.root/'missing')})
+
+    def test_legacy_mission_gets_additive_settings_migration(self):
+        mission='00000000-0000-4000-8000-000000000001'
+        folder=self.lib.location(mission);folder.mkdir()
+        conn=sqlite3.connect(folder/'mission.sqlite3')
+        conn.execute('CREATE TABLE mission(id TEXT PRIMARY KEY,name TEXT,country TEXT,zone TEXT,created TEXT)')
+        conn.execute('INSERT INTO mission VALUES (?,?,?,?,?)',(mission,'Legacy','Israel','Asia/Jerusalem','2026-01-01T00:00:00+00:00'))
+        conn.commit();conn.close()
+        self.assertEqual(self.lib.settings(mission)['input_type'],'images')
+        self.assertEqual(self.lib.settings(mission)['export_formats'],['csv'])
+
 if __name__=='__main__':unittest.main()

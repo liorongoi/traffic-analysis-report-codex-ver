@@ -58,15 +58,60 @@ class Library:
         conn = sqlite3.connect(path, timeout=20)
         conn.row_factory = sqlite3.Row
         conn.execute('PRAGMA foreign_keys=ON')
+        # Add configuration storage to databases created before the mission
+        # wizard. This migration is additive and preserves all existing work.
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mission_settings'").fetchone():
+            conn.executescript('''
+                CREATE TABLE IF NOT EXISTS mission_settings(
+                    mission_id TEXT PRIMARY KEY REFERENCES mission(id),
+                    input_type TEXT NOT NULL DEFAULT 'images',
+                    analysis_mode TEXT NOT NULL DEFAULT 'general_traffic',
+                    location TEXT NOT NULL DEFAULT '',
+                    source_root TEXT NOT NULL DEFAULT '',
+                    include_subdirectories INTEGER NOT NULL DEFAULT 1,
+                    processing_mode TEXT NOT NULL DEFAULT 'once',
+                    output_root TEXT NOT NULL DEFAULT '',
+                    export_formats TEXT NOT NULL DEFAULT '["csv"]'
+                );
+                INSERT OR IGNORE INTO mission_settings(mission_id)
+                SELECT id FROM mission;
+            ''')
         return conn
 
-    def create(self, name, country, zone):
+    def create(self, name, country, zone, settings=None):
+        settings = settings or {}
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
             raise ValueError('Mission name must contain 1–120 characters')
         # Finland is a sample-only option; operational target countries remain supported.
         if country not in ('Iran', 'Lebanon', 'Israel', 'Latvia', 'Finland'):
             raise ValueError('Unsupported country')
         named_zone(zone)
+        input_type = settings.get('input_type', 'images')
+        analysis_mode = settings.get('analysis_mode', 'general_traffic')
+        processing_mode = settings.get('processing_mode', 'once')
+        export_formats = settings.get('export_formats', ['csv'])
+        if isinstance(export_formats, str):
+            export_formats = {'csv': ['csv'], 'xlsx': ['xlsx'], 'both': ['csv', 'xlsx']}.get(export_formats, [])
+        if input_type not in ('images', 'videos'):
+            raise ValueError('Input type must be images or videos')
+        supported_modes = ('general_traffic', 'object_search', 'license_plate') if input_type == 'images' else ('video_traffic', 'object_search', 'license_plate')
+        if analysis_mode not in supported_modes:
+            raise ValueError('Analysis mode is not valid for this input type')
+        if processing_mode not in ('once', 'continuous'):
+            raise ValueError('Processing mode must be once or continuous')
+        if type(settings.get('include_subdirectories', True)) is not bool:
+            raise ValueError('include_subdirectories must be a boolean')
+        if not isinstance(export_formats, list) or not export_formats or any(not isinstance(value, str) or value not in ('csv', 'xlsx') for value in export_formats) or len(set(export_formats)) != len(export_formats):
+            raise ValueError('Choose CSV, XLSX, or both export formats')
+        location = settings.get('location', '')
+        if not isinstance(location, str) or len(location.strip()) > 200:
+            raise ValueError('Location must be a text value up to 200 characters')
+        source_root = self._configured_directory(settings.get('source_root', ''), 'source', writable=False)
+        output_root = self._configured_directory(settings.get('output_root', ''), 'output', writable=True)
+        if source_root and (self.root.is_relative_to(Path(source_root)) or Path(source_root).is_relative_to(self.root)):
+            raise ValueError('Choose a source outside application-managed storage')
+        if output_root and (self.root.is_relative_to(Path(output_root)) or Path(output_root).is_relative_to(self.root)):
+            raise ValueError('Choose an output outside application-managed storage')
         mission = str(uuid.uuid4())
         folder = self.location(mission)
         folder.mkdir()
@@ -76,6 +121,17 @@ class Library:
             with conn:
                 conn.executescript('''
                 CREATE TABLE mission(id TEXT PRIMARY KEY,name TEXT,country TEXT,zone TEXT,created TEXT);
+                CREATE TABLE mission_settings(
+                    mission_id TEXT PRIMARY KEY REFERENCES mission(id),
+                    input_type TEXT NOT NULL,
+                    analysis_mode TEXT NOT NULL,
+                    location TEXT NOT NULL,
+                    source_root TEXT NOT NULL,
+                    include_subdirectories INTEGER NOT NULL,
+                    processing_mode TEXT NOT NULL,
+                    output_root TEXT NOT NULL,
+                    export_formats TEXT NOT NULL
+                );
                 CREATE TABLE runs(id TEXT PRIMARY KEY,preset TEXT,source_root TEXT,status TEXT,created TEXT,error TEXT);
                 CREATE TABLE images(id TEXT PRIMARY KEY,run_id TEXT REFERENCES runs(id),name TEXT,capture_utc TEXT,
                     precision TEXT,sha256 TEXT,snapshot TEXT,provenance TEXT,UNIQUE(run_id,name));
@@ -87,21 +143,63 @@ class Library:
                 CREATE TRIGGER immutable_reviews_delete BEFORE DELETE ON reviews BEGIN SELECT RAISE(ABORT,'append-only review'); END;
                 ''')
                 conn.execute('INSERT INTO mission VALUES (?,?,?,?,?)', (mission, name.strip(), country, zone, now()))
+                conn.execute('INSERT INTO mission_settings VALUES (?,?,?,?,?,?,?,?,?)',
+                    (mission, input_type, analysis_mode, location.strip(), source_root,
+                     int(settings.get('include_subdirectories', True)), processing_mode,
+                     output_root, json.dumps(export_formats)))
         finally:
             conn.close()
         return mission
+
+    @staticmethod
+    def _configured_directory(value, label, writable):
+        if not value:
+            return ''
+        if not isinstance(value, str):
+            raise ValueError(f'{label.title()} directory must be a path string')
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            raise ValueError(f'{label.title()} directory must be an absolute path on the backend workstation')
+        try:
+            path = path.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(f'{label.title()} directory is unavailable') from exc
+        if not path.is_dir():
+            raise ValueError(f'{label.title()} path must be a directory')
+        if not writable and not os.access(path, os.R_OK | os.X_OK):
+            raise ValueError(f'{label.title()} directory is not readable')
+        if writable and not os.access(path, os.W_OK):
+            raise ValueError(f'{label.title()} directory is not writable')
+        return str(path)
+
+    def settings(self, mission):
+        with self.connect(mission) as conn:
+            row = conn.execute('SELECT * FROM mission_settings WHERE mission_id=?', (mission,)).fetchone()
+        result = dict(row)
+        result['include_subdirectories'] = bool(result['include_subdirectories'])
+        result['export_formats'] = json.loads(result['export_formats'])
+        return result
 
     def missions(self):
         result = []
         for path in self.root.glob('*/mission.sqlite3'):
             with self.connect(path.parent.name) as conn:
-                result.append(dict(conn.execute('SELECT * FROM mission').fetchone()))
+                row = dict(conn.execute('SELECT * FROM mission').fetchone())
+                settings = dict(conn.execute('SELECT * FROM mission_settings WHERE mission_id=?', (row['id'],)).fetchone())
+                settings['include_subdirectories'] = bool(settings['include_subdirectories'])
+                settings['export_formats'] = json.loads(settings['export_formats'])
+                result.append({**row, **settings})
         return sorted(result, key=lambda row: row['created'], reverse=True)
 
     def import_folder(self, mission, root, preset):
         root = Path(root).resolve(strict=True)
         if not root.is_dir() or self.root.is_relative_to(root) or root.is_relative_to(self.root):
             raise ValueError('Choose a source outside application-managed storage')
+        settings = self.settings(mission)
+        if settings['input_type'] != 'images':
+            raise ValueError('This mission is configured for video input; image import is not available')
+        if settings['source_root'] and root != Path(settings['source_root']):
+            raise ValueError('Choose the source directory configured for this mission')
         if preset not in ('fintraffic', 'camera'):
             raise ValueError('Select an explicit import preset')
         entries = []
@@ -114,12 +212,20 @@ class Library:
                     raise ValueError('Manifest entry lacks file/checksum')
                 entries.append((row['file'], row['sha256'], {'preset': preset, 'manifest_sha256': manifest_hash,
                     'attribution': data.get('attribution'), 'original': row}))
+            if not settings['include_subdirectories'] and any(len(Path(relative).parts) > 1 for relative, _, _ in entries):
+                raise ValueError('Manifest includes nested files but this mission excludes subdirectories')
         else:
-            for base, directories, files in os.walk(root, followlinks=False):
-                directories[:] = sorted(d for d in directories if not (Path(base) / d).is_symlink())
-                for name in sorted(files):
-                    if Path(name).suffix.lower() in ('.jpg', '.jpeg', '.png'):
-                        entries.append((str((Path(base) / name).relative_to(root)), None, {'preset': preset}))
+            if settings['include_subdirectories']:
+                for base, directories, files in os.walk(root, followlinks=False):
+                    directories[:] = sorted(d for d in directories if not (Path(base) / d).is_symlink())
+                    for name in sorted(files):
+                        if Path(name).suffix.lower() in ('.jpg', '.jpeg', '.png'):
+                            entries.append((str((Path(base) / name).relative_to(root)), None, {'preset': preset}))
+            else:
+                for name in sorted(os.listdir(root)):
+                    source = root / name
+                    if source.is_file() and not source.is_symlink() and source.suffix.lower() in ('.jpg', '.jpeg', '.png'):
+                        entries.append((name, None, {'preset': preset}))
         if not entries:
             raise ValueError('No images found')
         run = str(uuid.uuid4())

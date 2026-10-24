@@ -61,7 +61,11 @@ def serve(workspace, web, port=8765, open_browser=False):
                     path = library.image_path(query['mission'][0], query['image'][0])
                     return self.reply(200, path.read_bytes(), mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
                 if parsed.path == '/api/export':
-                    rows = library.images(query['mission'][0],query.get('run',[None])[0])
+                    mission = query['mission'][0]
+                    formats = library.settings(mission)['export_formats']
+                    if 'xlsx' in formats:
+                        raise ValueError('This mission requests XLSX output, which is not implemented yet; no export was generated')
+                    rows = library.images(mission,query.get('run',[None])[0])
                     stream = io.StringIO(newline='')
                     writer = csv.writer(stream)
                     writer.writerow(['image','capture_utc','review_status','revision','confirmed_vehicles','candidates','lights','annotations','prediction_run','inference_status','original_predictions','review_prediction_run','evidence_role','operator'])
@@ -96,7 +100,11 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(413, {'error':'Request exceeds limit'})
                 data = json.loads(self.rfile.read(length))
                 if self.path == '/api/missions':
-                    result = {'id': library.create(data['name'],data['country'],data['zone'])}
+                    settings = {key: data[key] for key in (
+                        'input_type', 'analysis_mode', 'location', 'source_root',
+                        'include_subdirectories', 'processing_mode', 'output_root', 'export_formats'
+                    ) if key in data}
+                    result = {'id': library.create(data['name'],data['country'],data['zone'],settings)}
                 elif self.path == '/api/import':
                     result = library.import_folder(data['mission'],data['path'],data['preset'])
                 elif self.path == '/api/review':

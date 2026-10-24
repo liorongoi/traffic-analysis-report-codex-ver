@@ -104,3 +104,27 @@ class HttpTests(unittest.TestCase):
             mission=json.load(response)['id']
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/inference/report?mission='+mission+'&run=missing')
         self.assertEqual(exc.exception.code,400)
+
+    def test_mission_settings_are_saved_and_unsupported_actions_are_blocked(self):
+        with tempfile.TemporaryDirectory() as external:
+            source=Path(external)/'configured-source';source.mkdir()
+            output=Path(external)/'configured-output';output.mkdir()
+            data={'name':'Configured video mission','country':'Latvia','zone':'Europe/Riga',
+                'input_type':'videos','analysis_mode':'video_traffic','location':'Riga',
+                'source_root':str(source),'include_subdirectories':False,
+                'processing_mode':'continuous','output_root':str(output),'export_formats':['csv','xlsx']}
+            with self.request('/api/missions',data) as response:mission=json.load(response)['id']
+            with self.request('/api/session') as response:
+                saved=next(m for m in json.load(response)['missions'] if m['id']==mission)
+            self.assertEqual(saved['input_type'],'videos')
+            self.assertEqual(saved['analysis_mode'],'video_traffic')
+            self.assertFalse(saved['include_subdirectories'])
+            self.assertEqual(saved['export_formats'],['csv','xlsx'])
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self.request('/api/inference/start',{'mission':mission})
+            self.assertEqual(exc.exception.code,400)
+            self.assertIn('still-image General Traffic',exc.exception.read().decode())
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self.request('/api/export?mission='+mission)
+            self.assertEqual(exc.exception.code,400)
+            self.assertIn('XLSX output',exc.exception.read().decode())

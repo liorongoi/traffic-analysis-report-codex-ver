@@ -1,6 +1,6 @@
 # 04 — UI workflow and wireframes
 
-Confirmed: Hebrew and English, full RTL/LTR. The current review preview switches languages; the complete wizard remains planned.
+Confirmed: Hebrew and English, full RTL/LTR. The current mission setup records input type, one analysis mode, location/timezone, source/output folders, recursion, processing preference, and export-format preference. The offline location map and the workflows for continuous monitoring, XLSX, video, chat, and plate analysis remain planned.
 
 ```
 Mission library

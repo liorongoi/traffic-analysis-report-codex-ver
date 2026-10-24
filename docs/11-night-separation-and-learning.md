@@ -36,7 +36,7 @@ A request for the location of any other correction workspace/export is pending. 
 
 ## Executed tests
 
-**50 tests passed**, including synthetic single/pair headlights, recurring lamps not paired as headlights, nearby fixture glare, elongated streaks, missing-background uncertainty, no-label training refusal, explicit refit/versioning, validation isolation, checkpoint tampering, review-only exclusion and real-worker application of a trained synthetic correction head. The synthetic labels were confined to test workspaces and are not evidence of Fintraffic accuracy.
+At this checkpoint, **50 tests passed**, including synthetic single/pair headlights, recurring lamps not paired as headlights, nearby fixture glare, elongated streaks, missing-background uncertainty, no-label training refusal, explicit refit/versioning, validation isolation, checkpoint tampering, review-only exclusion and real-worker application of a trained synthetic correction head. The current full suite has since grown to 55 passing Python checks after adding mission-configuration coverage. Synthetic labels were confined to test workspaces and are not evidence of Fintraffic accuracy.
 
 Browser verification in an isolated QA workspace confirmed that explicit night class and confidence survive save/reload and that review-only labels do not unlock training. The live main app showed 90 night/monochrome frames, separate recurring-light/headlight filters, and zero eligible training regions. Existing correction preservation and original read-only prediction tests also remain passing.
 

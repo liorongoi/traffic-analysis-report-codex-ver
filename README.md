@@ -7,12 +7,13 @@ This is a **separate project**, outside SpectraScope. Its source, workspace, dat
 Implemented:
 
 - Browser review interface with English/Hebrew switching, RTL/LTR layout and directionally isolated timestamps/filenames.
-- Create missions with separate SQLite databases; import batches remain separate runs.
+- Mission setup stores input type, one analysis mode, location/time zone, source/output paths, recursion, processing preference and export formats in a per-mission SQLite configuration. The backend validates configured directories and prevents image import or inference for unsupported mission types/modes.
+- Import batches remain separate runs; non-recursive image imports honor the saved mission setting.
 - Explicit camera filename parser (`DDMMYYYY-HHmm-suffix`, UTC minute precision) and explicit Fintraffic manifest importer (UTC second precision).
 - Recursively import camera images. Fintraffic imports verify every image against its provided SHA-256 manifest. Originals stay untouched; independent mission snapshots are verified again when viewed.
 - Image table and previous/next review; draw/remove normalized image rectangles; distinguish confirmed vehicles, candidates, lights and background lights.
 - Append-only review revisions, operator, evidence role and completeness. Optimistic revision checks prevent overwriting concurrent edits; held-out image roles cannot become training roles.
-- CSV export of the current saved review table, including annotations. No automatic inference is represented as completed.
+- CSV export of the current saved review table, including annotations. Machine proposals remain explicitly unconfirmed until a human reviews them.
 - Loopback development host with a session token for writes, host/origin checks and self-only browser asset policy.
 - Real local YOLOX-S vehicle inference, separately labelled experimental night-light proposals, durable progress/cancellation, immutable original predictions and saved correction lineage. See [vehicle detection and testing](docs/10-vehicle-detection.md).
 - Windows **preview installer source**, current-user directory, `PrivilegesRequired=lowest`, app-local runtime, current-user shortcuts, offline checksums and no download fallback.
@@ -37,7 +38,7 @@ Fintraffic samples supplied by the user are imported locally into `workspace/sam
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-See [verification record](docs/09-verification.md). 35 unit/API checks pass; additional real-model and browser tests are recorded in docs/10-vehicle-detection.md. These are not detection-accuracy benchmarks or native Windows validation.
+See [verification record](docs/09-verification.md). 56 Python checks and `node --check web/app.js` pass for the current build. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
 
 ## Not implemented yet
 
