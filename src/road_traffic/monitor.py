@@ -30,6 +30,13 @@ class SourceMonitor:
         if self.thread:
             self.thread.join(timeout=max(1.0, self.interval + 1))
 
+    def set_enabled(self, mission, enabled):
+        # Serialize the control change with scans: once pause returns, an
+        # in-flight scan has finished and no later scan can import new files.
+        with self.lock:
+            result=self.library.set_monitoring(mission,enabled)
+            return {**self.status(mission),**result}
+
     def _run(self):
         while not self.stop_event.is_set():
             for mission in self.library.missions():
@@ -53,10 +60,12 @@ class SourceMonitor:
 
     def status(self, mission):
         self._sync_batches(mission)
+        enabled=self.library.monitoring_enabled(mission)
         with self.library.connect(mission) as conn:
             row = conn.execute('SELECT * FROM monitor_state WHERE id=1').fetchone()
             state = dict(row) if row else {'id': 1, 'status': 'stopped', 'last_scan': None,
                 'last_import': None, 'error': None}
+            state['enabled']=enabled
             state['files'] = {row['status']: row['count'] for row in conn.execute(
                 'SELECT status,COUNT(*) count FROM monitored_files GROUP BY status')}
             state['recent_errors'] = [dict(row) for row in conn.execute(
@@ -104,6 +113,9 @@ class SourceMonitor:
             settings = self.library.settings(mission)
             if settings['processing_mode'] != 'continuous':
                 self._state(mission, 'stopped')
+                return self.status(mission)
+            if not self.library.monitoring_enabled(mission):
+                self._state(mission, 'paused')
                 return self.status(mission)
             if settings['input_type'] != 'images':
                 self._state(mission, 'unsupported', 'Continuous monitoring currently supports still images only')

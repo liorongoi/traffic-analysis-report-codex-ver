@@ -231,4 +231,23 @@ class StoreTests(unittest.TestCase):
         self.assertIn('Corrupt or unsupported image',state['recent_errors'][0]['error'])
         self.assertEqual(self.lib.images(mission),[])
 
+    def test_continuous_monitor_pause_persists_and_resume_imports(self):
+        from road_traffic.monitor import SourceMonitor
+        source=self.root/'paused-monitor';source.mkdir()
+        mission=self.lib.create('Paused monitor','Israel','Asia/Jerusalem',{
+            'source_root':str(source),'processing_mode':'continuous'})
+        image=source/'17052026-1605-paused.jpg';write_test_image(image)
+        self.lib.set_monitoring(mission,False)
+        monitor=SourceMonitor(self.lib,stability_seconds=0)
+        state=monitor.scan(mission)
+        self.assertEqual(state['status'],'paused')
+        self.assertFalse(state['enabled'])
+        self.assertEqual(self.lib.images(mission),[])
+        reopened=Library(self.lib.root)
+        self.assertFalse(reopened.monitoring_enabled(mission))
+        reopened.set_monitoring(mission,True)
+        state=SourceMonitor(reopened,stability_seconds=0).scan(mission)
+        self.assertTrue(state['enabled'])
+        self.assertEqual(len(reopened.images(mission)),1)
+
 if __name__=='__main__':unittest.main()

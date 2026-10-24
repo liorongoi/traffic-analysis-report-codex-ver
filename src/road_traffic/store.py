@@ -111,6 +111,10 @@ class Library:
             source_run_id TEXT PRIMARY KEY REFERENCES runs(id), status TEXT NOT NULL,
             inference_run_id TEXT, created TEXT NOT NULL, error TEXT
         )''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS monitor_control(
+            id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1))
+        )''')
+        conn.execute('INSERT OR IGNORE INTO monitor_control(id,enabled) VALUES (1,1)')
         conn.execute('''CREATE TABLE IF NOT EXISTS monitor_state(
             id INTEGER PRIMARY KEY CHECK(id=1), status TEXT NOT NULL,
             last_scan TEXT, last_import TEXT, error TEXT
@@ -317,6 +321,24 @@ class Library:
         result['include_subdirectories'] = bool(result['include_subdirectories'])
         result['export_formats'] = json.loads(result['export_formats'])
         return result
+
+    def monitoring_enabled(self, mission):
+        with self.connect(mission) as conn:
+            row=conn.execute('SELECT enabled FROM monitor_control WHERE id=1').fetchone()
+        return bool(row['enabled']) if row else True
+
+    def set_monitoring(self, mission, enabled):
+        if type(enabled) is not bool:
+            raise ValueError('Monitoring state must be enabled or paused')
+        settings=self.settings(mission)
+        if settings['processing_mode']!='continuous' or settings['input_type']!='images':
+            raise ValueError('Continuous monitoring controls require a continuous still-image mission')
+        with self.connect(mission) as conn:
+            conn.execute('UPDATE monitor_control SET enabled=? WHERE id=1',(int(enabled),))
+            conn.execute('''INSERT INTO monitor_state(id,status,last_scan,last_import,error) VALUES (1,?,?,NULL,NULL)
+                ON CONFLICT(id) DO UPDATE SET status=excluded.status,last_scan=excluded.last_scan,error=NULL''',
+                ('active' if enabled else 'paused',now()))
+        return {'enabled':enabled}
 
     def exports(self, mission):
         with self.connect(mission) as conn:

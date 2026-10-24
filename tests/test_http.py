@@ -205,6 +205,21 @@ class HttpTests(unittest.TestCase):
             with self.request('/api/export?mission='+mission) as response:
                 self.assertIn('text/csv',response.headers['Content-Type'])
 
+    def test_continuous_monitor_can_be_paused_and_resumed_over_http(self):
+        with tempfile.TemporaryDirectory() as external:
+            source=Path(external)/'source';source.mkdir()
+            with self.request('/api/missions',{'name':'Monitor controls','country':'Israel','zone':'Asia/Jerusalem',
+                'source_root':str(source),'processing_mode':'continuous'}) as response:
+                mission=json.load(response)['id']
+            with self.request('/api/monitoring?mission='+mission) as response:
+                self.assertTrue(json.load(response)['enabled'])
+            with self.request('/api/monitoring',{'mission':mission,'action':'pause'}) as response:
+                self.assertFalse(json.load(response)['enabled'])
+            with self.request('/api/monitoring?mission='+mission) as response:
+                self.assertEqual(json.load(response)['status'],'paused')
+            with self.request('/api/monitoring',{'mission':mission,'action':'resume'}) as response:
+                self.assertTrue(json.load(response)['enabled'])
+
     def test_csv_export_writes_traceable_non_overwriting_snapshot(self):
         with tempfile.TemporaryDirectory() as external:
             source=Path(external)/'source';source.mkdir()
