@@ -17,6 +17,7 @@ Implemented:
 - Loopback development host with a session token for writes, host/origin checks and self-only browser asset policy.
 - Real local YOLOX-S vehicle inference, separately labelled experimental night-light proposals, durable progress/cancellation, immutable original predictions and saved correction lineage. See [vehicle detection and testing](docs/10-vehicle-detection.md).
 - Bounded PyAV/FFmpeg video decoding that yields one RGB frame at a time and preserves each frame's exact integer PTS and rational time base; generated VFR regression coverage confirms uneven timestamp gaps. Absolute UTC still requires a supplied recording origin.
+- Policy-configured, same-recording track assembly with JSON-compatible chunk checkpoints. Ambiguous associations remain uncertain; thresholds must be supplied explicitly and are not production-validated.
 - Windows **preview installer source**, current-user directory, `PrivilegesRequired=lowest`, app-local runtime, current-user shortcuts, offline checksums and no download fallback.
 
 ## Run the preview
@@ -39,7 +40,7 @@ Fintraffic samples supplied by the user are imported locally into `workspace/sam
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-See [verification record](docs/09-verification.md). 105 Python checks and `node --check web/app.js` pass for the current build. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
+See [verification record](docs/09-verification.md). 112 Python checks and `node --check web/app.js` pass for the current build. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
 
 ## Not implemented yet
 
