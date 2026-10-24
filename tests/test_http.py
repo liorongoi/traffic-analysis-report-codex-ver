@@ -208,6 +208,14 @@ class HttpTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/inference/report?mission='+mission+'&run=missing')
         self.assertEqual(exc.exception.code,400)
 
+    def test_roi_rerun_route_rejects_unknown_run(self):
+        with self.request('/api/missions',{'name':'ROI route fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            self.request('/api/inference/roi-rerun',{'mission':mission,'run':'missing','operator':'Operator'})
+        self.assertEqual(exc.exception.code,400)
+        self.assertIn('Inference run not found',json.loads(exc.exception.read())['error'])
+
     def test_mission_settings_are_saved_and_unsupported_actions_are_blocked(self):
         with tempfile.TemporaryDirectory() as external:
             source=Path(external)/'configured-source';source.mkdir()
