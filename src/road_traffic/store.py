@@ -84,6 +84,15 @@ class Library:
             snapshot_sha256 TEXT, row_count INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL, created TEXT NOT NULL, finished TEXT, error TEXT
         )''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS monitored_files(
+            relative_path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+            stable_since TEXT NOT NULL, last_seen TEXT NOT NULL, imported_sha256 TEXT,
+            status TEXT NOT NULL, error TEXT
+        )''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS monitor_state(
+            id INTEGER PRIMARY KEY CHECK(id=1), status TEXT NOT NULL,
+            last_scan TEXT, last_import TEXT, error TEXT
+        )''')
         return conn
 
     def create(self, name, country, zone, settings=None):
@@ -151,6 +160,16 @@ class Library:
                     snapshot_sha256 TEXT, row_count INTEGER NOT NULL DEFAULT 0,
                     status TEXT NOT NULL, created TEXT NOT NULL, finished TEXT, error TEXT
                 );
+                CREATE TABLE monitored_files(
+                    relative_path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+                    stable_since TEXT NOT NULL, last_seen TEXT NOT NULL, imported_sha256 TEXT,
+                    status TEXT NOT NULL, error TEXT
+                );
+                CREATE TABLE monitor_state(
+                    id INTEGER PRIMARY KEY CHECK(id=1), status TEXT NOT NULL,
+                    last_scan TEXT, last_import TEXT, error TEXT
+                );
+                INSERT INTO monitor_state(id,status) VALUES (1,'stopped');
                 CREATE TABLE runs(id TEXT PRIMARY KEY,preset TEXT,source_root TEXT,status TEXT,created TEXT,error TEXT);
                 CREATE TABLE images(id TEXT PRIMARY KEY,run_id TEXT REFERENCES runs(id),name TEXT,capture_utc TEXT,
                     precision TEXT,sha256 TEXT,snapshot TEXT,provenance TEXT,UNIQUE(run_id,name));
@@ -296,7 +315,7 @@ class Library:
                 result.append({**row, **settings})
         return sorted(result, key=lambda row: row['created'], reverse=True)
 
-    def import_folder(self, mission, root, preset):
+    def import_folder(self, mission, root, preset, selected_paths=None):
         root = Path(root).resolve(strict=True)
         if not root.is_dir() or self.root.is_relative_to(root) or root.is_relative_to(self.root):
             raise ValueError('Choose a source outside application-managed storage')
@@ -331,6 +350,9 @@ class Library:
                     source = root / name
                     if source.is_file() and not source.is_symlink() and source.suffix.lower() in ('.jpg', '.jpeg', '.png'):
                         entries.append((name, None, {'preset': preset}))
+        if selected_paths is not None:
+            selected = {Path(value).as_posix() for value in selected_paths}
+            entries = [entry for entry in entries if Path(entry[0]).as_posix() in selected]
         if not entries:
             raise ValueError('No images found')
         run = str(uuid.uuid4())

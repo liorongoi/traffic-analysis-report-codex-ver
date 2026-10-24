@@ -174,4 +174,26 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(history['partial-id']['status'],'partial')
         self.assertEqual(history['missing-id']['status'],'failed')
 
+    def test_continuous_monitor_imports_stable_versions_once_and_keeps_replacements(self):
+        from road_traffic.monitor import SourceMonitor
+        source=self.root/'monitor-source';source.mkdir()
+        mission=self.lib.create('Continuous images','Israel','Asia/Jerusalem',{
+            'source_root':str(source),'include_subdirectories':True,'processing_mode':'continuous'})
+        image=source/'17052026-1605-camera-a.jpg'
+        image.write_bytes(b'first stable image version')
+        monitor=SourceMonitor(self.lib,stability_seconds=0)
+        first=monitor.scan(mission)
+        self.assertEqual(len(self.lib.images(mission)),1)
+        self.assertEqual(first['files']['imported'],1)
+        # A new monitor instance models a service restart against the same mission DB.
+        monitor=SourceMonitor(self.lib,stability_seconds=0)
+        monitor.scan(mission)
+        self.assertEqual(len(self.lib.images(mission)),1)
+        image.write_bytes(b'replaced stable image version')
+        monitor.scan(mission)
+        rows=self.lib.images(mission)
+        self.assertEqual(len(rows),2)
+        self.assertEqual(len({row['sha256'] for row in rows}),2)
+        self.assertEqual(monitor.status(mission)['files']['imported'],1)
+
 if __name__=='__main__':unittest.main()

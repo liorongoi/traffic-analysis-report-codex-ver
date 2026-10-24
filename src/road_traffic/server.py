@@ -15,6 +15,9 @@ from .store import Library
 def serve(workspace, web, port=8765, open_browser=False):
     library = Library(workspace)
     library.reconcile_exports()
+    from .monitor import SourceMonitor
+    monitor = SourceMonitor(library)
+    monitor.start()
     from .inference import InferenceService
     inference=InferenceService(library,Path(web).parent/'model-packs'/'yolox-s')
     token = secrets.token_urlsafe(32)
@@ -52,6 +55,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200,inference.status(query['mission'][0]))
                 if parsed.path == '/api/exports':
                     return self.reply(200,library.exports(query['mission'][0]))
+                if parsed.path == '/api/monitoring':
+                    return self.reply(200,monitor.status(query['mission'][0]))
                 if parsed.path == '/api/inference/report':
                     mission=query['mission'][0]
                     jobs=inference.status(mission)
@@ -148,4 +153,5 @@ def serve(workspace, web, port=8765, open_browser=False):
     except KeyboardInterrupt:
         pass
     finally:
+        monitor.stop()
         server.server_close()

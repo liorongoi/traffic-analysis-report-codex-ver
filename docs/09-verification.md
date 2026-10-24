@@ -25,7 +25,7 @@ The initial failed sample import was followed by a corrected successful 143-imag
 
 ## Next implementation gates
 
-1. Complete mission configuration behavior, then add durable monitoring and source health, view/ROI/schedule controls. CSV output-folder snapshots and interrupted-export reconciliation are implemented; continuous monitoring and XLSX execution remain pending.
+1. Continuous still-image intake now runs in a backend polling thread, waits five seconds for unchanged file size/mtime, persists per-path checkpoints and status, avoids importing the same path/checksum twice, and records replacements in new immutable source runs. It does not run inference automatically. Filesystem notifications, operator alerts, robust rename/missing-file reconciliation, corrupt-image validation, view/ROI/schedule controls, and broader source-health recovery remain pending. CSV output-folder snapshots and interrupted-export reconciliation are implemented; XLSX execution remains pending.
 2. Extend the existing local CPU detector and experimental night-light proposals only after collecting authorized, independently reviewed day/night references; measure accuracy and count error before treating outputs as operational results.
 3. Add video/ALPR adapters and protected learning pipeline.
 4. Build and test complete Windows offline media under a current-user account, including missing dependencies and process lifecycle checks.

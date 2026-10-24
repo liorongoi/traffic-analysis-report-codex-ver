@@ -9,11 +9,11 @@ This table is the initial foundation-stage mapping, not a current completeness c
 | ENV-01 | Independent application, offline Windows workstation, local/LAN browser access, one active user | P | Native Windows disconnected and two-computer session test |
 | ENV-02 | No runtime downloads/CDN/cloud services; staging separate | P | Installer/network-denial audit |
 | HW-01 | Detect 16/48 GB RAM and GPU support independently, preserve OS headroom | F/P | Budget unit tests; target measurements pending |
-| MIS-01 | Mission name, input type, country, named timezone, source/destination, recursion, one-time/continuous, XLSX/CSV | F/P | Mission settings form, persistence, path validation, and unsupported-mode guards are implemented; continuous monitoring, XLSX execution, and offline location map remain pending |
+| MIS-01 | Mission name, input type, country, named timezone, source/destination, recursion, one-time/continuous, XLSX/CSV | F/P | Mission settings form, persistence, path validation, and unsupported-mode guards are implemented; backend continuous still-image intake is partial; XLSX execution and offline location map remain pending |
 | MIS-02 | Separate database per mission, independent runs, no output mixing | F | SQLite isolation/lineage tests |
 | TIME-01 | Parse confirmed UTC filename and preserve minute precision | F | Valid/invalid filename tests |
 | TIME-02 | Historical local times, DST, multiple overnight windows | F/P | UTC filtering tests; offline geographic map pending |
-| ING-01 | Recursive optional monitoring, stability, restart ledger, notifications, immutable source versions | P | Partial-copy, rename/replacement and resume acceptance |
+| ING-01 | Recursive optional monitoring, stability, restart ledger, notifications, immutable source versions | P | Backend polls continuous still-image missions, waits for stable files, checkpoints path/version state, resumes after restart, and imports changed versions without replacing old snapshots. Filesystem notifications, automatic inference, operator alerts, rename/reconciliation policy, corrupt-image checks, and workstation acceptance remain pending |
 | VIEW-01 | Fixed camera locations, recurring views; automatic proposals and manual split/merge/reassign | P | Held-out view grouping and UI tests |
 | ROI-01 | Native-pixel inclusion/exclusion polygons with validity/versioning | P | Coordinate and precedence tests |
 | IMG-01 | Count each still independently; no unique-flow claim from irregular captures | P | Per-image benchmark/report verification |
