@@ -6,6 +6,7 @@
 - Received: 143 Fintraffic JPG samples with manifest checksums and timestamps. Still needed: representative videos, codecs, durations, video UTC origin, daily volume and expected history size.
 - Confirmed: installation must not require administrator rights. Source folders may be local or authorized network shares; credential handling and network-disconnection behavior require Windows testing.
 - Review/export retention and immutable evidence storage budget; no source deletion policy is approved.
+- Source rename reconciliation: identical bytes may represent distinct observations, so checksum equality alone cannot authorize merging or suppressing an import. A manual link policy must identify the source snapshot/path evidence and preserve both capture records.
 - Country-specific plate variants and authorized ground truth for all four countries.
 - Nighttime candidate sensitivity, definition of a confirmed vehicle, and acceptable false-positive/miss/count-error rates.
 - Target processing latency/throughput, clip pre/post context, and required video correction operations.
