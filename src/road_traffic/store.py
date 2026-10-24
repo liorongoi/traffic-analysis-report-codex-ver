@@ -98,6 +98,31 @@ class Library:
             start_date TEXT, end_date TEXT, weekdays TEXT NOT NULL,
             start_time TEXT NOT NULL, end_time TEXT NOT NULL, created TEXT NOT NULL
         )''')
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS views(
+                id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
+                name TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL,
+                UNIQUE(mission_id,name));
+            CREATE TABLE IF NOT EXISTS image_view_history(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
+                image_id TEXT NOT NULL REFERENCES images(id), view_id TEXT REFERENCES views(id),
+                revision INTEGER NOT NULL, operator TEXT NOT NULL, created TEXT NOT NULL,
+                UNIQUE(image_id,revision));
+            CREATE TABLE IF NOT EXISTS view_events(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
+                view_id TEXT REFERENCES views(id), action TEXT NOT NULL, details TEXT NOT NULL,
+                operator TEXT NOT NULL, created TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS image_view_history_mission_idx
+                ON image_view_history(mission_id,image_id,revision);
+            CREATE TRIGGER IF NOT EXISTS immutable_image_view_history_u BEFORE UPDATE ON image_view_history
+                BEGIN SELECT RAISE(ABORT,'view assignment history is immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_image_view_history_d BEFORE DELETE ON image_view_history
+                BEGIN SELECT RAISE(ABORT,'view assignment history is immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_view_events_u BEFORE UPDATE ON view_events
+                BEGIN SELECT RAISE(ABORT,'view events are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_view_events_d BEFORE DELETE ON view_events
+                BEGIN SELECT RAISE(ABORT,'view events are immutable'); END;
+        ''')
         return conn
 
     def create(self, name, country, zone, settings=None):
@@ -180,6 +205,28 @@ class Library:
                     start_date TEXT, end_date TEXT, weekdays TEXT NOT NULL,
                     start_time TEXT NOT NULL, end_time TEXT NOT NULL, created TEXT NOT NULL
                 );
+                CREATE TABLE views(
+                    id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
+                    name TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL,
+                    UNIQUE(mission_id,name));
+                CREATE TABLE image_view_history(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
+                    image_id TEXT NOT NULL REFERENCES images(id), view_id TEXT REFERENCES views(id),
+                    revision INTEGER NOT NULL, operator TEXT NOT NULL, created TEXT NOT NULL,
+                    UNIQUE(image_id,revision));
+                CREATE TABLE view_events(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
+                    view_id TEXT REFERENCES views(id), action TEXT NOT NULL, details TEXT NOT NULL,
+                    operator TEXT NOT NULL, created TEXT NOT NULL);
+                CREATE INDEX image_view_history_mission_idx ON image_view_history(mission_id,image_id,revision);
+                CREATE TRIGGER immutable_image_view_history_u BEFORE UPDATE ON image_view_history
+                    BEGIN SELECT RAISE(ABORT,'view assignment history is immutable'); END;
+                CREATE TRIGGER immutable_image_view_history_d BEFORE DELETE ON image_view_history
+                    BEGIN SELECT RAISE(ABORT,'view assignment history is immutable'); END;
+                CREATE TRIGGER immutable_view_events_u BEFORE UPDATE ON view_events
+                    BEGIN SELECT RAISE(ABORT,'view events are immutable'); END;
+                CREATE TRIGGER immutable_view_events_d BEFORE DELETE ON view_events
+                    BEGIN SELECT RAISE(ABORT,'view events are immutable'); END;
                 CREATE TABLE runs(id TEXT PRIMARY KEY,preset TEXT,source_root TEXT,status TEXT,created TEXT,error TEXT);
                 CREATE TABLE images(id TEXT PRIMARY KEY,run_id TEXT REFERENCES runs(id),name TEXT,capture_utc TEXT,
                     precision TEXT,sha256 TEXT,snapshot TEXT,provenance TEXT,UNIQUE(run_id,name));
@@ -255,6 +302,80 @@ class Library:
             if not cursor.rowcount:
                 raise ValueError('Schedule window not found')
         return {'id': identifier, 'deleted': True}
+
+    def views(self, mission):
+        with self.connect(mission) as conn:
+            rows=conn.execute('''WITH latest AS (
+                    SELECT image_id,MAX(revision) revision FROM image_view_history WHERE mission_id=? GROUP BY image_id),
+                counts AS (
+                    SELECT h.view_id,COUNT(*) image_count,MIN(i.name) representative_name,MIN(i.id) representative_image_id
+                    FROM latest l JOIN image_view_history h ON h.image_id=l.image_id AND h.revision=l.revision
+                    JOIN images i ON i.id=h.image_id WHERE h.view_id IS NOT NULL GROUP BY h.view_id)
+                SELECT v.id,v.name,v.created,v.updated,COALESCE(c.image_count,0) image_count,
+                    c.representative_name,c.representative_image_id
+                FROM views v LEFT JOIN counts c ON c.view_id=v.id
+                WHERE v.mission_id=? ORDER BY v.name COLLATE NOCASE''',(mission,mission)).fetchall()
+            return [dict(row) for row in rows]
+
+    def view_history(self, mission, image=None):
+        with self.connect(mission) as conn:
+            if image and not conn.execute('SELECT 1 FROM images WHERE id=?',(image,)).fetchone():
+                raise ValueError('Image not found in this mission')
+            where='AND h.image_id=?' if image else ''
+            params=(mission,image) if image else (mission,)
+            return [dict(row) for row in conn.execute(f'''SELECT h.*,v.name view_name FROM image_view_history h
+                LEFT JOIN views v ON v.id=h.view_id WHERE h.mission_id=? {where} ORDER BY h.created,h.id''',params)]
+
+    def create_view(self, mission, name, operator):
+        name=name.strip() if isinstance(name,str) else ''
+        operator=operator.strip() if isinstance(operator,str) else ''
+        if not 1 <= len(name) <= 80:raise ValueError('View name must contain 1–80 characters')
+        if not 1 <= len(operator) <= 120:raise ValueError('Operator is required for view history')
+        identifier=str(uuid.uuid4());created=now()
+        with self.connect(mission) as conn:
+            if conn.execute('SELECT 1 FROM views WHERE mission_id=? AND name=? COLLATE NOCASE',(mission,name)).fetchone():
+                raise ValueError('A camera view with this name already exists')
+            conn.execute('INSERT INTO views VALUES (?,?,?,?,?)',(identifier,mission,name,created,created))
+            conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
+                (mission,identifier,'created',json.dumps({'name':name},ensure_ascii=False),operator,created))
+        return {'id':identifier,'name':name,'created':created,'updated':created}
+
+    def rename_view(self, mission, identifier, name, operator):
+        name=name.strip() if isinstance(name,str) else ''
+        operator=operator.strip() if isinstance(operator,str) else ''
+        if not 1 <= len(name) <= 80:raise ValueError('View name must contain 1–80 characters')
+        if not 1 <= len(operator) <= 120:raise ValueError('Operator is required for view history')
+        with self.connect(mission) as conn:
+            current=conn.execute('SELECT name FROM views WHERE id=? AND mission_id=?',(identifier,mission)).fetchone()
+            if not current:raise ValueError('Camera view not found')
+            if current['name']==name:return {'id':identifier,'name':name,'unchanged':True}
+            if conn.execute('SELECT 1 FROM views WHERE mission_id=? AND id<>? AND name=? COLLATE NOCASE',
+                (mission,identifier,name)).fetchone():
+                raise ValueError('A camera view with this name already exists')
+            conn.execute('UPDATE views SET name=?,updated=? WHERE id=? AND mission_id=?',(name,now(),identifier,mission))
+            conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
+                (mission,identifier,'renamed',json.dumps({'before':current['name'],'after':name},ensure_ascii=False),operator,now()))
+        return {'id':identifier,'name':name}
+
+    def assign_view(self, mission, image, view_id, operator):
+        operator=operator.strip() if isinstance(operator,str) else ''
+        if not 1 <= len(operator) <= 120:raise ValueError('Operator is required for view history')
+        with self.connect(mission) as conn:
+            if not conn.execute('SELECT 1 FROM images WHERE id=?',(image,)).fetchone():
+                raise ValueError('Image not found in this mission')
+            if view_id and not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=?',(view_id,mission)).fetchone():
+                raise ValueError('Camera view not found in this mission')
+            previous=conn.execute('SELECT view_id FROM image_view_history WHERE image_id=? ORDER BY revision DESC LIMIT 1',(image,)).fetchone()
+            if previous and previous['view_id']==view_id:
+                return {'image_id':image,'view_id':view_id,'unchanged':True}
+            revision=conn.execute('SELECT COALESCE(MAX(revision),0)+1 FROM image_view_history WHERE image_id=?',(image,)).fetchone()[0]
+            created=now()
+            conn.execute('INSERT INTO image_view_history(mission_id,image_id,view_id,revision,operator,created) VALUES (?,?,?,?,?,?)',
+                (mission,image,view_id,revision,operator,created))
+            conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
+                (mission,view_id,'image_assigned' if view_id else 'image_unassigned',
+                 json.dumps({'image_id':image,'revision':revision},ensure_ascii=False),operator,created))
+            return {'image_id':image,'view_id':view_id,'revision':revision,'created':created}
 
     def reconcile_exports(self):
         """Mark exports left in `writing` by a stopped process as incomplete."""

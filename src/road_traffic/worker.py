@@ -31,7 +31,11 @@ def execute(library,mission,run,pack):
         if config['adapter']!=VERSION:raise ValueError('Adapter version changed; start a new run')
         if detector.sha!=config['model_sha256']:raise ValueError('Model changed after run approval')
         with library.connect(mission) as conn:
-            inputs=[dict(r) for r in conn.execute('SELECT images.* FROM images JOIN inference_inputs ON images.id=inference_inputs.image_id WHERE inference_id=? ORDER BY capture_utc,name',(run,))]
+            inputs=[dict(r) for r in conn.execute('''SELECT images.*,COALESCE(iv.view_id,'') view_id,
+                COALESCE(iv.view_revision,0) view_revision FROM images
+                JOIN inference_inputs ii ON images.id=ii.image_id
+                LEFT JOIN inference_input_views iv ON iv.inference_id=ii.inference_id AND iv.image_id=ii.image_id
+                WHERE ii.inference_id=? ORDER BY capture_utc,name''',(run,))]
             heldout={r[0] for r in conn.execute("SELECT DISTINCT image_id FROM reviews WHERE role IN ('validation','test')")}
         if head and any(json.loads(r['provenance']).get('preset')!='fintraffic' or Path(r['name']).stem.split('_')[0]!=head.data.get('view') for r in inputs):
             raise ValueError('Selected light correction head does not match every source view; use an appropriate mission/view or select None')
@@ -39,22 +43,29 @@ def execute(library,mission,run,pack):
             with Image.open(library.image_path(mission,row['id'])) as image:
                 if image.width*image.height>24_000_000:raise ValueError('Image exceeds this adapter pixel budget')
                 return np.asarray(image.convert('RGB'))
-        # Background proposals only for an explicit fixed Fintraffic preset/view.
-        # Other missions can run the detector but must not silently pool recurring views.
+        # Background references stay within one manual view assignment, or an
+        # explicit Fintraffic source-view key. Unassigned camera files do not mix.
         refs=[];masks=[];reference_grays=[];shape=None;view=None;anchor=None
+        def row_view_key(row):
+            if row.get('view_id'):
+                return 'manual:'+row['view_id']
+            provenance=json.loads(row['provenance'])
+            if provenance.get('preset')=='fintraffic':
+                return 'fintraffic:'+Path(row['name']).stem.split('_')[0]
+            return None
         with library.connect(mission) as conn:conn.execute("UPDATE inference_runs SET stage='building_light_background' WHERE id=?",(run,))
         if config.get('night_lights'):
             for row in inputs:
                 with library.connect(mission) as conn:
                     if conn.execute('SELECT stop_requested FROM inference_runs WHERE id=?',(run,)).fetchone()[0]:break
                 provenance=json.loads(row['provenance'])
-                if provenance.get('preset')!='fintraffic' or row['id'] in heldout:continue
-                name=Path(row['name']).stem.split('_')[0]
+                candidate_view=row_view_key(row)
+                if candidate_view is None or row['id'] in heldout:continue
                 rgb=load(row);gray=cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY)
                 if not illumination(rgb)['low_light'] or gray.size>2_000_000:continue
                 if shape is None:
-                    shape=gray.shape;view=name;anchor=cv2.resize(gray,(160,90)).astype(float).ravel()
-                if gray.shape!=shape or name!=view:continue
+                    shape=gray.shape;view=candidate_view;anchor=cv2.resize(gray,(160,90)).astype(float).ravel()
+                if gray.shape!=shape or candidate_view!=view:continue
                 signature=cv2.resize(gray,(160,90)).astype(float).ravel()
                 similarity=float(np.corrcoef(anchor,signature)[0,1])
                 if not np.isfinite(similarity) or similarity<.8:continue
@@ -80,6 +91,7 @@ def execute(library,mission,run,pack):
             start=time.perf_counter()
             details={'adapter':VERSION,'model_sha256':detector.sha,'device':'CPUExecutionProvider','input_sha256':row['sha256'],
                 'threshold':config['threshold'],'tiled':config['tiled'],'light_background':background,
+                'view_id':row.get('view_id') or None,'view_assignment_revision':row.get('view_revision',0),
                 'human_confirmation':False,'confidence_note':'Detector scores are not calibrated accuracy.'}
             predictions=[];error=None
             try:
@@ -87,7 +99,7 @@ def execute(library,mission,run,pack):
                 details.update({'width':w,'height':h,**illumination(rgb)})
                 predictions=detector.infer(rgb)
                 if config.get('night_lights') and details['low_light']:
-                    persistent=None;light_context=None;usable=counts is not None and gray.shape==shape and Path(row['name']).stem.split('_')[0]==view
+                    persistent=None;light_context=None;usable=counts is not None and gray.shape==shape and row_view_key(row)==view
                     similarity=float(np.corrcoef(anchor,cv2.resize(gray,(160,90)).astype(float).ravel())[0,1]) if usable else 0
                     if usable and np.isfinite(similarity) and similarity>=.8:
                         n=len(refs);local=counts.copy()

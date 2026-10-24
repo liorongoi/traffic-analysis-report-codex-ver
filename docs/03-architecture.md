@@ -10,7 +10,7 @@ Use spawn-compatible worker processes on Windows. Load only a selected adapter/m
 
 `<workspace>/missions/<UUID>/mission.sqlite3`, with private evidence, checkpoints and exports directories beside it. Source and output paths are never used as database names. A registry must not aggregate analytical results. Transactions and optimistic revisions protect edits, even with one operator using multiple browser tabs.
 
-Foundation entities: mission configuration; runs and immutable configuration snapshots; versioned sources; run/source membership; append-only original predictions; append-only corrections with previous-revision linkage; review/reference eligibility. Future migrations add views/ROI versions, schedules, ingestion ledger, tracks/events, notifications, export snapshots, dataset manifests, training runs and model lifecycle records.
+Foundation entities: mission configuration; runs and immutable configuration snapshots; versioned sources; run/source membership; append-only original predictions; append-only corrections with previous-revision linkage; review/reference eligibility; revisioned camera-view assignments; local scan windows; source-monitor checkpoints; and export snapshots. Future migrations add ROI versions, automatically proposed view groups, tracks/events, notifications, dataset manifests, and the complete training/model lifecycle.
 
 Every correction requires valid mission/run/source lineage and a real operator identity. It records before/after evidence, type, geometry/text/class when relevant, label role, review completeness and model/preprocessing provenance. Application roles must prevent direct arbitrary database manipulation. Bulk approvals are retained but are not eligible human references.
 

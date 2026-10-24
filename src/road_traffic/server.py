@@ -59,6 +59,10 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200,monitor.status(query['mission'][0]))
                 if parsed.path == '/api/scan-windows':
                     return self.reply(200,library.scan_windows(query['mission'][0]))
+                if parsed.path == '/api/views':
+                    return self.reply(200,library.views(query['mission'][0]))
+                if parsed.path == '/api/view-history':
+                    return self.reply(200,library.view_history(query['mission'][0],query.get('image',[None])[0]))
                 if parsed.path == '/api/inference/report':
                     mission=query['mission'][0]
                     jobs=inference.status(mission)
@@ -127,6 +131,16 @@ def serve(workspace, web, port=8765, open_browser=False):
                         result = library.delete_scan_window(data['mission'],data['id'])
                     else:
                         result = library.add_scan_window(data['mission'],data['window'])
+                elif self.path == '/api/views':
+                    action=data.get('action')
+                    if action == 'create':
+                        result=library.create_view(data['mission'],data['name'],data['operator'])
+                    elif action == 'rename':
+                        result=library.rename_view(data['mission'],data['id'],data['name'],data['operator'])
+                    elif action == 'assign':
+                        result=library.assign_view(data['mission'],data['image_id'],data.get('view_id'),data['operator'])
+                    else:
+                        raise ValueError('Choose create, rename, or assign action')
                 elif self.path == '/api/review':
                     result = library.review(data['mission'],data['image'],data['revision'],data['annotations'],data['operator'],data['role'],data['status'],data.get('prediction_run'))
                 elif self.path == '/api/inference/start':

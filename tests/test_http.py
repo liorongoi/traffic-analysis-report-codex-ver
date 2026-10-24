@@ -89,6 +89,25 @@ class HttpTests(unittest.TestCase):
         with self.request('/api/scan-windows?mission='+mission) as response:
             self.assertEqual(json.load(response),[])
 
+    def test_camera_view_api_records_assignment_history(self):
+        from road_traffic.store import Library
+        with self.request('/api/missions',{'name':'View fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        lib=Library(self.tmp.name)
+        with tempfile.TemporaryDirectory() as source:
+            (Path(source)/'17052026-1604-view.jpg').write_bytes(b'view api fixture')
+            lib.import_folder(mission,source,'camera')
+        image=lib.images(mission)[0]['id']
+        with self.request('/api/views',{'mission':mission,'action':'create','name':'Gate A','operator':'Operator'}) as response:
+            view=json.load(response)
+        with self.request('/api/views',{'mission':mission,'action':'assign','image_id':image,'view_id':view['id'],'operator':'Operator'}) as response:
+            self.assertEqual(json.load(response)['revision'],1)
+        with self.request('/api/view-history?mission='+mission+'&image='+image) as response:
+            history=json.load(response)
+        self.assertEqual(history[0]['view_name'],'Gate A')
+        with self.request('/api/views?mission='+mission) as response:
+            self.assertEqual(json.load(response)[0]['image_count'],1)
+
     def test_selected_report_and_rejected_export_counts(self):
         from road_traffic.store import Library
         from road_traffic.inference_store import create_run
