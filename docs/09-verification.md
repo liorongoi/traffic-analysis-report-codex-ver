@@ -17,7 +17,7 @@ English and Hebrew UI, full bidirectional layout. Current-user Windows installat
 
 ## Deliberate limitations
 
-No detection model is running. The Fintraffic sample set has no human ground-truth labels. No precision/recall/F1, night detection accuracy, throughput, GPU compatibility or video performance has been measured. Annotation geometry is stored as normalized original-image coordinates; ROI/view-management and richer correction provenance for actual model outputs remain future work.
+The Fintraffic sample set has no human ground-truth labels. No precision/recall/F1, night detection accuracy, throughput, GPU compatibility or video performance has been measured. Annotation geometry is stored as normalized original-image coordinates. Manual camera-view groups and assignments, versioned view-specific inclusion/exclusion polygons, append-only history, proposal filtering, and inference-run snapshots are implemented; automatic view discovery, batch tools, and validity/invalidation review remain future work.
 
 No actual Windows runtime was staged, setup EXE compiled/extracted, target installed, native runtime checked or no-admin policy exercised. Installer scripts are source only. Network-share behavior and production LAN authentication remain unverified/unimplemented.
 
@@ -25,7 +25,7 @@ The initial failed sample import was followed by a corrected successful 143-imag
 
 ## Next implementation gates
 
-1. Continuous still-image intake now runs in a backend polling thread, waits five seconds for unchanged file size/mtime, persists per-path checkpoints and status, avoids importing the same path/checksum twice, and records replacements in new immutable source runs. It does not run inference automatically. Mission scan windows support weekdays, date ranges, multiple local-time windows, overnight windows, and IANA DST behavior; each inference run snapshots the rules and excludes out-of-window captures. Filesystem notifications, operator alerts, robust rename/missing-file reconciliation, corrupt-image validation, view/ROI controls, and broader source-health recovery remain pending. CSV output-folder snapshots and interrupted-export reconciliation are implemented; XLSX execution remains pending.
+1. Continuous still-image intake now runs in a backend polling thread, waits five seconds for unchanged file size/mtime, persists per-path checkpoints and status, avoids importing the same path/checksum twice, and records replacements in new immutable source runs. It does not run inference automatically. Mission scan windows support weekdays, date ranges, multiple local-time windows, overnight windows, and IANA DST behavior; each inference run snapshots the rules and excludes out-of-window captures. Manual view groups and versioned ROI polygons are available and tested. Filesystem notifications, operator alerts, robust rename/missing-file reconciliation, corrupt-image validation, automatic view discovery, ROI invalidation review, and broader source-health recovery remain pending. CSV output-folder snapshots and interrupted-export reconciliation are implemented; XLSX execution remains pending.
 2. Extend the existing local CPU detector and experimental night-light proposals only after collecting authorized, independently reviewed day/night references; measure accuracy and count error before treating outputs as operational results.
 3. Add video/ALPR adapters and protected learning pipeline.
 4. Build and test complete Windows offline media under a current-user account, including missing dependencies and process lifecycle checks.

@@ -63,6 +63,10 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200,library.views(query['mission'][0]))
                 if parsed.path == '/api/view-history':
                     return self.reply(200,library.view_history(query['mission'][0],query.get('image',[None])[0]))
+                if parsed.path == '/api/view-regions':
+                    return self.reply(200,library.view_regions(query['mission'][0],query['view_id'][0]))
+                if parsed.path == '/api/view-region-history':
+                    return self.reply(200,library.view_region_history(query['mission'][0],query['view_id'][0]))
                 if parsed.path == '/api/inference/report':
                     mission=query['mission'][0]
                     jobs=inference.status(mission)
@@ -141,6 +145,16 @@ def serve(workspace, web, port=8765, open_browser=False):
                         result=library.assign_view(data['mission'],data['image_id'],data.get('view_id'),data['operator'])
                     else:
                         raise ValueError('Choose create, rename, or assign action')
+                elif self.path == '/api/view-regions':
+                    action=data.get('action')
+                    if action == 'create':
+                        result=library.add_view_region(data['mission'],data['view_id'],data['kind'],data['polygon'],data['operator'])
+                    elif action == 'update':
+                        result=library.update_view_region(data['mission'],data['region_id'],data['kind'],data['polygon'],data['operator'])
+                    elif action == 'delete':
+                        result=library.delete_view_region(data['mission'],data['region_id'],data['operator'])
+                    else:
+                        raise ValueError('Choose create, update, or delete action')
                 elif self.path == '/api/review':
                     result = library.review(data['mission'],data['image'],data['revision'],data['annotations'],data['operator'],data['role'],data['status'],data.get('prediction_run'))
                 elif self.path == '/api/inference/start':

@@ -112,6 +112,13 @@ class Library:
                 id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
                 view_id TEXT REFERENCES views(id), action TEXT NOT NULL, details TEXT NOT NULL,
                 operator TEXT NOT NULL, created TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS view_region_history(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
+                region_key TEXT NOT NULL, view_id TEXT NOT NULL REFERENCES views(id), revision INTEGER NOT NULL,
+                action TEXT NOT NULL, kind TEXT NOT NULL, polygon TEXT NOT NULL,
+                operator TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(region_key,revision));
+            CREATE INDEX IF NOT EXISTS view_region_history_latest_idx
+                ON view_region_history(mission_id,view_id,region_key,revision);
             CREATE INDEX IF NOT EXISTS image_view_history_mission_idx
                 ON image_view_history(mission_id,image_id,revision);
             CREATE TRIGGER IF NOT EXISTS immutable_image_view_history_u BEFORE UPDATE ON image_view_history
@@ -122,6 +129,10 @@ class Library:
                 BEGIN SELECT RAISE(ABORT,'view events are immutable'); END;
             CREATE TRIGGER IF NOT EXISTS immutable_view_events_d BEFORE DELETE ON view_events
                 BEGIN SELECT RAISE(ABORT,'view events are immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_view_region_history_u BEFORE UPDATE ON view_region_history
+                BEGIN SELECT RAISE(ABORT,'view region history is immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_view_region_history_d BEFORE DELETE ON view_region_history
+                BEGIN SELECT RAISE(ABORT,'view region history is immutable'); END;
         ''')
         return conn
 
@@ -218,6 +229,12 @@ class Library:
                     id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
                     view_id TEXT REFERENCES views(id), action TEXT NOT NULL, details TEXT NOT NULL,
                     operator TEXT NOT NULL, created TEXT NOT NULL);
+                CREATE TABLE view_region_history(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
+                    region_key TEXT NOT NULL, view_id TEXT NOT NULL REFERENCES views(id), revision INTEGER NOT NULL,
+                    action TEXT NOT NULL, kind TEXT NOT NULL, polygon TEXT NOT NULL,
+                    operator TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(region_key,revision));
+                CREATE INDEX view_region_history_latest_idx ON view_region_history(mission_id,view_id,region_key,revision);
                 CREATE INDEX image_view_history_mission_idx ON image_view_history(mission_id,image_id,revision);
                 CREATE TRIGGER immutable_image_view_history_u BEFORE UPDATE ON image_view_history
                     BEGIN SELECT RAISE(ABORT,'view assignment history is immutable'); END;
@@ -227,6 +244,10 @@ class Library:
                     BEGIN SELECT RAISE(ABORT,'view events are immutable'); END;
                 CREATE TRIGGER immutable_view_events_d BEFORE DELETE ON view_events
                     BEGIN SELECT RAISE(ABORT,'view events are immutable'); END;
+                CREATE TRIGGER immutable_view_region_history_u BEFORE UPDATE ON view_region_history
+                    BEGIN SELECT RAISE(ABORT,'view region history is immutable'); END;
+                CREATE TRIGGER immutable_view_region_history_d BEFORE DELETE ON view_region_history
+                    BEGIN SELECT RAISE(ABORT,'view region history is immutable'); END;
                 CREATE TABLE runs(id TEXT PRIMARY KEY,preset TEXT,source_root TEXT,status TEXT,created TEXT,error TEXT);
                 CREATE TABLE images(id TEXT PRIMARY KEY,run_id TEXT REFERENCES runs(id),name TEXT,capture_utc TEXT,
                     precision TEXT,sha256 TEXT,snapshot TEXT,provenance TEXT,UNIQUE(run_id,name));
@@ -376,6 +397,73 @@ class Library:
                 (mission,view_id,'image_assigned' if view_id else 'image_unassigned',
                  json.dumps({'image_id':image,'revision':revision},ensure_ascii=False),operator,created))
             return {'image_id':image,'view_id':view_id,'revision':revision,'created':created}
+
+    def view_regions(self, mission, view_id):
+        with self.connect(mission) as conn:
+            if not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=?',(view_id,mission)).fetchone():
+                raise ValueError('Camera view not found in this mission')
+            return [{**dict(row),'polygon':json.loads(row['polygon'])} for row in conn.execute('''SELECT * FROM view_region_history h
+                WHERE h.mission_id=? AND h.view_id=?
+                AND h.revision=(SELECT MAX(x.revision) FROM view_region_history x WHERE x.region_key=h.region_key)
+                AND h.action='upsert' ORDER BY h.created,h.id''',(mission,view_id))]
+
+    def view_region_history(self, mission, view_id):
+        with self.connect(mission) as conn:
+            if not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=?',(view_id,mission)).fetchone():
+                raise ValueError('Camera view not found in this mission')
+            return [{**dict(row),'polygon':json.loads(row['polygon'])} for row in conn.execute(
+                'SELECT * FROM view_region_history WHERE mission_id=? AND view_id=? ORDER BY region_key,revision',
+                (mission,view_id))]
+
+    def add_view_region(self, mission, view_id, kind, polygon, operator):
+        from .regions import validate_polygon
+        polygon=validate_polygon(polygon)
+        operator=operator.strip() if isinstance(operator,str) else ''
+        if kind not in ('include','exclude'):raise ValueError('Region kind must be include or exclude')
+        if not 1<=len(operator)<=120:raise ValueError('Operator is required for region history')
+        key=str(uuid.uuid4());created=now()
+        with self.connect(mission) as conn:
+            if not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=?',(view_id,mission)).fetchone():
+                raise ValueError('Camera view not found in this mission')
+            conn.execute('''INSERT INTO view_region_history
+                (mission_id,region_key,view_id,revision,action,kind,polygon,operator,created) VALUES (?,?,?,?,?,?,?,?,?)''',
+                (mission,key,view_id,1,'upsert',kind,json.dumps(polygon),operator,created))
+            conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
+                (mission,view_id,'region_created',json.dumps({'region_id':key,'kind':kind},ensure_ascii=False),operator,created))
+        return next(region for region in self.view_regions(mission,view_id) if region['region_key']==key)
+
+    def update_view_region(self, mission, region_key, kind, polygon, operator):
+        from .regions import validate_polygon
+        polygon=validate_polygon(polygon)
+        operator=operator.strip() if isinstance(operator,str) else ''
+        if kind not in ('include','exclude'):raise ValueError('Region kind must be include or exclude')
+        if not 1<=len(operator)<=120:raise ValueError('Operator is required for region history')
+        with self.connect(mission) as conn:
+            previous=conn.execute('SELECT * FROM view_region_history WHERE mission_id=? AND region_key=? ORDER BY revision DESC LIMIT 1',
+                (mission,region_key)).fetchone()
+            if not previous or previous['action']=='delete':raise ValueError('View region not found')
+            revision=previous['revision']+1;created=now()
+            conn.execute('''INSERT INTO view_region_history
+                (mission_id,region_key,view_id,revision,action,kind,polygon,operator,created) VALUES (?,?,?,?,?,?,?,?,?)''',
+                (mission,region_key,previous['view_id'],revision,'upsert',kind,json.dumps(polygon),operator,created))
+            conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
+                (mission,previous['view_id'],'region_updated',json.dumps({'region_id':region_key,'revision':revision},ensure_ascii=False),operator,created))
+        return next(region for region in self.view_regions(mission,previous['view_id']) if region['region_key']==region_key)
+
+    def delete_view_region(self, mission, region_key, operator):
+        operator=operator.strip() if isinstance(operator,str) else ''
+        if not 1<=len(operator)<=120:raise ValueError('Operator is required for region history')
+        with self.connect(mission) as conn:
+            previous=conn.execute('SELECT * FROM view_region_history WHERE mission_id=? AND region_key=? ORDER BY revision DESC LIMIT 1',
+                (mission,region_key)).fetchone()
+            if not previous or previous['action']=='delete':raise ValueError('View region not found')
+            revision=previous['revision']+1;created=now()
+            conn.execute('''INSERT INTO view_region_history
+                (mission_id,region_key,view_id,revision,action,kind,polygon,operator,created) VALUES (?,?,?,?,?,?,?,?,?)''',
+                (mission,region_key,previous['view_id'],revision,'delete',previous['kind'],previous['polygon'],operator,created))
+            conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
+                (mission,previous['view_id'],'region_deleted',json.dumps({'region_id':region_key,'revision':revision},ensure_ascii=False),operator,created))
+        return {'id':region_key,'deleted':True,'revision':revision}
 
     def reconcile_exports(self):
         """Mark exports left in `writing` by a stopped process as incomplete."""

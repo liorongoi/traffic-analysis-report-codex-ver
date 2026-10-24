@@ -108,6 +108,37 @@ class HttpTests(unittest.TestCase):
         with self.request('/api/views?mission='+mission) as response:
             self.assertEqual(json.load(response)[0]['image_count'],1)
 
+    def test_view_region_api_round_trip_and_append_only_history(self):
+        from road_traffic.store import Library
+        with self.request('/api/missions',{'name':'Region fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        lib=Library(self.tmp.name)
+        with tempfile.TemporaryDirectory() as source:
+            (Path(source)/'17052026-1604-region.jpg').write_bytes(b'region api fixture')
+            lib.import_folder(mission,source,'camera')
+        image=lib.images(mission)[0]['id']
+        with self.request('/api/views',{'mission':mission,'action':'create','name':'Gate B','operator':'Operator'}) as response:
+            view=json.load(response)
+        with self.request('/api/views',{'mission':mission,'action':'assign','image_id':image,'view_id':view['id'],'operator':'Operator'}) as response:
+            self.assertEqual(json.load(response)['revision'],1)
+        polygon=[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]
+        with self.request('/api/view-regions',{'mission':mission,'action':'create','view_id':view['id'],
+            'kind':'include','polygon':polygon,'operator':'Operator'}) as response:
+            region=json.load(response)
+        with self.request('/api/view-regions?mission='+mission+'&view_id='+view['id']) as response:
+            self.assertEqual(json.load(response)[0]['region_key'],region['region_key'])
+        with self.request('/api/view-regions',{'mission':mission,'action':'update','region_id':region['region_key'],
+            'kind':'exclude','polygon':polygon,'operator':'Operator'}) as response:
+            self.assertEqual(json.load(response)['revision'],2)
+        with self.request('/api/view-region-history?mission='+mission+'&view_id='+view['id']) as response:
+            history=json.load(response)
+        self.assertEqual([entry['action'] for entry in history],['upsert','upsert'])
+        with self.request('/api/view-regions',{'mission':mission,'action':'delete','region_id':region['region_key'],
+            'operator':'Operator'}) as response:
+            self.assertTrue(json.load(response)['deleted'])
+        with self.request('/api/view-regions?mission='+mission+'&view_id='+view['id']) as response:
+            self.assertEqual(json.load(response),[])
+
     def test_selected_report_and_rejected_export_counts(self):
         from road_traffic.store import Library
         from road_traffic.inference_store import create_run

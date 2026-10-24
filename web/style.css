@@ -5,4 +5,6 @@
 
 .reportButtons{display:flex;gap:8px;flex-wrap:wrap}.reportButtons button{font-size:12px}
 
+.roiToolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}.roiToolbar label{margin:0}.roiToolbar select{width:auto;max-width:220px}.roiToolbar button{font-size:12px;min-height:34px;padding:6px 10px}.roiToolbar .muted{flex:1;min-width:100px}#regionList{list-style:none;padding:0}#regionList li{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}#regionList button{min-height:30px;padding:4px 8px;font-size:11px}#overlay polygon,#overlay circle{vector-effect:non-scaling-stroke}
+
 fieldset{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:14px 0}fieldset legend{font-size:12px;color:var(--muted)}.weekdayGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px 8px}.weekdayGrid label{display:flex;align-items:center;gap:5px;margin:4px 0}.weekdayGrid input{width:16px;min-height:16px;flex:0 0 16px}#scanWindowList{list-style:none;padding:0}#scanWindowList li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}#scanWindowList button{padding:5px 8px;min-height:30px}

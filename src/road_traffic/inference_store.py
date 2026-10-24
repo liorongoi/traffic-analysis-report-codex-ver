@@ -59,13 +59,19 @@ def create_run(library,mission,config):
             raise ValueError('No imported images fall within the configured local-time scan windows')
         if conn.execute("SELECT 1 FROM inference_runs WHERE status IN ('queued','running')").fetchone():
             raise ValueError('This mission already has an active inference run')
+        view_rows={row['image_id']:(row['view_id'],row['revision']) for row in conn.execute('''SELECT image_id,view_id,revision
+            FROM image_view_history WHERE mission_id=? AND revision=(SELECT MAX(h.revision) FROM image_view_history h WHERE h.image_id=image_view_history.image_id)''',(mission,))}
+        regions={}
+        for item in conn.execute('''SELECT h.region_key,h.view_id,h.revision,h.kind,h.polygon FROM view_region_history h
+            WHERE h.mission_id=? AND h.action='upsert'
+            AND h.revision=(SELECT MAX(x.revision) FROM view_region_history x WHERE x.region_key=h.region_key)''',(mission,)):
+            regions.setdefault(item['view_id'],[]).append({'id':item['region_key'],'revision':item['revision'],
+                'kind':item['kind'],'polygon':json.loads(item['polygon'])})
         recorded_config={**config,'scan_schedule_snapshot':{'timezone':zone,'windows':windows,
-            'excluded_image_count':len(rows)-len(eligible_rows)}}
+            'excluded_image_count':len(rows)-len(eligible_rows)},'view_regions_snapshot':regions}
         conn.execute('INSERT INTO inference_runs(id,status,stage,total,config,created) VALUES (?,?,?,?,?,?)',
             (run,'queued','queued',len(eligible_rows),json.dumps(recorded_config),now()))
         conn.executemany('INSERT INTO inference_inputs VALUES (?,?,?)',[(run,r['id'],r['sha256']) for r in eligible_rows])
-        view_rows={row['image_id']:(row['view_id'],row['revision']) for row in conn.execute('''SELECT image_id,view_id,revision
-            FROM image_view_history WHERE mission_id=? AND revision=(SELECT MAX(h.revision) FROM image_view_history h WHERE h.image_id=image_view_history.image_id)''',(mission,))}
         conn.executemany('INSERT INTO inference_input_views VALUES (?,?,?,?)',[
             (run,row['id'],*(view_rows.get(row['id']) or (None,0))) for row in eligible_rows])
     return run

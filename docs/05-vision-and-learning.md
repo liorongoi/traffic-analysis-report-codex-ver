@@ -1,6 +1,6 @@
 # 05 — Camera views, nighttime hypotheses and learning
 
-Cameras are fixed at locations with multiple recurring views. The current increment supports operator-created/renamed groups, revisioned image assignment, assignment history, and run-time view snapshots. Automatic grouping by scene geometry/landmarks, batch split/merge tools, and view-change detection remain unimplemented. Background and ROI validity must be specific to view and condition. Large shifts/zoom changes require review.
+Cameras are fixed at locations with multiple recurring views. The current increment supports operator-created/renamed groups, revisioned image assignment, assignment history, and run-time view snapshots. Operators can draw validated inclusion/exclusion polygons in normalized original-image coordinates on an assigned image. Region edits/deletes are append-only and each inference run records the active polygons and revisions; exclusions override included areas and filter detector/light proposals by box center. Automatic grouping by scene geometry/landmarks, batch split/merge tools, view-change detection, and automated validity/invalidation review remain unimplemented. Background and ROI validity must be specific to view and condition. Large shifts/zoom changes require review.
 
 ## Nighttime pipeline proposal
 

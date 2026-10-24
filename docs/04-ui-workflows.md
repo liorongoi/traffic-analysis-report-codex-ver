@@ -1,6 +1,6 @@
 # 04 — UI workflow and wireframes
 
-Confirmed: Hebrew and English, full RTL/LTR. Mission setup records input type, one analysis mode, location/timezone, source/output folders, recursion, processing preference, and export-format preference. Local scan windows and manual camera-view groups/assignments are available. Automatic view proposals, the offline location map, XLSX, video, chat, and plate workflows remain planned or partial.
+Confirmed: Hebrew and English, full RTL/LTR. Mission setup records input type, one analysis mode, location/timezone, source/output folders, recursion, processing preference, and export-format preference. Local scan windows, manual camera-view groups/assignments, and versioned view-specific inclusion/exclusion polygons are available. Automatic view proposals, the offline location map, XLSX, video, chat, and plate workflows remain planned or partial.
 
 ```
 Mission library
@@ -12,7 +12,8 @@ Mission library
        ↓
 2. Configure: exactly one analytical mode
    View groups [representatives / manual rename / reassign]
-   Inclusion/exclusion polygons | schedules | query interpretation/ALPR options
+   View-specific inclusion/exclusion polygons [normalized original-image points / revision history]
+   Schedules | query interpretation/ALPR options
    Model availability + resource budget + validation summary
        ↓
 3. Run & review: durable progress, actual errors, pending review

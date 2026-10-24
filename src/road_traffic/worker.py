@@ -23,6 +23,7 @@ def execute(library,mission,run,pack):
         from PIL import Image
         from .detector import VehicleDetector,light_mask,night_proposals,illumination,VERSION
         from .night import propose
+        from .regions import filter_proposals
         head=None
         if config.get('night_head_id'):
             from .learning import load_head
@@ -121,6 +122,10 @@ def execute(library,mission,run,pack):
                     details['night_head_hash']=config.get('night_head_hash')
                     details['lights']['view_similarity']=similarity
                     details['lights']['leave_out_image_id']=row['id'] if row['id'] in refindex else None
+                view_regions=config.get('view_regions_snapshot',{}).get(row.get('view_id') or '',[])
+                predictions,region_summary=filter_proposals(predictions,view_regions)
+                details['view_regions']={'regions':[{'id':r['id'],'revision':r['revision'],'kind':r['kind']} for r in view_regions],
+                    'summary':region_summary,'policy':'exclusions override inclusion polygons'}
                 for item in predictions:item['prediction_id']=str(uuid.uuid4())
                 details['detections']=sum(x['evidence']=='yolox-s' for x in predictions)
                 details['lights_count']=sum(x['kind']=='light' for x in predictions)
