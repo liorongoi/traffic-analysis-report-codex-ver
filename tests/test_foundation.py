@@ -250,4 +250,22 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(state['enabled'])
         self.assertEqual(len(reopened.images(mission)),1)
 
+    def test_continuous_monitor_tracks_missing_paths_without_deleting_snapshots(self):
+        from road_traffic.monitor import SourceMonitor
+        source=self.root/'missing-monitor';source.mkdir()
+        mission=self.lib.create('Missing path monitor','Israel','Asia/Jerusalem',{
+            'source_root':str(source),'processing_mode':'continuous'})
+        image=source/'17052026-1605-camera.jpg';write_test_image(image)
+        monitor=SourceMonitor(self.lib,stability_seconds=0)
+        monitor.scan(mission)
+        image.unlink()
+        state=monitor.scan(mission)
+        self.assertEqual(state['files']['missing'],1)
+        self.assertEqual(state['missing_paths'][0]['relative_path'],image.name)
+        self.assertEqual(len(self.lib.images(mission)),1)
+        write_test_image(image)
+        state=monitor.scan(mission)
+        self.assertNotIn('missing',state['files'])
+        self.assertEqual(len(self.lib.images(mission)),1)
+
 if __name__=='__main__':unittest.main()

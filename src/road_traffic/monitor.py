@@ -68,6 +68,8 @@ class SourceMonitor:
             state['enabled']=enabled
             state['files'] = {row['status']: row['count'] for row in conn.execute(
                 'SELECT status,COUNT(*) count FROM monitored_files GROUP BY status')}
+            state['missing_paths']=[dict(row) for row in conn.execute(
+                "SELECT relative_path,imported_sha256,last_seen FROM monitored_files WHERE status='missing' ORDER BY relative_path LIMIT 100")]
             state['recent_errors'] = [dict(row) for row in conn.execute(
                 "SELECT relative_path,error FROM monitored_files WHERE error IS NOT NULL ORDER BY last_seen DESC LIMIT 20")]
             state['batches']={row['status']:row['count'] for row in conn.execute(
@@ -190,6 +192,14 @@ class SourceMonitor:
                                 conn.execute("UPDATE monitored_files SET status='ready' WHERE relative_path=?", (relative,))
                         except (OSError, ValueError) as exc:
                             conn.execute("UPDATE monitored_files SET status='error',error=? WHERE relative_path=?", (str(exc)[:1000], relative))
+
+            discovered_relatives={path.relative_to(root).as_posix() for path in discovered}
+            with self.library.connect(mission) as conn:
+                known=conn.execute("SELECT relative_path FROM monitored_files WHERE status!='missing'").fetchall()
+                for row in known:
+                    if row['relative_path'] not in discovered_relatives:
+                        conn.execute("UPDATE monitored_files SET status='missing',error=NULL WHERE relative_path=?",
+                            (row['relative_path'],))
 
             if ready:
                 try:
