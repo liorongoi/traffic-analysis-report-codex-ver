@@ -107,6 +107,10 @@ class Library:
             stable_since TEXT NOT NULL, last_seen TEXT NOT NULL, imported_sha256 TEXT,
             status TEXT NOT NULL, error TEXT
         )''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS monitor_batches(
+            source_run_id TEXT PRIMARY KEY REFERENCES runs(id), status TEXT NOT NULL,
+            inference_run_id TEXT, created TEXT NOT NULL, error TEXT
+        )''')
         conn.execute('''CREATE TABLE IF NOT EXISTS monitor_state(
             id INTEGER PRIMARY KEY CHECK(id=1), status TEXT NOT NULL,
             last_scan TEXT, last_import TEXT, error TEXT

@@ -42,7 +42,7 @@ def prepare(library,mission):
     with library.connect(mission) as conn:schema(conn)
 
 
-def create_run(library,mission,config):
+def create_run(library,mission,config,source_run=None):
     prepare(library,mission)
     run=str(uuid.uuid4())
     windows=library.scan_windows(mission)
@@ -50,7 +50,10 @@ def create_run(library,mission,config):
         zone=conn.execute('SELECT zone FROM mission WHERE id=?',(mission,)).fetchone()['zone']
     with library.connect(mission) as conn:
         conn.execute('BEGIN IMMEDIATE')
-        rows=conn.execute('SELECT id,sha256,capture_utc FROM images ORDER BY capture_utc,name').fetchall()
+        if source_run and not conn.execute('SELECT 1 FROM runs WHERE id=?',(source_run,)).fetchone():
+            raise ValueError('Source batch not found in this mission')
+        rows=conn.execute('SELECT id,sha256,capture_utc FROM images WHERE (? IS NULL OR run_id=?) ORDER BY capture_utc,name',
+            (source_run,source_run)).fetchall()
         if not rows:raise ValueError('Import images before running inference')
         from .schedules import compile_windows,eligible_compiled
         compiled=compile_windows(windows)
@@ -67,7 +70,7 @@ def create_run(library,mission,config):
             AND h.revision=(SELECT MAX(x.revision) FROM view_region_history x WHERE x.region_key=h.region_key)''',(mission,)):
             regions.setdefault(item['view_id'],[]).append({'id':item['region_key'],'revision':item['revision'],
                 'kind':item['kind'],'polygon':json.loads(item['polygon'])})
-        recorded_config={**config,'scan_schedule_snapshot':{'timezone':zone,'windows':windows,
+        recorded_config={**config,'source_run_id':source_run,'scan_schedule_snapshot':{'timezone':zone,'windows':windows,
             'excluded_image_count':len(rows)-len(eligible_rows)},'view_regions_snapshot':regions}
         conn.execute('INSERT INTO inference_runs(id,status,stage,total,config,created) VALUES (?,?,?,?,?,?)',
             (run,'queued','queued',len(eligible_rows),json.dumps(recorded_config),now()))

@@ -9,6 +9,12 @@ from . import inference_store
 from .store import now
 
 
+class InferenceBusy(ValueError):
+    """A new inference batch can wait until the current worker finishes."""
+
+    retryable = True
+
+
 class InferenceService:
     def __init__(self,library,pack):
         self.library,self.pack=library,Path(pack).resolve()
@@ -77,7 +83,7 @@ class InferenceService:
                         (f'Worker process is no longer available; {job["done"]} of {job["total"]} image results are saved. Resume this run.',now(),job['id']))
         return False
 
-    def start(self,mission,threshold=.18,tiled=True,night_lights=True,night_head_id=None):
+    def start(self,mission,threshold=.18,tiled=True,night_lights=True,night_head_id=None,source_run=None):
         from .detector import model_pack,VERSION
         settings = self.library.settings(mission)
         if settings['input_type'] != 'images' or settings['analysis_mode'] != 'general_traffic':
@@ -94,16 +100,37 @@ class InferenceService:
         with self.lock:
             if self.training_active:raise ValueError('Finish correction-head training before starting inference')
             # Only one local worker at a time; avoid contention on 16 GB machines.
-            if self._has_active_worker():raise ValueError('An inference worker is already running')
-            run=inference_store.create_run(self.library,mission,config)
+            if self._has_active_worker():raise InferenceBusy('An inference worker is already running')
+            run=inference_store.create_run(self.library,mission,config,source_run)
             self._spawn(mission,run)
         return {'run':run,'config':config}
+
+    def start_continuous_batch(self,mission,source_run):
+        settings=self.library.settings(mission)
+        if settings['processing_mode']!='continuous':raise ValueError('Mission is not configured for continuous processing')
+        if settings['input_type']!='images' or settings['analysis_mode']!='general_traffic':
+            raise ValueError('Automatic continuous inference currently supports still-image General Traffic missions only')
+        for job in inference_store.runs(self.library,mission):
+            if json.loads(job['config']).get('source_run_id')!=source_run:continue
+            if job['status'] in ('failed','cancelled'):
+                return {'run':job['id'],'status':job['status'],'existing':True}
+            return {'run':job['id'],'status':job['status'],'existing':True}
+        try:
+            return self.start(mission,source_run=source_run)
+        except Exception:
+            # _spawn can fail after the immutable run has already been committed.
+            # Return that run so the durable monitor batch tracks the failed run
+            # and the operator can resume it instead of creating duplicates.
+            for job in inference_store.runs(self.library,mission):
+                if json.loads(job['config']).get('source_run_id')==source_run:
+                    return {'run':job['id'],'status':job['status'],'existing':True}
+            raise
 
     def resume(self,mission,run):
         from .detector import model_pack,VERSION
         with self.lock:
             if self.training_active:raise ValueError('Finish correction-head training before resuming inference')
-            if self._has_active_worker():raise ValueError('An inference worker is already running')
+            if self._has_active_worker():raise InferenceBusy('An inference worker is already running')
             inference_store.prepare(self.library,mission)
             with self.library.connect(mission) as conn:
                 job=conn.execute('SELECT * FROM inference_runs WHERE id=?',(run,)).fetchone()

@@ -9,10 +9,11 @@ IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png'}
 
 
 class SourceMonitor:
-    def __init__(self, library, interval=2.0, stability_seconds=5.0):
+    def __init__(self, library, interval=2.0, stability_seconds=5.0,on_batch=None):
         self.library = library
         self.interval = interval
         self.stability_seconds = stability_seconds
+        self.on_batch=on_batch
         self.stop_event = threading.Event()
         self.thread = None
         self.lock = threading.Lock()
@@ -51,6 +52,7 @@ class SourceMonitor:
                 (status, now(), last_import, error))
 
     def status(self, mission):
+        self._sync_batches(mission)
         with self.library.connect(mission) as conn:
             row = conn.execute('SELECT * FROM monitor_state WHERE id=1').fetchone()
             state = dict(row) if row else {'id': 1, 'status': 'stopped', 'last_scan': None,
@@ -59,7 +61,43 @@ class SourceMonitor:
                 'SELECT status,COUNT(*) count FROM monitored_files GROUP BY status')}
             state['recent_errors'] = [dict(row) for row in conn.execute(
                 "SELECT relative_path,error FROM monitored_files WHERE error IS NOT NULL ORDER BY last_seen DESC LIMIT 20")]
+            state['batches']={row['status']:row['count'] for row in conn.execute(
+                'SELECT status,COUNT(*) count FROM monitor_batches GROUP BY status')}
+            state['recent_errors'].extend({'relative_path':'source batch '+row['source_run_id'],'error':row['error']}
+                for row in conn.execute("SELECT source_run_id,error FROM monitor_batches WHERE status IN ('failed','completed_with_errors') AND error IS NOT NULL ORDER BY created DESC LIMIT 20"))
             return state
+
+    def _sync_batches(self,mission):
+        with self.library.connect(mission) as conn:
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='inference_runs'").fetchone():return
+            pending=conn.execute('''SELECT b.source_run_id,b.inference_run_id,r.status,r.error FROM monitor_batches b
+                LEFT JOIN inference_runs r ON r.id=b.inference_run_id
+                WHERE b.status IN ('queued','failed','cancelled') AND b.inference_run_id IS NOT NULL''').fetchall()
+            for row in pending:
+                if row['status'] in ('completed','completed_with_errors','failed','cancelled'):
+                    error=(row['error'] or row['status']) if row['status']!='completed' else None
+                    batch_status='completed' if row['status']=='completed' else row['status']
+                    conn.execute('UPDATE monitor_batches SET status=?,error=? WHERE source_run_id=?',
+                        (batch_status,error,row['source_run_id']))
+
+    def _dispatch_batches(self,mission):
+        if not self.on_batch:return
+        with self.library.connect(mission) as conn:
+            pending=conn.execute("SELECT source_run_id FROM monitor_batches WHERE status='pending' ORDER BY created,source_run_id").fetchall()
+        for row in pending:
+            source_run=row['source_run_id']
+            try:
+                result=self.on_batch(mission,source_run)
+            except Exception as exc:
+                if getattr(exc,'retryable',False):return
+                with self.library.connect(mission) as conn:
+                    conn.execute("UPDATE monitor_batches SET status='failed',error=? WHERE source_run_id=? AND status='pending'",
+                        (str(exc)[:1000],source_run))
+                continue
+            with self.library.connect(mission) as conn:
+                conn.execute("UPDATE monitor_batches SET status='queued',inference_run_id=?,error=NULL WHERE source_run_id=? AND status='pending'",
+                    (result['run'],source_run))
+        self._sync_batches(mission)
 
     def scan(self, mission):
         with self.lock:
@@ -138,7 +176,11 @@ class SourceMonitor:
                         for relative, checksum in ready:
                             conn.execute("UPDATE monitored_files SET imported_sha256=?,status='imported',error=NULL WHERE relative_path=?",
                                 (checksum, relative))
+                        if self.on_batch:
+                            conn.execute("INSERT OR IGNORE INTO monitor_batches(source_run_id,status,created) VALUES (?,'pending',?)",
+                                (result['run'],now()))
                     self._state(mission, 'active', imported=True)
+                    self._dispatch_batches(mission)
                     return {**self.status(mission), 'last_batch': result}
                 except Exception as exc:
                     with self.library.connect(mission) as conn:
@@ -147,5 +189,6 @@ class SourceMonitor:
                                 (str(exc)[:1000], relative))
                     self._state(mission, 'error', str(exc))
                     return self.status(mission)
+            self._dispatch_batches(mission)
             self._state(mission, 'active')
             return self.status(mission)

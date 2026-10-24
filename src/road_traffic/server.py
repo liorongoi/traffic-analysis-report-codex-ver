@@ -16,10 +16,10 @@ def serve(workspace, web, port=8765, open_browser=False):
     library = Library(workspace)
     library.reconcile_exports()
     from .monitor import SourceMonitor
-    monitor = SourceMonitor(library)
-    monitor.start()
     from .inference import InferenceService
     inference=InferenceService(library,Path(web).parent/'model-packs'/'yolox-s')
+    monitor = SourceMonitor(library,on_batch=inference.start_continuous_batch)
+    monitor.start()
     token = secrets.token_urlsafe(32)
     class Handler(BaseHTTPRequestHandler):
         def reply(self, status, data, content='application/json; charset=utf-8'):
