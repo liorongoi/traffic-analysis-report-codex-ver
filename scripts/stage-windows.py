@@ -18,7 +18,7 @@ for name in ('python.exe','python311.dll' if (runtime/'python311.dll').exists() 
     if not (runtime/name).is_file():p.error('Complete Windows Python 3.11/3.12 runtime required: '+name)
 if not any(runtime.rglob('tzdata/zoneinfo/Asia/Jerusalem')):
     p.error('Offline tzdata package is required inside the private runtime')
-for module in ('numpy','PIL','cv2','onnxruntime'):
+for module in ('numpy','PIL','cv2','onnxruntime','watchdog'):
     if not any(p.is_dir() for p in runtime.rglob(module)):
         p.error('Offline Windows inference package is missing: '+module)
 pack=project/'model-packs'/'yolox-s'

@@ -6,3 +6,4 @@ packaging==26.3
 pillow==13.0.0
 protobuf==7.36.2
 tzdata==2026.5
+watchdog==6.0.0

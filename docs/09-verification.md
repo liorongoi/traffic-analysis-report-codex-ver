@@ -31,3 +31,7 @@ The initial failed sample import was followed by a corrected successful 143-imag
 2. Extend the existing local CPU detector and experimental night-light proposals only after collecting authorized, independently reviewed day/night references; measure accuracy and count error before treating outputs as operational results.
 3. Add video/ALPR adapters and protected learning pipeline.
 4. Build and test complete Windows offline media under a current-user account, including missing dependencies and process lifecycle checks.
+
+## Current verification update — 2026-10-25
+
+The current suite contains 99 Python checks. This increment adds deterministic observer-adapter tests for file-event wakeup, recursive watch selection, watch reconfiguration on pause/settings changes, unconfigured-source handling, and periodic polling fallback. The local `.venv` does not include Watchdog, so these tests use an injected observer test double; actual macOS/Windows/native and authorized network-share notification delivery has not been verified. `watchdog==6.0.0` is now an explicit application and offline runtime dependency, and the Windows staging validator rejects a runtime missing it. `node --check web/app.js` and `git diff --check` passed.

@@ -5,15 +5,35 @@ import threading
 from pathlib import Path
 from .store import digest, now, safe_file, validate_image_file
 
+try:
+    from watchdog.events import FileSystemEventHandler
+    from watchdog.observers import Observer
+except ImportError:  # Periodic reconciliation remains available in minimal dev environments.
+    FileSystemEventHandler = object
+    Observer = None
+
 IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png'}
 
 
+class _WakeOnFileChange(FileSystemEventHandler):
+    def __init__(self, wake_event):
+        super().__init__()
+        self.wake_event = wake_event
+
+    def on_any_event(self, event):
+        self.wake_event.set()
+
+
 class SourceMonitor:
-    def __init__(self, library, interval=2.0, stability_seconds=5.0,on_batch=None):
+    def __init__(self, library, interval=2.0, stability_seconds=5.0,on_batch=None,observer_factory=None):
         self.library = library
         self.interval = interval
         self.stability_seconds = stability_seconds
         self.on_batch=on_batch
+        self.observer_factory=observer_factory if observer_factory is not None else Observer
+        self.observers={}
+        self.notification_status={}
+        self.wake_event=threading.Event()
         self.stop_event = threading.Event()
         self.thread = None
         self.lock = threading.Lock()
@@ -22,32 +42,101 @@ class SourceMonitor:
         if self.thread and self.thread.is_alive():
             return
         self.stop_event.clear()
+        self.wake_event.set()
         self.thread = threading.Thread(target=self._run, name='source-monitor', daemon=True)
         self.thread.start()
 
     def stop(self):
         self.stop_event.set()
+        self.wake_event.set()
         if self.thread:
             self.thread.join(timeout=max(1.0, self.interval + 1))
+        self._stop_observers()
 
     def set_enabled(self, mission, enabled):
         # Serialize the control change with scans: once pause returns, an
         # in-flight scan has finished and no later scan can import new files.
         with self.lock:
             result=self.library.set_monitoring(mission,enabled)
+            self.wake_event.set()
             return {**self.status(mission),**result}
 
+    def _stop_observers(self):
+        observers=[value[1] for value in self.observers.values()]
+        self.observers.clear()
+        for observer in observers:
+            try:
+                observer.stop()
+            except Exception:
+                pass
+        for observer in observers:
+            try:
+                observer.join(timeout=2)
+            except Exception:
+                pass
+
+    def _refresh_observers(self, missions):
+        desired={}
+        for mission in missions:
+            mission_id=mission['id']
+            if (mission['processing_mode']!='continuous' or mission['input_type']!='images'
+                    or not self.library.monitoring_enabled(mission_id)):
+                self.notification_status[mission_id]={'status':'paused','error':None}
+                continue
+            try:
+                if not mission.get('source_root'):
+                    self.notification_status[mission_id]={'status':'unconfigured','error':None}
+                    continue
+                root=Path(mission['source_root']).resolve(strict=True)
+                if not root.is_dir():
+                    raise OSError('Configured source directory is unavailable')
+                desired[mission_id]=(str(root),bool(mission['include_subdirectories']))
+            except (OSError,ValueError):
+                self.notification_status[mission_id]={'status':'polling_fallback','error':'Source directory unavailable'}
+        for mission_id,(key,observer) in list(self.observers.items()):
+            if desired.get(mission_id)!=key:
+                try: observer.stop()
+                except Exception: pass
+                try: observer.join(timeout=2)
+                except Exception: pass
+                self.observers.pop(mission_id,None)
+        for mission_id,(root,recursive) in desired.items():
+            key=(root,recursive)
+            if mission_id in self.observers:
+                self.notification_status[mission_id]={'status':'active','error':None}
+                continue
+            if self.observer_factory is None:
+                self.notification_status[mission_id]={'status':'polling_fallback','error':'Filesystem notification dependency unavailable'}
+                continue
+            observer=None
+            try:
+                observer=self.observer_factory()
+                observer.schedule(_WakeOnFileChange(self.wake_event),root,recursive=recursive)
+                observer.start()
+                self.observers[mission_id]=(key,observer)
+                self.notification_status[mission_id]={'status':'active','error':None}
+            except Exception as exc:
+                try: observer.stop()
+                except Exception: pass
+                self.notification_status[mission_id]={'status':'polling_fallback','error':str(exc)[:500]}
+
     def _run(self):
-        while not self.stop_event.is_set():
-            for mission in self.library.missions():
-                if self.stop_event.is_set():
-                    break
-                if mission['processing_mode'] == 'continuous' and mission['input_type'] == 'images':
-                    try:
-                        self.scan(mission['id'])
-                    except Exception as exc:
-                        self._state(mission['id'], 'error', str(exc))
-            self.stop_event.wait(self.interval)
+        try:
+            while not self.stop_event.is_set():
+                self.wake_event.clear()
+                missions=self.library.missions()
+                self._refresh_observers(missions)
+                for mission in missions:
+                    if self.stop_event.is_set():
+                        break
+                    if mission['processing_mode'] == 'continuous' and mission['input_type'] == 'images':
+                        try:
+                            self.scan(mission['id'])
+                        except Exception as exc:
+                            self._state(mission['id'], 'error', str(exc))
+                self.wake_event.wait(self.interval)
+        finally:
+            self._stop_observers()
 
     def _state(self, mission, status, error=None, imported=False):
         with self.library.connect(mission) as conn:
@@ -66,6 +155,9 @@ class SourceMonitor:
             state = dict(row) if row else {'id': 1, 'status': 'stopped', 'last_scan': None,
                 'last_import': None, 'error': None}
             state['enabled']=enabled
+            notification=self.notification_status.get(mission,{'status':'starting' if enabled else 'paused','error':None})
+            state['file_notifications']=notification['status']
+            state['file_notification_error']=notification.get('error')
             state['files'] = {row['status']: row['count'] for row in conn.execute(
                 'SELECT status,COUNT(*) count FROM monitored_files GROUP BY status')}
             state['missing_paths']=[dict(row) for row in conn.execute(
