@@ -38,6 +38,8 @@ def execute(library,mission,run,pack):
                 LEFT JOIN inference_input_views iv ON iv.inference_id=ii.inference_id AND iv.image_id=ii.image_id
                 WHERE ii.inference_id=? ORDER BY capture_utc,name''',(run,))]
             heldout={r[0] for r in conn.execute("SELECT DISTINCT image_id FROM reviews WHERE role IN ('validation','test')")}
+            completed={r[0] for r in conn.execute('SELECT image_id FROM predictions WHERE inference_id=?',(run,))}
+        pending_inputs=[row for row in inputs if row['id'] not in completed]
         if head and any(json.loads(r['provenance']).get('preset')!='fintraffic' or Path(r['name']).stem.split('_')[0]!=head.data.get('view') for r in inputs):
             raise ValueError('Selected light correction head does not match every source view; use an appropriate mission/view or select None')
         def load(row):
@@ -54,7 +56,9 @@ def execute(library,mission,run,pack):
             if provenance.get('preset')=='fintraffic':
                 return 'fintraffic:'+Path(row['name']).stem.split('_')[0]
             return None
-        with library.connect(mission) as conn:conn.execute("UPDATE inference_runs SET stage='building_light_background' WHERE id=?",(run,))
+        with library.connect(mission) as conn:
+            if conn.execute("SELECT status FROM inference_runs WHERE id=?",(run,)).fetchone()['status']!='running':return
+            conn.execute("UPDATE inference_runs SET stage='building_light_background' WHERE id=?",(run,))
         if config.get('night_lights'):
             for row in inputs:
                 with library.connect(mission) as conn:
@@ -84,9 +88,11 @@ def execute(library,mission,run,pack):
             'references':refs,'view':view,'min_reference_images':5,'persistence_threshold':.6,
             'rule':'leave-target-out persistence plus novelty >= max(25,3*MAD) above median; held-out references excluded; similarity >= 0.8'}
         refindex={r['image_id']:i for i,r in enumerate(refs)}
-        for number,row in enumerate(inputs):
+        for number,row in enumerate(pending_inputs,start=len(completed)):
             with library.connect(mission) as conn:
-                if conn.execute('SELECT stop_requested FROM inference_runs WHERE id=?',(run,)).fetchone()[0]:
+                state=conn.execute('SELECT status,stop_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
+                if not state or state['status']!='running':return
+                if state['stop_requested']:
                     conn.execute("UPDATE inference_runs SET status='cancelled',stage='cancelled',finished=? WHERE id=?",(now(),run));return
                 conn.execute("UPDATE inference_runs SET stage='detecting' WHERE id=?",(run,))
             start=time.perf_counter()
@@ -133,12 +139,17 @@ def execute(library,mission,run,pack):
                 predictions=[];error=f'{type(exc).__name__}: {exc}'
             elapsed=time.perf_counter()-start
             with library.connect(mission) as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                state=conn.execute('SELECT status FROM inference_runs WHERE id=?',(run,)).fetchone()
+                if not state or state['status']!='running':
+                    conn.rollback();return
                 conn.execute('INSERT INTO predictions VALUES (?,?,?,?,?,?)',(run,row['id'],json.dumps(predictions),json.dumps(details),elapsed,error))
                 conn.execute('UPDATE inference_runs SET done=? WHERE id=?',(number+1,run))
             print(json.dumps({'run':run,'done':number+1,'total':len(inputs),'detections':details.get('detections',0),'lights':details.get('lights_count',0),'elapsed':round(elapsed,3),'error':error}),flush=True)
         with library.connect(mission) as conn:
             failures=conn.execute('SELECT COUNT(*) FROM predictions WHERE inference_id=? AND error IS NOT NULL',(run,)).fetchone()[0]
-            conn.execute('UPDATE inference_runs SET status=?,stage=?,finished=? WHERE id=?',('completed_with_errors' if failures else 'completed','finished',now(),run))
+            conn.execute("UPDATE inference_runs SET status=?,stage='finished',finished=? WHERE id=? AND status='running'",
+                ('completed_with_errors' if failures else 'completed',now(),run))
     except Exception as exc:
         with library.connect(mission) as conn:
             conn.execute("UPDATE inference_runs SET status='failed',stage='failed',error=?,finished=? WHERE id=?",(f'{type(exc).__name__}: {exc}',now(),run))

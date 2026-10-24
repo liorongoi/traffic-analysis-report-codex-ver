@@ -8,6 +8,7 @@ from unittest.mock import patch
 from road_traffic.store import Library
 from road_traffic.inference_store import create_run,enrich,runs
 from road_traffic.detector import iou,suppress,illumination,night_proposals,model_pack
+from road_traffic.inference import InferenceService
 
 
 class DetectorMathTests(unittest.TestCase):
@@ -94,3 +95,47 @@ class InferenceLedgerTests(unittest.TestCase):
     def test_mission_run_isolation(self):
         other=self.lib.create('Other','Latvia','Europe/Riga')
         with self.assertRaises(ValueError):self.lib.images(other,self.run)
+
+
+class InferenceRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
+        self.lib=Library(self.root/'workspace');self.mission=self.lib.create('Recover','Israel','Asia/Jerusalem')
+        source=self.root/'source';source.mkdir()
+        Image.new('RGB',(8,8),(10,30,50)).save(source/'17052026-1604-a.jpg','JPEG')
+        Image.new('RGB',(8,8),(50,30,10)).save(source/'17052026-1605-b.jpg','JPEG')
+        self.lib.import_folder(self.mission,source,'camera')
+
+    def tearDown(self):self.temp.cleanup()
+
+    def test_service_restart_marks_missing_worker_failed_with_progress_preserved(self):
+        run=create_run(self.lib,self.mission,{'adapter':'fixture'})
+        with self.lib.connect(self.mission) as conn:
+            conn.execute("UPDATE inference_runs SET status='running',stage='detecting',done=1,worker_pid=2147483000 WHERE id=?",(run,))
+        service=InferenceService(self.lib,self.root/'model-pack')
+        job=next(row for row in service.status(self.mission) if row['id']==run)
+        self.assertEqual(job['status'],'failed')
+        self.assertEqual(job['done'],1)
+        self.assertIn('Resume this run',job['error'])
+
+    def test_resume_keeps_config_and_saved_predictions_and_requeues_only_remaining(self):
+        from road_traffic.detector import VERSION
+        from unittest.mock import Mock
+        config={'adapter':VERSION,'model_sha256':'fixture-sha','threshold':.18,'tiled':True,'night_lights':False}
+        run=create_run(self.lib,self.mission,config)
+        with self.lib.connect(self.mission) as conn:
+            first=conn.execute('SELECT image_id FROM inference_inputs WHERE inference_id=? ORDER BY image_id LIMIT 1',(run,)).fetchone()[0]
+            saved_config=json.loads(conn.execute('SELECT config FROM inference_runs WHERE id=?',(run,)).fetchone()[0])
+            conn.execute('INSERT INTO predictions VALUES (?,?,?,?,?,?)',(run,first,'[]','{}',.1,None))
+            conn.execute("UPDATE inference_runs SET status='failed',stage='failed',done=1,error='interrupted' WHERE id=?",(run,))
+        service=InferenceService(self.lib,self.root/'model-pack')
+        process=Mock();process.poll.return_value=None
+        with (patch('road_traffic.detector.model_pack',return_value=('fixture','fixture-sha')),
+                patch('road_traffic.inference.subprocess.Popen',return_value=process)):
+            result=service.resume(self.mission,run)
+        self.assertEqual(result,{'run':run,'status':'queued','remaining':1})
+        with self.lib.connect(self.mission) as conn:
+            job=conn.execute('SELECT status,done,config FROM inference_runs WHERE id=?',(run,)).fetchone()
+            count=conn.execute('SELECT COUNT(*) FROM predictions WHERE inference_id=?',(run,)).fetchone()[0]
+        self.assertEqual((job['status'],job['done'],count),('queued',1,1))
+        self.assertEqual(json.loads(job['config']),saved_config)

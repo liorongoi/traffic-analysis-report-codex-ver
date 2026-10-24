@@ -159,6 +159,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                     result = library.review(data['mission'],data['image'],data['revision'],data['annotations'],data['operator'],data['role'],data['status'],data.get('prediction_run'))
                 elif self.path == '/api/inference/start':
                     result=inference.start(data['mission'],data.get('threshold',.18),data.get('tiled',True),data.get('night_lights',True),data.get('night_head_id'))
+                elif self.path == '/api/inference/resume':
+                    result=inference.resume(data['mission'],data['run'])
                 elif self.path == '/api/night-learning/train':
                     from .learning import train
                     with inference.lock:

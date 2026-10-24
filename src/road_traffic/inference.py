@@ -1,5 +1,6 @@
 """Small service-side process controller; framework imports stay in the worker."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,6 +13,69 @@ class InferenceService:
     def __init__(self,library,pack):
         self.library,self.pack=library,Path(pack).resolve()
         self.lock=threading.Lock();self.processes={};self.training_active=False
+        self.recover_after_restart()
+
+    @staticmethod
+    def _pid_alive(pid):
+        if not pid:return False
+        if os.name=='nt':
+            import ctypes
+            from ctypes import wintypes
+            kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+            kernel.OpenProcess.restype=wintypes.HANDLE
+            kernel.OpenProcess.argtypes=[wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+            kernel.GetExitCodeProcess.argtypes=[wintypes.HANDLE,ctypes.POINTER(wintypes.DWORD)]
+            kernel.CloseHandle.argtypes=[wintypes.HANDLE]
+            handle=kernel.OpenProcess(0x1000,False,int(pid))
+            if not handle:return ctypes.get_last_error() in (5,)
+            code=wintypes.DWORD()
+            try:return bool(kernel.GetExitCodeProcess(handle,ctypes.byref(code)) and code.value==259)
+            finally:kernel.CloseHandle(handle)
+        try:
+            os.kill(int(pid),0)
+            return True
+        except ProcessLookupError:return False
+        except PermissionError:return True
+        except OSError:return False
+
+    def recover_after_restart(self):
+        """Fail runs whose worker vanished; preserve completed per-image records."""
+        for mission_row in self.library.missions():
+            mission=mission_row['id'];inference_store.prepare(self.library,mission)
+            with self.library.connect(mission) as conn:
+                active=conn.execute("SELECT id,status,done,total,worker_pid FROM inference_runs WHERE status IN ('queued','running')").fetchall()
+                for job in active:
+                    if job['status']=='running' and self._pid_alive(job['worker_pid']):continue
+                    reason=(f"Service restarted before the worker recorded its process ID; {job['done']} of {job['total']} saved."
+                        if job['status']=='queued' else f"Worker process ended after a service restart; {job['done']} of {job['total']} image results are saved.")
+                    conn.execute("UPDATE inference_runs SET status='failed',stage='failed',stop_requested=1,error=?,finished=? WHERE id=?",
+                        (reason+' Resume this run to process remaining inputs.',now(),job['id']))
+
+    def _spawn(self,mission,run):
+        folder=self.library.location(mission)/'inference'/run;folder.mkdir(parents=True,exist_ok=True)
+        try:
+            with (folder/'worker.log').open('ab') as log:
+                process=subprocess.Popen([sys.executable,str(Path(__file__).resolve().parents[2]/'scripts'/'run-inference.py'),'--workspace',str(self.library.root),
+                    '--mission',mission,'--run',run,'--pack',str(self.pack)],stdout=log,stderr=subprocess.STDOUT)
+            self.processes[(mission,run)]=process
+        except Exception as exc:
+            with self.library.connect(mission) as conn:
+                conn.execute("UPDATE inference_runs SET status='failed',stage='failed',error=?,finished=? WHERE id=?",(str(exc),now(),run))
+            raise
+
+    def _has_active_worker(self):
+        if any(process.poll() is None for process in self.processes.values()):return True
+        for mission_row in self.library.missions():
+            mission=mission_row['id'];inference_store.prepare(self.library,mission)
+            with self.library.connect(mission) as conn:
+                active=conn.execute("SELECT id,status,done,total,worker_pid FROM inference_runs WHERE status IN ('queued','running')").fetchall()
+                for job in active:
+                    process=self.processes.get((mission,job['id']))
+                    if process and process.poll() is None:return True
+                    if job['status']=='running' and self._pid_alive(job['worker_pid']):return True
+                    conn.execute("UPDATE inference_runs SET status='failed',stage='failed',stop_requested=1,error=?,finished=? WHERE id=?",
+                        (f'Worker process is no longer available; {job["done"]} of {job["total"]} image results are saved. Resume this run.',now(),job['id']))
+        return False
 
     def start(self,mission,threshold=.18,tiled=True,night_lights=True,night_head_id=None):
         from .detector import model_pack,VERSION
@@ -30,27 +94,48 @@ class InferenceService:
         with self.lock:
             if self.training_active:raise ValueError('Finish correction-head training before starting inference')
             # Only one local worker at a time; avoid contention on 16 GB machines.
-            if any(p.poll() is None for p in self.processes.values()):raise ValueError('An inference worker is already running')
+            if self._has_active_worker():raise ValueError('An inference worker is already running')
             run=inference_store.create_run(self.library,mission,config)
-            folder=self.library.location(mission)/'inference'/run;folder.mkdir(parents=True)
-            try:
-                with (folder/'worker.log').open('ab') as log:
-                    process=subprocess.Popen([sys.executable,str(Path(__file__).resolve().parents[2]/'scripts'/'run-inference.py'),'--workspace',str(self.library.root),
-                        '--mission',mission,'--run',run,'--pack',str(self.pack)],stdout=log,stderr=subprocess.STDOUT)
-                self.processes[(mission,run)]=process
-            except Exception as exc:
-                with self.library.connect(mission) as conn:
-                    conn.execute("UPDATE inference_runs SET status='failed',stage='failed',error=?,finished=? WHERE id=?",(str(exc),now(),run))
-                raise
+            self._spawn(mission,run)
         return {'run':run,'config':config}
 
+    def resume(self,mission,run):
+        from .detector import model_pack,VERSION
+        with self.lock:
+            if self.training_active:raise ValueError('Finish correction-head training before resuming inference')
+            if self._has_active_worker():raise ValueError('An inference worker is already running')
+            inference_store.prepare(self.library,mission)
+            with self.library.connect(mission) as conn:
+                job=conn.execute('SELECT * FROM inference_runs WHERE id=?',(run,)).fetchone()
+                if not job:raise ValueError('Inference run not found')
+                if job['status'] not in ('failed','cancelled'):raise ValueError('Only failed or stopped runs can be resumed')
+                if self._pid_alive(job['worker_pid']):raise ValueError('The previous worker is still stopping; retry in a moment')
+                config=json.loads(job['config'])
+                if config.get('adapter')!=VERSION:raise ValueError('Adapter version changed; start a new run')
+                _,sha=model_pack(self.pack)
+                if sha!=config.get('model_sha256'):raise ValueError('Model changed since this run; start a new run')
+                completed=conn.execute('SELECT COUNT(*) FROM predictions WHERE inference_id=?',(run,)).fetchone()[0]
+                if completed>=job['total']:raise ValueError('This run has no unfinished image inputs')
+                conn.execute("UPDATE inference_runs SET status='queued',stage='queued',done=?,stop_requested=0,error=NULL,finished=NULL,worker_pid=NULL WHERE id=?",
+                    (completed,run))
+            self._spawn(mission,run)
+        return {'run':run,'status':'queued','remaining':job['total']-completed}
+
     def status(self,mission):
+        inference_store.prepare(self.library,mission)
         with self.lock:
             for (m,run),process in list(self.processes.items()):
                 if m!=mission or process.poll() is None:continue
                 with self.library.connect(mission) as conn:
                     conn.execute("UPDATE inference_runs SET status='failed',stage='failed',error=?,finished=? WHERE id=? AND status IN ('queued','running')",
                         (f'Worker exited unexpectedly ({process.returncode}); see inference/{run}/worker.log',now(),run))
+            with self.library.connect(mission) as conn:
+                active=conn.execute("SELECT id,status,done,total,worker_pid FROM inference_runs WHERE status IN ('queued','running')").fetchall()
+                for job in active:
+                    if (mission,job['id']) in self.processes:continue
+                    if job['status']=='running' and self._pid_alive(job['worker_pid']):continue
+                    conn.execute("UPDATE inference_runs SET status='failed',stage='failed',stop_requested=1,error=?,finished=? WHERE id=?",
+                        (f'Worker process ended unexpectedly; {job["done"]} of {job["total"]} image results are saved. Resume this run.',now(),job['id']))
         return inference_store.runs(self.library,mission)
 
     def stop(self,mission,run):
