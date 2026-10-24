@@ -1,0 +1,116 @@
+"""Incremental detector-to-tracker pipeline for one video recording."""
+from dataclasses import dataclass
+from datetime import datetime
+from fractions import Fraction
+import time
+
+from .video_decoder import IsolatedVideoDecoder
+from .video_timeline import VideoTimestamp
+
+
+class VideoAnalysisCancelled(RuntimeError):
+    """Raised after the caller requests cancellation between decoded frames."""
+
+
+@dataclass(frozen=True, slots=True)
+class VideoProgress:
+    frames_processed: int
+    total_frames: int | None
+    video_position_seconds: Fraction
+    elapsed_seconds: float
+    estimated_remaining_seconds: float | None
+    detections_in_frame: int
+    active_tracks: int
+
+
+@dataclass(frozen=True, slots=True)
+class VideoFrameAnalysis:
+    frame_index: int
+    timestamp: VideoTimestamp
+    utc_time: datetime | None
+    detections: tuple[dict, ...]
+    assignments: tuple
+    closed_tracks: tuple
+    progress: VideoProgress
+
+
+@dataclass(frozen=True, slots=True)
+class VideoTrackClosure:
+    tracks: tuple
+    reason: str = 'recording_end'
+
+
+class VideoAnalysisPipeline:
+    """Stream decoded frames through a detector and explicit-policy tracker.
+
+    This is an in-process processing component. It never buffers an entire
+    recording: each yielded result contains detections and track metadata, not
+    a retained image. The consumer should persist closed tracks as they arrive.
+    """
+
+    def __init__(self, detector, tracker, *, decoder_factory=IsolatedVideoDecoder):
+        if not callable(getattr(detector, 'infer', None)):
+            raise TypeError('detector must provide infer(rgb_frame)')
+        if not callable(getattr(tracker, 'update', None)) or not callable(getattr(tracker, 'finish', None)):
+            raise TypeError('tracker must provide update(timestamp, detections) and finish()')
+        self.detector = detector
+        self.tracker = tracker
+        self.decoder_factory = decoder_factory
+
+    def analyze(self, path, *, recording_start_utc=None, should_cancel=None,
+                progress_callback=None):
+        """Yield per-frame analyses and a final track-closure record.
+
+        `recording_start_utc` must be a timezone-aware origin confirmed from
+        source metadata or by the operator. A missing value leaves UTC unset.
+        Cancellation is checked between frames; tracker state remains available
+        from `self.tracker.state()` for a future durable worker/checkpoint.
+        """
+        if recording_start_utc is not None:
+            if (not isinstance(recording_start_utc, datetime)
+                    or recording_start_utc.tzinfo is None
+                    or recording_start_utc.utcoffset() is None):
+                raise ValueError('Recording origin must be a timezone-aware datetime')
+        if should_cancel is not None and not callable(should_cancel):
+            raise TypeError('should_cancel must be callable')
+        if progress_callback is not None and not callable(progress_callback):
+            raise TypeError('progress_callback must be callable')
+
+        started = time.monotonic()
+        with self.decoder_factory(path) as decoder:
+            metadata = decoder.metadata
+            frame_count = metadata.frame_count if metadata.frame_count > 0 else None
+            for decoded in decoder.frames():
+                if should_cancel is not None and should_cancel():
+                    raise VideoAnalysisCancelled('Video analysis cancelled between frames')
+                detections = self.detector.infer(decoded.image)
+                if not isinstance(detections, (list, tuple)):
+                    raise ValueError('Detector must return a list of detection mappings')
+                tracking = self.tracker.update(decoded.timestamp, detections)
+                elapsed = max(0.0, time.monotonic() - started)
+                processed = decoded.index + 1
+                eta = None
+                if frame_count is not None and processed < frame_count and processed:
+                    eta = elapsed / processed * (frame_count - processed)
+                progress = VideoProgress(
+                    frames_processed=processed,
+                    total_frames=frame_count,
+                    video_position_seconds=decoded.timestamp.offset_seconds,
+                    elapsed_seconds=elapsed,
+                    estimated_remaining_seconds=eta,
+                    detections_in_frame=len(detections),
+                    active_tracks=self.tracker.active_track_count,
+                )
+                if progress_callback is not None:
+                    progress_callback(progress)
+                utc_time = decoded.utc_at(recording_start_utc)
+                yield VideoFrameAnalysis(
+                    frame_index=decoded.index,
+                    timestamp=decoded.timestamp,
+                    utc_time=utc_time,
+                    detections=tuple(dict(item) for item in detections),
+                    assignments=tracking.assignments,
+                    closed_tracks=tracking.closed_tracks,
+                    progress=progress,
+                )
+        yield VideoTrackClosure(self.tracker.finish())

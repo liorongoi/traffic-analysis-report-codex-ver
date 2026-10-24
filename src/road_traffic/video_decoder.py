@@ -1,6 +1,7 @@
 """Bounded video decoding that retains FFmpeg frame PTS and time bases."""
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from fractions import Fraction
+import multiprocessing
 from pathlib import Path
 
 from .video_timeline import VideoTimestamp
@@ -50,8 +51,8 @@ class VideoMetadata:
         return Fraction(self.average_rate_num, self.average_rate_den)
 
 
-class VideoDecoder:
-    """Decode one video incrementally, retaining each decoded frame's raw PTS.
+class _PyAvVideoDecoder:
+    """Decode one video incrementally inside the isolated FFmpeg process.
 
     PyAV/FFmpeg's Frame.pts and Frame.time_base are retained independently for
     every frame. VFR is therefore represented by differing PTS deltas; no frame
@@ -166,3 +167,124 @@ class VideoDecoder:
             raise VideoDecodeError(f'Video decoding failed at frame {index}: {exc}') from exc
         if index == 0:
             raise VideoDecodeError('Video contains no decodable frames')
+
+
+def _decode_child(path, max_frame_pixels, max_threads, connection):
+    """Spawn target: keep PyAV/FFmpeg native libraries out of detector process."""
+    try:
+        with _PyAvVideoDecoder(path, max_frame_pixels=max_frame_pixels, max_threads=max_threads) as decoder:
+            connection.send(('ready', asdict(decoder.metadata)))
+            for frame in decoder.frames():
+                # Pipe backpressure limits the stream to the current frame; no
+                # multiprocessing queue can accumulate unbounded RGB arrays.
+                connection.send(('frame', frame.index, frame.timestamp.pts,
+                    frame.timestamp.time_base_num, frame.timestamp.time_base_den, frame.image))
+        connection.send(('done',))
+    except BaseException as exc:
+        try:
+            connection.send(('error', f'{type(exc).__name__}: {exc}'))
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+    finally:
+        connection.close()
+
+
+class IsolatedVideoDecoder:
+    """Bounded pipe-backed decoder process for use beside OpenCV inference.
+
+    PyAV and OpenCV wheels bundle different FFmpeg dylibs on macOS. Isolating
+    their native runtimes avoids loading those copies into the same process.
+    The one-way pipe also provides frame-by-frame backpressure.
+    """
+
+    def __init__(self, path, *, max_frame_pixels=24_000_000, max_threads=2):
+        self.path = Path(path)
+        self.max_frame_pixels = max_frame_pixels
+        self.max_threads = max_threads
+        self.metadata = None
+        self._process = None
+        self._connection = None
+        self._iterated = False
+        self._finished = False
+
+    def __enter__(self):
+        context = multiprocessing.get_context('spawn')
+        receiver, sender = context.Pipe(duplex=False)
+        self._connection = receiver
+        self._process = context.Process(target=_decode_child,
+            args=(str(self.path), self.max_frame_pixels, self.max_threads, sender),
+            name='traffic-video-decoder')
+        try:
+            self._process.start()
+            sender.close()
+            packet = receiver.recv()
+            if packet[0] == 'error':
+                self.close()
+                raise VideoDecodeError(packet[1])
+            if packet[0] != 'ready':
+                self.close()
+                raise VideoDecodeError('Video decoder process returned an invalid startup message')
+            self.metadata = VideoMetadata(**packet[1])
+            return self
+        except VideoDecodeError:
+            raise
+        except (EOFError, OSError, RuntimeError) as exc:
+            sender.close()
+            self.close()
+            raise VideoDecodeError(f'Video decoder process could not start: {exc}') from exc
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
+
+    def close(self):
+        if self._connection is not None:
+            try:
+                self._connection.close()
+            except OSError:
+                pass
+            self._connection = None
+        if self._process is not None:
+            if self._process.pid is not None:
+                if self._process.is_alive():
+                    self._process.terminate()
+                self._process.join(timeout=5)
+                if self._process.is_alive():
+                    self._process.kill()
+                    self._process.join()
+            self._process.close()
+            self._process = None
+
+    def frames(self):
+        if self._iterated:
+            raise RuntimeError('VideoDecoder frame stream can only be consumed once')
+        if self._connection is None or self._process is None:
+            raise RuntimeError('Open IsolatedVideoDecoder with a with block before reading frames')
+        self._iterated = True
+        try:
+            while True:
+                try:
+                    packet = self._connection.recv()
+                except EOFError as exc:
+                    raise VideoDecodeError('Video decoder process exited before completing its frame stream') from exc
+                if packet[0] == 'done':
+                    self._finished = True
+                    self._process.join()
+                    if self._process.exitcode != 0:
+                        raise VideoDecodeError(f'Video decoder process exited with status {self._process.exitcode}')
+                    return
+                if packet[0] == 'error':
+                    self._process.join()
+                    raise VideoDecodeError(packet[1])
+                if packet[0] != 'frame':
+                    raise VideoDecodeError('Video decoder process returned an invalid frame message')
+                _, index, pts, numerator, denominator, image = packet
+                yield DecodedVideoFrame(index,
+                    VideoTimestamp(pts, numerator, denominator), image)
+        finally:
+            if self._finished and self._process is not None:
+                self._process.close()
+                self._process = None
+
+
+# Public decoding always isolates PyAV's bundled FFmpeg libraries from OpenCV.
+VideoDecoder = IsolatedVideoDecoder

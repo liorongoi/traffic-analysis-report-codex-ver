@@ -1,32 +1,21 @@
 import tempfile
+import subprocess
+import sys
 import unittest
 import wave
 from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
 
-import av
-import numpy as np
-
 from road_traffic.video_decoder import VideoDecodeError, VideoDecoder
 
 
 def make_vfr_video(path, *, size=(64, 48), pixel_times=(0, 40, 160, 200)):
-    width, height = size
-    with av.open(str(path), mode='w', format='matroska') as output:
-        stream = output.add_stream('mpeg4', rate=25)
-        stream.width, stream.height = width, height
-        stream.pix_fmt = 'yuv420p'
-        stream.time_base = Fraction(1, 1000)
-        for index, pts in enumerate(pixel_times):
-            image = np.full((height, width, 3), index * 40, dtype=np.uint8)
-            frame = av.VideoFrame.from_ndarray(image, format='rgb24')
-            frame.pts = pts
-            frame.time_base = Fraction(1, 1000)
-            for packet in stream.encode(frame):
-                output.mux(packet)
-        for packet in stream.encode():
-            output.mux(packet)
+    if size != (64, 48) or pixel_times != (0, 40, 160, 200):
+        raise ValueError('The shared VFR test fixture has fixed dimensions and timestamps')
+    fixture = Path(__file__).with_name('create_vfr_fixture.py')
+    subprocess.run([sys.executable, str(fixture), str(path)], check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
 
 
 class VideoDecoderTests(unittest.TestCase):

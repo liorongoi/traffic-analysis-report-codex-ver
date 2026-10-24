@@ -253,6 +253,10 @@ class VideoTrackManager:
         self.active.clear()
         return closed
 
+    @property
+    def active_track_count(self):
+        return len(self.active)
+
     def state(self):
         """Return a JSON-compatible checkpoint suitable for chunk continuation."""
         def fraction(value):
