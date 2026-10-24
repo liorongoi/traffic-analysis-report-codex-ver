@@ -86,6 +86,30 @@ def runs(library,mission):
         return [dict(r) for r in conn.execute('SELECT * FROM inference_runs ORDER BY created DESC')]
 
 
+def roi_drift(library,mission,run):
+    """List views whose effective current ROI differs from this run's snapshot."""
+    prepare(library,mission)
+    with library.connect(mission) as conn:
+        job=conn.execute('SELECT config FROM inference_runs WHERE id=?',(run,)).fetchone()
+        if not job:raise ValueError('Inference run not found')
+        used={row['view_id'] for row in conn.execute(
+            'SELECT DISTINCT view_id FROM inference_input_views WHERE inference_id=? AND view_id IS NOT NULL',(run,))}
+        names={row['id']:row['name'] for row in conn.execute('SELECT id,name FROM views WHERE mission_id=?',(mission,))}
+        current={}
+        for row in conn.execute('''SELECT h.region_key,h.view_id,h.kind,h.polygon FROM view_region_history h
+            WHERE h.mission_id=? AND h.action='upsert'
+            AND h.revision=(SELECT MAX(x.revision) FROM view_region_history x WHERE x.region_key=h.region_key)''',(mission,)):
+            current.setdefault(row['view_id'],{})[row['region_key']]=(row['kind'],json.dumps(json.loads(row['polygon']),sort_keys=True,separators=(',',':')))
+    snapshot=json.loads(job['config']).get('view_regions_snapshot',{})
+    changed=[]
+    for view_id in sorted(used):
+        saved={item['id']:(item['kind'],json.dumps(item['polygon'],sort_keys=True,separators=(',',':')))
+            for item in snapshot.get(view_id,[])}
+        if saved!=current.get(view_id,{}):
+            changed.append({'view_id':view_id,'view_name':names.get(view_id,view_id)})
+    return changed
+
+
 def enrich(library,mission,rows,selected=None):
     prepare(library,mission)
     with library.connect(mission) as conn:

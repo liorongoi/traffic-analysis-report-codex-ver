@@ -163,7 +163,12 @@ class InferenceService:
                     if job['status']=='running' and self._pid_alive(job['worker_pid']):continue
                     conn.execute("UPDATE inference_runs SET status='failed',stage='failed',stop_requested=1,error=?,finished=? WHERE id=?",
                         (f'Worker process ended unexpectedly; {job["done"]} of {job["total"]} image results are saved. Resume this run.',now(),job['id']))
-        return inference_store.runs(self.library,mission)
+        jobs=inference_store.runs(self.library,mission)
+        for job in jobs:
+            changed=inference_store.roi_drift(self.library,mission,job['id'])
+            job['roi_changed_views']=changed
+            job['roi_review_required']=bool(changed)
+        return jobs
 
     def stop(self,mission,run):
         inference_store.prepare(self.library,mission)

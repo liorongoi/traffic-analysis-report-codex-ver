@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from PIL import Image
 
-from road_traffic.inference_store import create_run
+from road_traffic.inference_store import create_run,roi_drift
 from road_traffic.regions import filter_proposals, point_in_polygon, validate_polygon
 from road_traffic.store import Library
 
@@ -65,13 +65,22 @@ class RegionHistoryTests(unittest.TestCase):
         polygon=[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]
         region=self.library.add_view_region(self.mission,self.view['id'],'include',polygon,'Operator A')
         run=create_run(self.library,self.mission,{'adapter':'region-fixture'})
+        self.assertEqual(roi_drift(self.library,self.mission,run),[])
         self.library.update_view_region(self.mission,region['region_key'],'exclude',[[.2,.2],[.8,.2],[.8,.8],[.2,.8]],'Operator B')
+        self.assertEqual(roi_drift(self.library,self.mission,run),[{'view_id':self.view['id'],'view_name':'Entrance'}])
         with self.library.connect(self.mission) as conn:
             config=json.loads(conn.execute('SELECT config FROM inference_runs WHERE id=?',(run,)).fetchone()['config'])
         snapshot=config['view_regions_snapshot'][self.view['id']]
         self.assertEqual(snapshot[0]['revision'],1)
         self.assertEqual(snapshot[0]['kind'],'include')
         self.assertEqual(snapshot[0]['polygon'],polygon)
+
+    def test_unrelated_view_roi_change_does_not_flag_run(self):
+        other=self.library.create_view(self.mission,'Other camera','Operator A')
+        region=self.library.add_view_region(self.mission,other['id'],'include',[[.1,.1],[.9,.1],[.9,.9],[.1,.9]],'Operator A')
+        run=create_run(self.library,self.mission,{'adapter':'roi-scope-fixture'})
+        self.library.update_view_region(self.mission,region['region_key'],'exclude',[[.2,.2],[.8,.2],[.8,.8],[.2,.8]],'Operator B')
+        self.assertEqual(roi_drift(self.library,self.mission,run),[])
 
 
 if __name__=='__main__':
