@@ -1,0 +1,26 @@
+test_checksum_failure_is_atomic (test_foundation.StoreTests.test_checksum_failure_is_atomic) ... ok
+test_copy_survives_source_changes (test_foundation.StoreTests.test_copy_survives_source_changes) ... ok
+test_escape_and_symlink (test_foundation.StoreTests.test_escape_and_symlink) ... ok
+test_geometry_invalid (test_foundation.StoreTests.test_geometry_invalid) ... ok
+test_hash_corruption_detected (test_foundation.StoreTests.test_hash_corruption_detected) ... ok
+test_holdout_is_protected (test_foundation.StoreTests.test_holdout_is_protected) ... ok
+test_mission_isolation (test_foundation.StoreTests.test_mission_isolation) ... ok
+test_own_workspace_rejected (test_foundation.StoreTests.test_own_workspace_rejected) ... ok
+test_revisions_and_conflict (test_foundation.StoreTests.test_revisions_and_conflict) ... ok
+test_source_immutable (test_foundation.StoreTests.test_source_immutable) ... ok
+test_confirmed_filename_precision (test_foundation.TimeTests.test_confirmed_filename_precision) ... ok
+test_explicit_fintraffic (test_foundation.TimeTests.test_explicit_fintraffic) ... ok
+test_historical_dst (test_foundation.TimeTests.test_historical_dst) ... ok
+test_invalid_dates_and_paths (test_foundation.TimeTests.test_invalid_dates_and_paths) ... ok
+test_memory (test_foundation.TimeTests.test_memory) ... ok
+test_create_empty_mission_and_export (test_http.HttpTests.test_create_empty_mission_and_export) ... ok
+test_cross_origin_write_rejected (test_http.HttpTests.test_cross_origin_write_rejected) ... ok
+test_invalid_body_returns_error (test_http.HttpTests.test_invalid_body_returns_error) ... ok
+test_page_and_local_assets (test_http.HttpTests.test_page_and_local_assets) ... ok
+test_rebinding_host_rejected (test_http.HttpTests.test_rebinding_host_rejected) ... ok
+test_write_requires_session_token (test_http.HttpTests.test_write_requires_session_token) ... ok
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.098s
+
+OK

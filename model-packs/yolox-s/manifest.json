@@ -1,0 +1,21 @@
+{
+  "name": "OpenCV Zoo YOLOX-S COCO",
+  "license": "Apache-2.0 (directory declaration)",
+  "files": {
+    "model.onnx": {
+      "url": "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/object_detection_yolox/object_detection_yolox_2022nov.onnx",
+      "sha256": "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063",
+      "bytes": 35858002
+    },
+    "LICENSE": {
+      "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/object_detection_yolox/LICENSE",
+      "sha256": "0ec3668d3274bcf29e8a29e9576d5a2cd96fc78d3c5bec4387355a796e5d9088",
+      "bytes": 11371
+    },
+    "upstream-README.md": {
+      "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/object_detection_yolox/README.md",
+      "sha256": "389c9198224f76b1b662902efcd5d563cb748baf2b22b304670dc12eb75fab9d",
+      "bytes": 5848
+    }
+  }
+}

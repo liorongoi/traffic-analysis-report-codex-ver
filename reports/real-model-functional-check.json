@@ -1,0 +1,35 @@
+{
+  "status": "passed",
+  "model_sha256": "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063",
+  "providers": [
+    "CPUExecutionProvider"
+  ],
+  "python_outbound_connections_blocked": true,
+  "native_os_network_isolation_tested": false,
+  "blank_frame_proposals": 0,
+  "samples": [
+    {
+      "file": "images/C0450701_20261020T194513Z.jpg",
+      "model_proposals": 0,
+      "elapsed_seconds": 0.20037945895455778,
+      "illumination": {
+        "mean_luma": 109.9582986111111,
+        "mean_saturation": 0.0,
+        "low_light": true,
+        "illumination_rule": "mean luma <95 OR mean saturation <5; includes monochrome camera mode; not an astronomical night label"
+      }
+    },
+    {
+      "file": "images/C0450701_20261021T072525Z.jpg",
+      "model_proposals": 8,
+      "elapsed_seconds": 0.17934962501749396,
+      "illumination": {
+        "mean_luma": 115.31602973090278,
+        "mean_saturation": 45.42050998263889,
+        "low_light": false,
+        "illumination_rule": "mean luma <95 OR mean saturation <5; includes monochrome camera mode; not an astronomical night label"
+      }
+    }
+  ],
+  "accuracy": "Not measured; these are functional checks, not independent ground-truth evaluation."
+}

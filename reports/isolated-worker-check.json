@@ -1,0 +1,8 @@
+{
+  "status": "passed",
+  "run": "0a0f534f-b3ac-4302-8248-6a982e3ac340",
+  "python_isolated_mode": true,
+  "real_images": 2,
+  "worker_status": "completed",
+  "stdout": "{\"run\": \"0a0f534f-b3ac-4302-8248-6a982e3ac340\", \"done\": 1, \"total\": 2, \"detections\": 0, \"lights\": 152, \"elapsed\": 0.241, \"error\": null}\n{\"run\": \"0a0f534f-b3ac-4302-8248-6a982e3ac340\", \"done\": 2, \"total\": 2, \"detections\": 8, \"lights\": 0, \"elapsed\": 0.179, \"error\": null}\n"
+}

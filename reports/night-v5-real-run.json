@@ -1,0 +1,41 @@
+{
+  "run": {
+    "id": "0d2714e1-6c02-4d62-a417-5d26fd513073",
+    "status": "completed",
+    "stage": "finished",
+    "total": 143,
+    "done": 143,
+    "config": "{\"adapter\": \"yolox-s-coco+night-lights-v5\", \"threshold\": 0.18, \"tiled\": true, \"night_lights\": true, \"model_sha256\": \"c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063\", \"device\": \"CPUExecutionProvider\"}",
+    "created": "2026-10-24T17:21:37.150219+00:00",
+    "finished": "2026-10-24T17:24:35.590374+00:00",
+    "stop_requested": 0,
+    "error": null,
+    "worker_pid": 79200
+  },
+  "processed": 143,
+  "errors": 0,
+  "subtype_hypotheses": {
+    "headlight_candidate": 993,
+    "uncertain_light": 5450,
+    "reflection_suspect": 1861,
+    "streetlight_suspect": 3840
+  },
+  "median_seconds_per_image": 0.19227899995166808,
+  "learning": {
+    "status": "needs_labels",
+    "message": "Need explicit training labels (confidence >=3) for at least two classes, four regions and two images. Validation/test never fit.",
+    "inventory": {
+      "training": [],
+      "validation": [],
+      "test": [],
+      "excluded": [],
+      "review_count": 0,
+      "source": "current mission only",
+      "eligible_training_images": 0,
+      "classes": []
+    },
+    "checkpoint_created": false
+  },
+  "accuracy": "Unmeasured. No user corrections or independent validation labels are present in the main mission. Hypothesis counts are not accuracy.",
+  "tests": "50 unit/API/controlled integration tests passed; synthetic labels were confined to temporary tests."
+}

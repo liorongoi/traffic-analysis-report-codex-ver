@@ -1,0 +1,58 @@
+test_checksum_failure_is_atomic (test_foundation.StoreTests.test_checksum_failure_is_atomic) ... ok
+test_copy_survives_source_changes (test_foundation.StoreTests.test_copy_survives_source_changes) ... ok
+test_escape_and_symlink (test_foundation.StoreTests.test_escape_and_symlink) ... ok
+test_geometry_invalid (test_foundation.StoreTests.test_geometry_invalid) ... ok
+test_hash_corruption_detected (test_foundation.StoreTests.test_hash_corruption_detected) ... ok
+test_holdout_is_protected (test_foundation.StoreTests.test_holdout_is_protected) ... ok
+test_mission_isolation (test_foundation.StoreTests.test_mission_isolation) ... ok
+test_own_workspace_rejected (test_foundation.StoreTests.test_own_workspace_rejected) ... ok
+test_revisions_and_conflict (test_foundation.StoreTests.test_revisions_and_conflict) ... ok
+test_source_immutable (test_foundation.StoreTests.test_source_immutable) ... ok
+test_confirmed_filename_precision (test_foundation.TimeTests.test_confirmed_filename_precision) ... ok
+test_explicit_fintraffic (test_foundation.TimeTests.test_explicit_fintraffic) ... ok
+test_historical_dst (test_foundation.TimeTests.test_historical_dst) ... ok
+test_invalid_dates_and_paths (test_foundation.TimeTests.test_invalid_dates_and_paths) ... ok
+test_memory (test_foundation.TimeTests.test_memory) ... ok
+test_create_empty_mission_and_export (test_http.HttpTests.test_create_empty_mission_and_export) ... ok
+test_cross_origin_write_rejected (test_http.HttpTests.test_cross_origin_write_rejected) ... ok
+test_inference_report_rejects_unknown_run (test_http.HttpTests.test_inference_report_rejects_unknown_run) ... ok
+test_invalid_body_returns_error (test_http.HttpTests.test_invalid_body_returns_error) ... ok
+test_page_and_local_assets (test_http.HttpTests.test_page_and_local_assets) ... ok
+test_rebinding_host_rejected (test_http.HttpTests.test_rebinding_host_rejected) ... ok
+test_selected_report_and_rejected_export_counts (test_http.HttpTests.test_selected_report_and_rejected_export_counts) ... ok
+test_write_requires_session_token (test_http.HttpTests.test_write_requires_session_token) ... ok
+test_bright_monochrome_night_is_not_skipped (test_inference.DetectorMathTests.test_bright_monochrome_night_is_not_skipped) ... ok
+test_duplicate_vehicle_classes_do_not_double_count (test_inference.DetectorMathTests.test_duplicate_vehicle_classes_do_not_double_count) ... ok
+test_missing_model_fails_without_fetch (test_inference.DetectorMathTests.test_missing_model_fails_without_fetch) ... ok
+test_persistent_lights_and_detector_overlap_excluded (test_inference.DetectorMathTests.test_persistent_lights_and_detector_overlap_excluded) ... ok
+test_single_to_pair_is_not_two_confirmed_vehicles (test_inference.DetectorMathTests.test_single_to_pair_is_not_two_confirmed_vehicles) ... ok
+test_correction_survives_restart_and_keeps_original (test_inference.InferenceLedgerTests.test_correction_survives_restart_and_keeps_original) ... ok
+test_duplicate_worker_blocked (test_inference.InferenceLedgerTests.test_duplicate_worker_blocked) ... ok
+test_failed_lineage_save_is_atomic (test_inference.InferenceLedgerTests.test_failed_lineage_save_is_atomic) ... ok
+test_mission_run_isolation (test_inference.InferenceLedgerTests.test_mission_run_isolation) ... ok
+test_model_proposals_appear_without_becoming_reviewed (test_inference.InferenceLedgerTests.test_model_proposals_appear_without_becoming_reviewed) ... ok
+test_new_run_does_not_replace_review (test_inference.InferenceLedgerTests.test_new_run_does_not_replace_review) ... ok
+test_rejection_preserves_original (test_inference.InferenceLedgerTests.test_rejection_preserves_original) ... ok
+test_elongated_reflection_is_not_headlight_pair (test_night_learning.ContextLightTests.test_elongated_reflection_is_not_headlight_pair) ... ok
+test_feature_vector_is_finite (test_night_learning.ContextLightTests.test_feature_vector_is_finite) ... ok
+test_glare_next_to_recurring_fixture_stays_uncertain (test_night_learning.ContextLightTests.test_glare_next_to_recurring_fixture_stays_uncertain) ... ok
+test_missing_background_stays_uncertain (test_night_learning.ContextLightTests.test_missing_background_stays_uncertain) ... ok
+test_new_pair_is_one_hypothesis_not_two_vehicles (test_night_learning.ContextLightTests.test_new_pair_is_one_hypothesis_not_two_vehicles) ... ok
+test_persistent_lamps_are_kept_but_not_paired_as_headlights (test_night_learning.ContextLightTests.test_persistent_lamps_are_kept_but_not_paired_as_headlights) ... ok
+test_single_novel_light_is_eligible (test_night_learning.ContextLightTests.test_single_novel_light_is_eligible) ... ok
+test_candidate_is_applied_by_real_inference_worker (test_night_learning.LightLearningTests.test_candidate_is_applied_by_real_inference_worker) ... {"run": "5dde9478-295d-496f-8862-893b704f072d", "done": 1, "total": 3, "detections": 0, "lights": 2, "elapsed": 0.064, "error": null}
+{"run": "5dde9478-295d-496f-8862-893b704f072d", "done": 2, "total": 3, "detections": 0, "lights": 2, "elapsed": 0.049, "error": null}
+{"run": "5dde9478-295d-496f-8862-893b704f072d", "done": 3, "total": 3, "detections": 0, "lights": 2, "elapsed": 0.046, "error": null}
+ok
+test_checkpoint_tampering_is_rejected (test_night_learning.LightLearningTests.test_checkpoint_tampering_is_rejected) ... ok
+test_explicit_fit_versions_head_and_reports_validation (test_night_learning.LightLearningTests.test_explicit_fit_versions_head_and_reports_validation) ... ok
+test_holdout_image_never_fits (test_night_learning.LightLearningTests.test_holdout_image_never_fits) ... ok
+test_latest_explicit_decisions_own_evidence (test_night_learning.LightLearningTests.test_latest_explicit_decisions_own_evidence) ... ok
+test_no_labels_does_not_create_checkpoint (test_night_learning.LightLearningTests.test_no_labels_does_not_create_checkpoint) ... ok
+test_review_only_labels_are_not_training (test_night_learning.LightLearningTests.test_review_only_labels_are_not_training) ... ok
+test_unmodified_unclassified_or_low_confidence_do_not_train (test_night_learning.LightLearningTests.test_unmodified_unclassified_or_low_confidence_do_not_train) ... ok
+
+----------------------------------------------------------------------
+Ran 50 tests in 0.573s
+
+OK

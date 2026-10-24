@@ -1,0 +1,12 @@
+{
+  "real_run_processed": "143/143",
+  "night_filter_images": 90,
+  "first_frame_headlight_hypotheses": 15,
+  "first_frame_recurring_hypotheses": 52,
+  "first_frame_uncertain_hypotheses": 74,
+  "main_training_regions": 0,
+  "main_trained_candidates": 0,
+  "qa_class_confidence_save_reload": "passed, role none",
+  "qa_no_evidence_fit_refusal": "passed",
+  "accuracy_measured": false
+}

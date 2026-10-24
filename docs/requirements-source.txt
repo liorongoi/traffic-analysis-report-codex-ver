@@ -1,0 +1,530 @@
+Software Requirements and Implementation Prompt: Offline Road-Traffic Image and Video Analysis
+1. Role and objective
+Act as a senior software architect, computer vision engineer, machine-learning engineer, and UX designer.
+Design, implement, and validate a production-quality application for analyzing road-traffic still images and long video recordings.
+The application must support the complete workflow:
+Mission creation → analysis configuration → processing → human review and correction → approval → export → continued algorithm improvement.
+This is a new, independent application. It is not part of SpectraScope and must not inherit unrelated functionality, databases, or architectural assumptions from that application.
+Separate confirmed requirements from proposed implementation choices. Ask focused questions when a missing detail materially affects correctness. Never present assumptions, simulated results, or unexecuted tests as verified facts.
+2. Confirmed deployment environment
+The application will run on a Windows workstation, not on a separate server or Windows Server installation.
+The workstation will host the application backend, processing workers, databases, and local web interface.
+Users must be able to access the application:
+- From a browser on the workstation itself.
+- From a browser on another authorized computer on the same local network.
+Only one user will actively operate the system at a time.
+The operational network is disconnected from the internet. All required functionality must work offline, including:
+- Object detection and classification.
+- Video tracking.
+- License-plate recognition.
+- Natural-language interpretation.
+- Time-zone selection and conversion.
+- Fonts, scripts, maps, and UI assets.
+- Review, reporting, export, and model training.
+Do not depend on hosted inference APIs, cloud storage, online authentication, external CDNs, or runtime model downloads.
+Prepare dependencies, models, and approved datasets on a separate internet-connected development or staging machine, then transfer them into the offline environment.
+Do not assume Docker, WSL, Hyper-V, administrator privileges, or a particular installed machine-learning runtime.
+Ordinary application operation must not require administrator privileges. Confirm installation permissions before choosing service installation or automatic-start mechanisms.
+3. Hardware adaptation and performance
+The workstation may have:
+- 16 GB RAM, or
+- 48 GB RAM.
+Graphics hardware may include:
+- An NVIDIA RTX A4000, or
+- Another graphics adapter.
+Detect the actual hardware instead of assuming that every graphics adapter supports the chosen inference framework.
+Inspect:
+- CPU capabilities and available cores.
+- Physical and available RAM.
+- GPU model, available VRAM, driver compatibility, and supported execution backends.
+- Available disk space and storage performance.
+Provide:
+1. A conservative processing profile suitable for 16 GB RAM.
+2. An expanded profile suitable for 48 GB RAM.
+3. Supported GPU acceleration when available.
+4. A functional CPU fallback when suitable GPU acceleration is unavailable.
+5. Explicit operator overrides with clear resource implications.
+RAM capacity and GPU availability must be evaluated independently.
+Use bounded queues, bounded caches, incremental database writes, and controlled worker concurrency. Process long videos incrementally rather than loading entire recordings into memory.
+Load heavyweight models only when needed. Avoid loading every supported framework and model during application startup.
+Interactive review must remain responsive during processing. Background training must yield resources to interactive work and operational inference.
+Record any resizing, tiling, frame sampling, quantization, or other optimization affecting analysis. Do not silently discard input data or reduce analytical quality to produce better performance numbers.
+Measure performance on the target hardware. Do not promise throughput without evidence.
+4. Mission and run structure
+A mission contains:
+- Its source configuration.
+- Geographic and time-zone settings.
+- Its analysis mode.
+- Camera-view groups.
+- Analysis regions.
+- Scanning schedules.
+- Processing runs.
+- Results, corrections, approvals, and exports.
+A run is one execution against a defined input set using recorded configuration and model versions.
+Create a separate database for each mission, with separate runs stored inside it.
+Create the mission database when mission creation is committed, before the first analytical run.
+Keep missions isolated. Do not combine their analytical results automatically.
+Each mission must have one input type and one analytical mode. Multiple algorithms may cooperate inside that mode—for example, nighttime detection may combine vehicle detection, light-source analysis, and background modeling.
+5. Stage one: mission creation
+Provide a clear mission-creation wizard containing:
+1. Mission name.
+2. Mission input type:
+   - Still images.
+   - Video recordings.
+3. Target country.
+4. Geographic location and time zone.
+5. Source directory.
+6. Whether to include subdirectories.
+7. Processing mode:
+   - One-time processing.
+   - Continuous processing.
+8. Output directory.
+9. Export formats:
+   - Excel .xlsx.
+   - CSV .csv.
+   - Both.
+Initial country support must cover:
+- Iran.
+- Lebanon.
+- Israel.
+- Latvia.
+Validate source access, destination permissions, available storage, and configuration consistency.
+Filesystem paths refer to the workstation hosting the backend, not automatically to the computer running a remote browser.
+Define supported image formats, video containers, and codecs from representative input samples. Unsupported or corrupt files must produce visible, actionable errors.
+One-time processing
+Process the eligible files belonging to the selected input snapshot, then complete the run.
+Continuous processing
+After the initial run:
+- Continue monitoring the configured directory.
+- Detect eligible new or changed files.
+- Create additional processing runs or batches.
+- Notify the operator about new data, completed processing, and failures.
+- Keep new results pending review unless an explicitly configured approval policy states otherwise.
+Monitoring must be independent of whether a browser tab is open, provided the application backend is running.
+Persist the monitoring setting and resume enabled monitoring after restart.
+6. UTC timestamps and local-time handling
+Capture timestamps are in UTC.
+Still images:
+- Do not contain EXIF metadata.
+- May be captured at irregular intervals.
+The confirmed filename structure is:
+DDMMYYYY-HHmm-<suffix>
+Example:
+17052026-1604-dcincincifbvhubuhbv
+Interpret this as:
+- Capture date: 17 May 2026.
+- Capture time: 16:04 UTC.
+- Remaining suffix: an opaque identifier whose meaning must not be invented.
+Preserve the original filename and timestamp precision. A timestamp specifying minutes does not establish the actual capture seconds.
+Do not silently substitute filesystem creation or modification time for capture time.
+Provide timestamp-parsing previews and clear handling of malformed filenames.
+For video, confirm how the absolute UTC recording start time is encoded. Preserve media presentation timestamps and handle variable frame rates correctly. Do not calculate all event times from frame number divided by an assumed constant frame rate.
+Offline time-zone map
+Provide an interactive, locally available geographic time-zone map.
+Allow the operator to:
+- Select the operating location.
+- Search for a country, city, or named time zone.
+- Inspect local time and the applicable UTC offset.
+- See whether daylight saving applies to the relevant capture date.
+Store an IANA time-zone identifier, not merely a fixed UTC offset.
+Calculate local time using the rules applicable to each capture timestamp. Historical archives must not inherit one summer/winter setting from the date the mission was created.
+Support an explicit, documented manual override where necessary, preserving both the original UTC timestamp and the override’s provenance.
+7. Source ingestion and directory monitoring
+Implement reliable ingestion with:
+- Recursive discovery when enabled.
+- File-stability checks before processing.
+- Filesystem notifications plus periodic reconciliation.
+- Persistent ingestion and processing checkpoints.
+- Recovery after application or workstation restart.
+- Detection of corrupt, partially copied, replaced, renamed, or unsupported files.
+- Clear handling of unavailable directories.
+Repeated filesystem notifications must not create duplicate processing.
+However, identical image bytes captured at different times may represent distinct observations. Do not deduplicate legitimate captures using content hash alone.
+Record source identity, capture timestamp, checksum, path, and source version.
+Do not modify original source files.
+Define a retention policy preserving the evidence behind reviewed results. Replacing an input file must not silently invalidate or overwrite earlier results and corrections.
+Prevent application-generated outputs, databases, caches, and clips from being recursively re-ingested.
+8. Camera views and analysis regions
+The cameras are installed at fixed locations but have multiple shooting angles or views.
+A camera location must therefore be distinguished from its individual views.
+Automatically propose groups of images corresponding to recurring camera views.
+For each group:
+- Show representative images.
+- Show assigned images and group size.
+- Allow manual reassignment.
+- Allow splitting, merging, and renaming.
+- Preserve assignment history.
+Do not treat different lighting conditions automatically as different physical views.
+Maintain background models and analysis settings for the appropriate view. Do not combine incompatible backgrounds from different camera angles.
+Within each view, provide tools to draw, edit, and remove:
+- Inclusion polygons.
+- Exclusion polygons.
+Define the precedence of overlapping inclusion and exclusion regions.
+Preserve region coordinates in the original image coordinate system. Display scaling and zoom must not change analytical geometry.
+If a view changes sufficiently to invalidate its polygons or background model, flag it for review rather than silently applying the wrong configuration.
+9. Stage two: still-image analysis modes
+A. General traffic analysis
+Detect and count vehicles independently in each image.
+Do not attempt to count unique vehicles across the still-image collection. Irregular capture intervals do not establish continuous observations.
+Do not describe the sum of per-image counts as unique vehicle throughput or actual traffic flow.
+Allow configuration of:
+- Camera-view groups.
+- Inclusion and exclusion polygons.
+- Relevant local-time scanning windows.
+- Detection and uncertainty settings.
+Scanning schedules
+Support multiple schedules, including:
+- Date ranges.
+- Selected weekdays.
+- Several windows per day.
+- Windows crossing midnight.
+For example:
+Sunday 17:00 through Monday 05:00.
+Evaluate schedules after converting UTC capture time into the configured local time.
+Document boundary behavior and handle daylight-saving transitions correctly.
+B. Object search through chat
+Provide a mission-specific chat for describing the target.
+Example:
+Find red pickup trucks.
+
+Translate the request into a structured specification containing:
+- Object category and subtype.
+- Required attributes.
+- Exclusions.
+- Relevant regions and schedules.
+- Treatment of uncertain or unobservable attributes.
+Show the interpretation to the operator before execution.
+Use a local language model or another justified offline interpretation mechanism.
+Do not execute generated code. Do not treat a language model’s explanation as proof that an object is present.
+If vehicle color or subtype cannot be determined reliably, retain that uncertainty instead of inventing an answer.
+C. License-plate detection and recognition
+Support country-specific plate detection and OCR for Iran, Lebanon, Israel, and Latvia.
+Address the applicable:
+- Numeric characters.
+- Latin letters.
+- Arabic characters and numeral forms.
+- Persian characters and numeral forms.
+- Plate layouts, ordering, and reading directions.
+Verify country-specific layouts and variants rather than assuming one universal format.
+Store:
+- Plate location and crop.
+- Original OCR output.
+- Normalized searchable text.
+- Country/layout hypothesis.
+- Confidence or uncertainty.
+- Human corrections.
+- Source and model provenance.
+Preserve Unicode, leading zeros, and original character order.
+An unreadable plate must remain unreadable or partially recognized; it must not be forced into a plausible-looking identifier.
+The scope is recognition of visible plate information, not vehicle-owner identification or external registry lookup.
+10. Nighttime vehicle detection
+Nighttime analysis is a core capability and must have its own evaluation plan.
+Appearance changes with distance
+Support the following possible appearances:
+1. A distant vehicle appears as one unresolved bright region.
+2. At a closer distance, that region resolves into two closely spaced headlights.
+3. Closer still, the vehicle body becomes recognizable.
+Treat these as possible visual states of one vehicle hypothesis.
+Distinguish:
+- Individual light components.
+- Grouped light-source hypotheses.
+- Vehicle candidates.
+- Confirmed vehicles.
+The number of detected lights must not automatically become the number of detected vehicles.
+Do not assume:
+- Every bright point is a vehicle.
+- Every light pair belongs to one vehicle.
+- Every vehicle has two visible lights.
+- Vehicle type, color, or physical distance can be determined from an unresolved light source.
+Background and candidate generation
+Learn persistent background appearance and illumination separately for each relevant camera view and condition.
+A meaningful light source that is not explained by the persistent background must be eligible to become a candidate for operator review.
+Such a candidate is not automatically a confirmed vehicle.
+Evaluate:
+- Light-source position, size, shape, and brightness.
+- Relationships between nearby light components.
+- Road context and perspective.
+- Persistent streetlights and other fixed illumination.
+- Reflections, glare, wet roads, exposure changes, and sensor noise.
+- Vehicle-body evidence when visible.
+Do not let background adaptation silently remove stopped vehicles from consideration.
+Multi-algorithm analysis
+Evaluate complementary methods where justified:
+- Pretrained vehicle detection.
+- Small-object detection.
+- Light-source and headlight analysis.
+- Background modeling.
+- View-specific geometric context.
+- Carefully evaluated enhancement.
+- Fusion of compatible evidence.
+Use actual image conditions as well as capture time. Clock time alone does not establish image quality or darkness.
+Preserve originals. Enhanced images must not be treated as additional independent evidence.
+Display confirmed vehicle counts separately from unresolved candidate counts.
+Still images versus video
+Still images: Count independently. Do not claim vehicle continuity or approach motion from unrelated, irregularly sampled images.
+Video: Where temporal and spatial evidence supports it, preserve a vehicle’s track identity through transitions such as:
+one light region → two headlights → recognizable vehicle.
+The transition must not produce duplicate vehicle events. Ambiguous associations must remain uncertain rather than being forced.
+11. Stage two: video analysis
+Allow the operator to define the target through structured controls or confirmed chat interpretation.
+Example:
+Find every occurrence of a semi-trailer truck.
+
+Process long recordings incrementally with bounded memory.
+Implement detection, tracking, and event consolidation so that repeated observations of one vehicle during a continuous appearance create one event rather than many duplicate result rows.
+Maintain continuity across processing chunks.
+Define how the following affect event identity:
+- Temporary occlusion.
+- Disappearance and re-entry.
+- Camera-view changes.
+- Scene cuts.
+- Recording boundaries.
+Do not claim cross-camera or cross-recording identity matching without a separately specified and validated method.
+Each event must retain:
+- Video filename.
+- Track/event identifier.
+- First and last detection times.
+- Relative video positions.
+- Absolute UTC time when available.
+- Representative thumbnail.
+- Classification and uncertainty.
+- Review status.
+- Clip information.
+Allow configurable context before and after an event when exporting clips.
+12. Processing and progress interface
+Show real progress, including:
+- Discovered, queued, processed, failed, and skipped inputs.
+- Current processing stage.
+- Current image or video position.
+- Processed image count or video duration.
+- Elapsed time.
+- Remaining-time estimates when supportable.
+- Resource usage and meaningful error information.
+Provide appropriate pause, resume, cancellation, and recovery behavior.
+Closing a browser must not discard completed work or automatically terminate background processing.
+Keep processing status separate from review status.
+13. Stage three: still-image review
+Provide a searchable, sortable table showing at least:
+- Image filename.
+- Capture time.
+- Camera view.
+- Vehicle detection count.
+- Unresolved candidate count where relevant.
+- Processing status.
+- Review status.
+Support two approval paths.
+Approve all without individual review and export
+Provide an explicit action that:
+- Shows the scope and number of affected results.
+- Records approval without individual inspection.
+- Exports the selected result snapshot to the configured destination.
+- Does not silently approve newly arriving continuous-mission data.
+Bulk approval must not be described as independently verified ground truth.
+Individual review
+Open an investigation screen providing:
+1. The original image with overlays.
+2. Removal of false detections.
+3. Addition of missed detections using a rectangular bounding region.
+4. Correction of class, light grouping, candidate status, or plate text.
+5. Operator approval.
+6. Previous and next image controls.
+7. Current image index and total image count.
+Update the result table after saving.
+Preserve the original machine output and the history of changes.
+14. Video review and export
+Provide an event table containing:
+- Video name.
+- Event time or interval.
+- Event identifier.
+- Thumbnail.
+- Review state.
+Clicking a thumbnail must open playback at the relevant event, with useful surrounding context and detection overlays.
+Allow inspection and correction of false events and duplicate tracking events.
+Define supported timing edits, track merges, and track splits during detailed design.
+Support:
+- Export of selected event clips.
+- Export of an Excel or CSV event table.
+- Traceable links between exported rows, events, clips, runs, and original recordings.
+15. Preserve every correction
+Persist all operator corrections, including:
+- False-positive removal.
+- Missed-object addition.
+- Class or attribute correction.
+- Plate-text correction.
+- Confirmation or rejection of nighttime candidates.
+- Headlight grouping corrections.
+- Persistent-background-light labels.
+- Track/event corrections.
+- Camera-view reassignment and region changes.
+Distinguish analytical labels from configuration changes. A polygon change or view reassignment is not automatically an object-training annotation.
+For each change, preserve the applicable:
+- Mission and run identifiers.
+- Source file identity, version, and checksum.
+- Capture timestamp.
+- Camera and view.
+- Original prediction.
+- Corrected geometry, class, text, grouping, or decision.
+- Operator identity.
+- Review timestamp.
+- Model and preprocessing versions.
+- Notes and uncertainty.
+- Label role and review completeness.
+Retain correction revisions rather than overwriting history. Ensure that overlapping or revised corrections have a deterministic current interpretation while preserving earlier decisions.
+16. Continuous algorithm improvement
+Provide an explicit learning workflow using reviewed corrections.
+Support:
+- Inspection of available training evidence.
+- Selection of eligible reviewed data.
+- Manual initiation of a training/refinement run.
+- An optional policy for automatically scheduling training after sufficient eligible evidence accumulates.
+Propose and document the automatic-training policy before enabling it. Do not invent fixed thresholds or inherit them from another application.
+Do not retrain after every isolated correction.
+For every algorithm, declare whether it supports:
+- Fine-tuning.
+- Full retraining.
+- Training a downstream classifier.
+- Background-model refitting.
+- Parameter calibration only.
+- No supported learning adapter.
+Do not describe an algorithm as trainable without implementing and testing its learning path.
+Training-data safeguards
+- Use explicit reviewed labels, not model votes or bulk approvals, as human references.
+- Distinguish fully reviewed images from partially corrected images.
+- Do not treat every unmarked object in a partially reviewed image as a negative example.
+- Keep training, validation, and test data separate.
+- Prevent leakage between related frames, recordings, camera views, and captures.
+- Preserve mission provenance.
+- Do not silently pool data across missions; establish an explicit reuse policy.
+Versioned training and evaluation
+Each training run must record:
+- Eligible correction identifiers and dataset version.
+- Base checkpoint.
+- Algorithm and preprocessing configuration.
+- Class schema.
+- Resource profile.
+- Progress, failures, and resulting checkpoint.
+- Evaluation results.
+Create candidate model versions without overwriting established production models.
+Compare candidates against the current model, including nighttime and country-specific performance. Report both improvements and regressions.
+Provide controlled model promotion and rollback. Successful training alone must not silently replace the production model.
+A failed training run must preserve its evidence and diagnostics.
+17. Persistence and export
+The mission database is the authoritative record for:
+- Mission settings.
+- Processing runs.
+- Source versions.
+- Views, regions, and schedules.
+- Predictions and candidates.
+- Tracks and events.
+- Reviews and corrections.
+- Learning evidence and training runs.
+- Model versions.
+- Progress, failures, and exports.
+A per-mission SQLite database on the workstation is a reasonable candidate for the single-user deployment, provided all access goes through the backend and writes, backups, and recovery are handled safely. Justify any alternative.
+Browser clients must never open database files directly.
+Exports must:
+- Use the configured directory and formats.
+- Represent a defined result snapshot.
+- Preserve Unicode and leading zeros.
+- Distinguish original predictions, corrections, candidates, and approval type.
+- Include mission, run, and source identifiers.
+- Handle large tables without silent truncation.
+- Avoid silently overwriting earlier exports.
+- Report partial exports, permission problems, and storage failures.
+18. Architecture, packaging, and UX
+Separate responsibilities for:
+- Ingestion and monitoring.
+- Scheduling.
+- Detection and classification.
+- OCR.
+- Tracking.
+- Review.
+- Persistence.
+- Training and model management.
+- Export.
+Use persistent background tasks rather than long-running browser requests.
+Provide a modern, consistent interface with:
+- A guided mission wizard.
+- Clear navigation and editable configuration summaries.
+- Prominent monitoring controls.
+- Responsive image and video review.
+- Useful keyboard shortcuts.
+- Efficient pagination and filtering.
+- Clear loading, empty, unavailable, and failure states.
+- Contextual Help.
+- A visible distinction between machine predictions, candidates, human decisions, and training results.
+Support authorized LAN access with appropriate authentication and session handling.
+Package all runtime requirements for offline operation. Prefer separating small application updates from stable runtime and model packs. Updates must preserve mission databases, evidence, corrections, and model history.
+19. Algorithm research and benchmark selection
+Research current methods using primary publications, official repositories, and model documentation.
+Compare suitable pretrained candidates against simpler baselines. Select methods based on measured task performance, resource requirements, reliability, maintainability, and applicable licenses.
+Check software, model-weight, dataset, and image rights separately. Do not bypass access controls, licensing conditions, or source-code protections.
+Potential research starting points include:
+- BDD100K: diverse driving imagery and tracking tasks; verify the separate data-license conditions.
+- UA-DETRAC research paper: traffic detection and tracking, including nighttime conditions.
+- AI City Challenge datasets: relevant tracking and vehicle-retrieval tasks; verify current availability and terms.
+- IR-LPR: Iranian plate detection and recognition data; verify rights to the underlying data.
+- ExDark: supplementary low-light evaluation; its stated commercial-use and third-party-image conditions require attention.
+These are candidates, not automatically approved project dependencies.
+Public benchmarks must be supplemented with representative, appropriately authorized data from the intended cameras and countries.
+Do not claim:
+- Semi-trailer recognition from broad “truck” or “other vehicle” labels alone.
+- Arabic or Persian OCR support from Latin-only tests.
+- Country-specific plate support without country-specific evidence.
+- Reliable detection of headlight-only vehicles from unrelated benchmark results.
+20. Validation and acceptance
+Maintain a requirements-to-tests traceability matrix.
+Continuously execute suitable unit, integration, browser, recovery, and performance tests using maintained, appropriately licensed tools.
+Include real tests for:
+- Filename UTC parsing and minute-level timestamp precision.
+- Local-time conversion and daylight-saving transitions.
+- Overnight and multiple scanning windows.
+- Recursive monitoring and incomplete file copies.
+- Restart recovery and duplicate ingestion prevention.
+- Camera-view grouping and manual reassignment.
+- Inclusion and exclusion polygons.
+- Per-image counting.
+- Nighttime candidates and persistent background lights.
+- One-light-to-two-headlight transitions.
+- Duplicate-free video events.
+- Long recordings and processing-chunk boundaries.
+- Country-specific OCR and Unicode exports.
+- Review persistence and correction history.
+- Training-data eligibility and evaluation separation.
+- Model promotion and rollback.
+- Local and remote-browser access.
+- Both 16 GB and 48 GB profiles where hardware is available.
+- Supported GPU operation and CPU fallback.
+- Fully disconnected installation and operation.
+Report appropriate measured metrics:
+- Detection Precision, Recall, F1, and suitable average precision.
+- Per-image count error.
+- Nighttime candidate acceptance and false-alarm rates.
+- Tracking identity consistency and duplicate-event rate.
+- Plate exact-match accuracy and character error rate.
+- Throughput, latency, peak RAM/VRAM, and storage usage.
+Break down results by relevant conditions, views, object types, countries, and hardware profiles.
+Agree numerical acceptance thresholds with the product owner. Do not invent accuracy or throughput targets.
+Published model scores, confidence values, synthetic tests, and package inspection are not substitutes for measured system performance.
+For each delivery, provide:
+- What was implemented.
+- What was actually tested.
+- Reproducible commands and test evidence.
+- Benchmark and model versions.
+- Known limitations and regressions.
+- Explicitly untested hardware or deployment scenarios.
+Never claim that everything works without evidence covering the stated scope.
+21. Initial implementation deliverables
+Before committing to the detailed implementation, produce:
+1. A consolidated requirements specification.
+2. Remaining material clarification questions.
+3. Architecture and per-mission data model.
+4. UI workflow and review-screen wireframes.
+5. Camera-view and nighttime-detection design.
+6. Model and dataset comparison plan.
+7. Correction-storage and continuous-learning design.
+8. Hardware profiles and resource-management plan.
+9. Offline deployment and update plan.
+10. A phased implementation and acceptance-test roadmap.
+Keep unresolved matters explicit, particularly actual input codecs, expected data volumes, maximum recording durations, UI language, clip context settings, installation permissions, and numerical acceptance criteria.
+Proceed in demonstrable increments, validate each increment, and preserve traceability from every requirement to its implementation and test evidence.

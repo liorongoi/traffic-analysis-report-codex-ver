@@ -1,0 +1,15 @@
+# Independent road-traffic project
+
+- This application is independent of SpectraScope. Do not import its application modules, private databases, images, correction policies, model caches, branding, or installation state.
+- Operational deployment is offline on a Windows workstation with one active user. Local and authorized LAN browsers use the backend; browsers never open SQLite directly. Internet-connected staging is separate from installed operation.
+- Keep one SQLite database per mission and independent versioned runs. No automatic merging of mission outputs or training evidence across missions.
+- UTC comes from confirmed DDMMYYYY-HHmm-<opaque suffix> filenames. Preserve minute precision; never invent measured seconds or use filesystem times as capture time. Use named IANA zones for historical local schedules.
+- Count still images independently. Cameras have recurring views; maintain background/ROI state by view. A light component, a vehicle candidate, and a confirmed vehicle are different entities. Headlight pairs are not automatically two vehicles; irregular stills do not prove identity continuity.
+- All human corrections are revisioned and retain source/run/view/model/operator provenance. Preserve original predictions. Bulk approval is not independent ground truth; partial review does not imply every unmarked region is negative.
+- Training adapters must declare actual capabilities. Protect validation/test data, version candidates, report regressions, and require controlled promotion/rollback. No automatic training threshold is approved yet. No silent model download/substitution.
+- Fail clearly when models/adapters are unavailable. Never generate mock detections or pretend that package inspection is native Windows execution.
+- Use bounded processing on 16/48 GB hardware. GPU metadata is not proof that an inference backend works. Installation is current-user only with no administrator rights: app-local runtimes, HKCU shortcuts and registration, no elevation or system service. Authorize local directories and network shares explicitly; retain the catalog during share outages. UI supports Hebrew/English and full RTL/LTR.
+- Maintain requirement-to-test evidence and distinguish implemented, tested, proposed, blocked, and untested items. Do not claim a complete product while core workflows remain unimplemented.
+
+- Current vehicle adapter: COCO-pretrained YOLOX-S, CPU ONNX Runtime, local hash-verified pack only. Automatic vehicle boxes and experimental night lights are unconfirmed proposals. Preserve all prior prediction runs and correction links. Night routing includes monochrome images, not just low average brightness. Single/pair lights are not proven vehicles or temporal identity.
+- Keep human-confirmed counts separate from detector/light proposal counts; rejected entries remain auditable but do not count. New runs never replace saved reviews. YOLOX currently has no training implementation. The separate mission-local night-light head supports explicit-label refits; do not describe this as YOLOX fine-tuning or inherit SpectraScope thresholds. Candidates require explicit selection and holdout protection.

@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+workspace/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+staging/
+models/
+reports/private/
+
+staging/
+dist/

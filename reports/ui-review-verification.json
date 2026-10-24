@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "workspace": "isolated temporary QA workspace, not main mission",
+  "operator": "UI verification only",
+  "evidence_role": "none",
+  "real_model_start_and_completion": true,
+  "progress_visible": true,
+  "stop_cancelled": true,
+  "class_change_persisted": true,
+  "false_positive_rejection_persisted": true,
+  "missed_rectangle_persisted": true,
+  "reload_persistence": true,
+  "original_model_unchanged": true,
+  "original_overlay_read_only": true,
+  "english_and_hebrew_direction_switch": true,
+  "saved_review_revisions": 3,
+  "qa_ground_truth": false
+}
