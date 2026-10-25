@@ -196,7 +196,12 @@ class VideoInferenceService:
                 log_path = self.library.location(mission) / 'video' / job['id'] / 'worker.log'
                 video_store.fail_worker(self.library, mission, job['id'],
                     f'Video worker exited unexpectedly ({return_code}); see {log_path}')
-        return video_store.runs(self.library, mission)
+        jobs=video_store.runs(self.library, mission)
+        from .hardware import process_usage
+        for job in jobs:
+            if job['status'] in ('queued','running') and job.get('worker_pid'):
+                job['resource_usage']=process_usage(job['worker_pid'])
+        return jobs
 
 
 class VehicleProposalAdapter:

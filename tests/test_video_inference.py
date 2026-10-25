@@ -52,7 +52,10 @@ class VideoInferenceServiceTests(unittest.TestCase):
         run_id = result['run']
         process = self.inference.processes[(self.mission, run_id)]
         self.assertIsNone(process.poll())
-        self.assertEqual(self.service.status(self.mission)[0]['status'], 'queued')
+        live=self.service.status(self.mission)[0]
+        self.assertEqual(live['status'], 'queued')
+        self.assertEqual(live['resource_usage']['state'],'measured')
+        self.assertGreater(live['resource_usage']['resident_memory_bytes'],0)
         self.service.cancel(self.mission, run_id)
         self.assertTrue(self.service.status(self.mission)[0]['cancel_requested'])
         process.terminate()

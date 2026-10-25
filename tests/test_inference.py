@@ -154,6 +154,19 @@ class InferenceRecoveryTests(unittest.TestCase):
         self.assertEqual(result,{'run':'new-run'})
         start.assert_called_once_with(mission,source_run='source-run',resource_profile='expanded')
 
+    def test_active_image_run_status_includes_live_resource_usage(self):
+        from unittest.mock import Mock
+        run=create_run(self.lib,self.mission,{'adapter':'fixture'})
+        with self.lib.connect(self.mission) as conn:
+            conn.execute("UPDATE inference_runs SET status='running',stage='detecting',worker_pid=? WHERE id=?",(os.getpid(),run))
+        service=InferenceService(self.lib,self.root/'model-pack')
+        process=Mock();process.poll.return_value=None
+        service.processes[(self.mission,run)]=process
+        measured={'state':'measured','resident_memory_bytes':4096,'cpu_percent_host_capacity':12.5,'cpu_sample_seconds':2.0}
+        with patch('road_traffic.hardware.process_usage',return_value=measured):
+            status=next(job for job in service.status(self.mission) if job['id']==run)
+        self.assertEqual(status['resource_usage'],measured)
+
     def test_start_snapshots_operator_resource_profile_and_applies_cpu_thread_limit(self):
         from road_traffic.detector import VERSION
         gib=1024**3

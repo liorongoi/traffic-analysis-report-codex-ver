@@ -4,10 +4,30 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from road_traffic.hardware import inventory, resolve_resource_profile
+from road_traffic.hardware import inventory, process_usage, resolve_resource_profile
 
 
 class HardwareInventoryTests(unittest.TestCase):
+    def test_process_usage_reports_resident_memory_and_sampled_host_cpu_share(self):
+        pid=987654321
+        from road_traffic import hardware
+        hardware._PROCESS_SAMPLES.pop(pid,None)
+        with (patch('road_traffic.hardware._process_sample',side_effect=[(2.0,1000),(3.0,1200)]),
+                patch('road_traffic.hardware.time.monotonic',side_effect=[10.0,12.0]),
+                patch('road_traffic.hardware.os.cpu_count',return_value=2)):
+            first=process_usage(pid);second=process_usage(pid)
+        hardware._PROCESS_SAMPLES.pop(pid,None)
+        self.assertEqual(first['state'],'measured')
+        self.assertIsNone(first['cpu_percent_host_capacity'])
+        self.assertEqual(second['resident_memory_bytes'],1200)
+        self.assertEqual(second['cpu_percent_host_capacity'],25.0)
+        self.assertEqual(second['cpu_sample_seconds'],2.0)
+
+    def test_process_usage_is_explicit_when_pid_cannot_be_measured(self):
+        with patch('road_traffic.hardware._process_sample',return_value=None):
+            self.assertEqual(process_usage(987654322),{
+                'state':'unavailable','reason':'worker_not_accessible'})
+
     def test_report_has_capacity_and_marks_unverified_acceleration(self):
         with tempfile.TemporaryDirectory() as folder:
             report = inventory(Path(folder))

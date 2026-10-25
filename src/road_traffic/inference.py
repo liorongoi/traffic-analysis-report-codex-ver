@@ -203,7 +203,10 @@ class InferenceService:
                     conn.execute("UPDATE inference_runs SET status='failed',stage='failed',stop_requested=1,error=?,finished=? WHERE id=?",
                         (f'Worker process ended unexpectedly; {job["done"]} of {job["total"]} image results are saved. Resume this run.',now(),job['id']))
         jobs=inference_store.runs(self.library,mission)
+        from .hardware import process_usage
         for job in jobs:
+            if job['status'] in ('queued','running') and job.get('worker_pid'):
+                job['resource_usage']=process_usage(job['worker_pid'])
             state=inference_store.roi_review_state(self.library,mission,job['id'])
             job['roi_changed_views']=state['changed_views']
             job['roi_stale']=state['stale']

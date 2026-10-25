@@ -8,6 +8,7 @@ import platform
 import re
 import shutil
 import subprocess
+import threading
 import tempfile
 import time
 
@@ -68,6 +69,121 @@ def _memory():
     if system == 'Linux':
         return _linux_memory()
     return None, None
+
+
+_PROCESS_SAMPLES = {}
+_PROCESS_SAMPLES_LOCK = threading.Lock()
+_PROCESS_SAMPLE_LIMIT = 256
+
+
+def _linux_process_sample(pid):
+    try:
+        fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+        user_ticks, system_ticks = int(fields[11]), int(fields[12])
+        resident_pages = int(Path(f'/proc/{pid}/statm').read_text().split()[1])
+        ticks_per_second = os.sysconf('SC_CLK_TCK')
+        page_size = os.sysconf('SC_PAGE_SIZE')
+        return (user_ticks + system_ticks) / ticks_per_second, resident_pages * page_size
+    except (OSError, ValueError, IndexError, ZeroDivisionError):
+        return None
+
+
+def _mac_process_sample(pid):
+    try:
+        report = subprocess.run(['ps', '-o', 'rss=', '-o', 'time=', '-p', str(pid)],
+            check=True, capture_output=True, text=True, timeout=2).stdout.strip()
+        fields = report.split()
+        if len(fields) != 2:
+            return None
+        rss_bytes = int(fields[0]) * 1024
+        cpu_text = fields[1]
+        days = 0
+        if '-' in cpu_text:
+            day_text, cpu_text = cpu_text.split('-', 1)
+            days = int(day_text)
+        parts = cpu_text.split(':')
+        if len(parts) == 3:
+            hours, minutes, seconds = int(parts[0]), int(parts[1]), float(parts[2])
+        elif len(parts) == 2:
+            hours, minutes, seconds = 0, int(parts[0]), float(parts[1])
+        else:
+            return None
+        return days * 86400 + hours * 3600 + minutes * 60 + seconds, rss_bytes
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def _windows_process_sample(pid):
+    class ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [('cb', ctypes.c_ulong), ('PageFaultCount', ctypes.c_ulong),
+            ('PeakWorkingSetSize', ctypes.c_size_t), ('WorkingSetSize', ctypes.c_size_t),
+            ('QuotaPeakPagedPoolUsage', ctypes.c_size_t), ('QuotaPagedPoolUsage', ctypes.c_size_t),
+            ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t), ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+            ('PagefileUsage', ctypes.c_size_t), ('PeakPagefileUsage', ctypes.c_size_t),
+            ('PrivateUsage', ctypes.c_size_t)]
+    class FileTime(ctypes.Structure):
+        _fields_ = [('low', ctypes.c_ulong), ('high', ctypes.c_ulong)]
+    kernel = ctypes.windll.kernel32
+    psapi = ctypes.windll.psapi
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.GetProcessTimes.argtypes = [ctypes.c_void_p, ctypes.POINTER(FileTime),
+        ctypes.POINTER(FileTime), ctypes.POINTER(FileTime), ctypes.POINTER(FileTime)]
+    psapi.GetProcessMemoryInfo.argtypes = [ctypes.c_void_p,
+        ctypes.POINTER(ProcessMemoryCounters), ctypes.c_ulong]
+    handle = kernel.OpenProcess(0x1000 | 0x0400, False, pid)
+    if not handle:
+        return None
+    try:
+        memory = ProcessMemoryCounters()
+        memory.cb = ctypes.sizeof(memory)
+        if not psapi.GetProcessMemoryInfo(handle, ctypes.byref(memory), memory.cb):
+            return None
+        created, exited, kernel_time, user_time = FileTime(), FileTime(), FileTime(), FileTime()
+        if not kernel.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                ctypes.byref(kernel_time), ctypes.byref(user_time)):
+            return None
+        cpu_ticks = ((kernel_time.high << 32) | kernel_time.low) + ((user_time.high << 32) | user_time.low)
+        return cpu_ticks / 10_000_000, int(memory.WorkingSetSize)
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def _process_sample(pid):
+    system = platform.system()
+    if system == 'Linux':
+        return _linux_process_sample(pid)
+    if system == 'Darwin':
+        return _mac_process_sample(pid)
+    if system == 'Windows':
+        return _windows_process_sample(pid)
+    return None
+
+
+def process_usage(pid):
+    """Measure one worker's RSS and sampled CPU share of total host capacity."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return {'state': 'unavailable', 'reason': 'invalid_worker_pid'}
+    sample = _process_sample(pid)
+    if sample is None:
+        return {'state': 'unavailable', 'reason': 'worker_not_accessible'}
+    cpu_seconds, resident_bytes = sample
+    sampled_at = time.monotonic()
+    cpu_percent = sample_seconds = None
+    with _PROCESS_SAMPLES_LOCK:
+        previous = _PROCESS_SAMPLES.pop(pid, None)
+        if previous:
+            elapsed = sampled_at - previous['sampled_at']
+            delta_cpu = cpu_seconds - previous['cpu_seconds']
+            if elapsed > 0 and delta_cpu >= 0:
+                sample_seconds = round(elapsed, 2)
+                cpu_percent = round(min(100.0, max(0.0, delta_cpu / elapsed * 100 / (os.cpu_count() or 1))), 1)
+        _PROCESS_SAMPLES[pid] = {'sampled_at': sampled_at, 'cpu_seconds': cpu_seconds}
+        if len(_PROCESS_SAMPLES) > _PROCESS_SAMPLE_LIMIT:
+            _PROCESS_SAMPLES.pop(next(iter(_PROCESS_SAMPLES)))
+    return {'state': 'measured', 'resident_memory_bytes': resident_bytes,
+        'cpu_percent_host_capacity': cpu_percent, 'cpu_sample_seconds': sample_seconds}
 
 
 def _cpu_model():

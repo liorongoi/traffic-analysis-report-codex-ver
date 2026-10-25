@@ -78,6 +78,8 @@ class HttpTests(unittest.TestCase):
         self.assertIn("tr('resourceProfiles')",script)
         self.assertIn("resource_profile:$('imageResourceProfile').value",script)
         self.assertIn("resource_profile:$('videoResourceProfile').value",script)
+        self.assertIn('resourceUsageText',script)
+        self.assertIn('cpu_percent_host_capacity',script)
         with self.request('/timezone-countries.json') as response:
             self.assertEqual(response.status,200)
             self.assertIn('application/json',response.headers['Content-Type'])
