@@ -57,10 +57,23 @@ class VideoStoreTests(unittest.TestCase):
 
     def test_stored_video_tampering_is_detected_even_after_digest_cache(self):
         source = register_video(self.library, self.mission, 'clip.mkv')
+        self.assertEqual(source['metadata']['media_probe']['status'], 'unavailable')
         stored = source_path(self.library, self.mission, source['id'])
         stored.write_bytes(b'changed source bytes')
         with self.assertRaisesRegex(ValueError, 'SHA-256 check'):
             source_path(self.library, self.mission, source['id'])
+
+    def test_video_registration_snapshots_probe_metadata_without_claiming_utc(self):
+        fixture = Path(__file__).with_name('create_vfr_fixture.py')
+        subprocess.run([sys.executable, str(fixture), str(self.video_file)], check=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        source = register_video(self.library, self.mission, 'clip.mkv')
+        probe = source['metadata']['media_probe']
+        self.assertEqual(probe['status'], 'available')
+        self.assertEqual(probe['metadata']['codec_name'], 'mpeg4')
+        self.assertEqual((probe['metadata']['width'], probe['metadata']['height']), (64, 48))
+        self.assertIsNone(source['recording_start_utc'])
+        self.assertIsNone(source['origin_provenance'])
 
     def test_source_snapshot_run_checkpoint_events_and_utc_are_durable(self):
         source = register_video(self.library, self.mission, 'clip.mkv',

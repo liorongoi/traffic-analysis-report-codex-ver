@@ -201,7 +201,15 @@ def register_video(library, mission, relative_path, *, metadata=None,
     destination.parent.mkdir(parents=True, exist_ok=False)
     try:
         sha256, size, mtime_ns = _sha_and_copy(source, destination)
-        source_info = {**metadata, 'source_mtime_ns_at_import': mtime_ns}
+        try:
+            from .video_decoder import probe_video
+            media_probe = {'status': 'available', 'metadata': probe_video(destination)}
+        except (ValueError, OSError, RuntimeError) as exc:
+            # Keep the immutable evidence snapshot even when the local decoder
+            # cannot inspect it; the UI makes this explicit before a run starts.
+            media_probe = {'status': 'unavailable', 'error': str(exc)[:500]}
+        source_info = {**metadata, 'source_mtime_ns_at_import': mtime_ns,
+            'media_probe': media_probe}
         metadata_json = _json(source_info)
         with library.connect(mission) as conn:
             conn.execute('INSERT INTO video_sources VALUES (?,?,?,?,?,?,?,?,?,?,?)',

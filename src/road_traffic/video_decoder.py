@@ -288,3 +288,9 @@ class IsolatedVideoDecoder:
 
 # Public decoding always isolates PyAV's bundled FFmpeg libraries from OpenCV.
 VideoDecoder = IsolatedVideoDecoder
+
+
+def probe_video(path):
+    """Read container/stream metadata without decoding or consuming frames."""
+    with VideoDecoder(path) as decoder:
+        return asdict(decoder.metadata)

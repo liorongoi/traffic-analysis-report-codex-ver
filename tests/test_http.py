@@ -63,6 +63,7 @@ class HttpTests(unittest.TestCase):
         self.assertIn('function renderLearningReport()',script)
         self.assertIn('candidateValidation',script)
         self.assertIn('correct_timing',script)
+        self.assertIn('videoMetadataUnavailable',script)
         with self.request('/timezone-countries.json') as response:
             self.assertEqual(response.status,200)
             self.assertIn('application/json',response.headers['Content-Type'])
@@ -76,6 +77,7 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="exportVideoEventTable"',page)
             self.assertIn('id="videoEventTableExports"',page)
             self.assertIn('id="videoPlayer"',page)
+            self.assertIn('id="videoMediaMetadata"',page)
             self.assertIn('id="videoClipExports"',page)
             self.assertIn('id="hardwareReport"',page)
             self.assertIn('id="learningReport"',page)
