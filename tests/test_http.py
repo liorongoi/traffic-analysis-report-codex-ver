@@ -77,6 +77,11 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="confirmObjectSearch"',page)
             self.assertIn('id="proposeViews"',page)
             self.assertIn('id="viewProposals"',page)
+            self.assertIn('id="imageSearch"',page)
+            self.assertIn('data-sort="capture_utc"',page)
+            self.assertIn('data-sort="view_name"',page)
+            self.assertIn('data-sort="inference_status"',page)
+            self.assertIn('data-sort="review_status"',page)
             with self.request('/api/hardware') as response:
                 hardware=json.load(response)
             self.assertIn('cpu',hardware)
@@ -266,6 +271,11 @@ class HttpTests(unittest.TestCase):
         with self.request('/api/view-history?mission='+mission+'&image='+image) as response:
             history=json.load(response)
         self.assertEqual(history[0]['view_name'],'Gate A')
+        with self.request('/api/images?mission='+mission) as response:
+            result=json.load(response)[0]
+        self.assertEqual(result['view_name'],'Gate A')
+        self.assertEqual(result['review_status'],'unreviewed')
+        self.assertEqual(result['inference_status'],'not_run')
         with self.request('/api/views?mission='+mission) as response:
             self.assertEqual(json.load(response)[0]['image_count'],1)
 
