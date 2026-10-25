@@ -64,4 +64,4 @@ The verbatim request is in `docs/requirements-source.txt`. Design documents 01â€
 
 ## Night separation and correction learning
 
-See [night review and training status](docs/11-night-separation-and-learning.md). The main mission has zero saved corrections, so no user-trained candidate exists yet. The separate light head supports explicit-label refits, reports validation metrics, permits one-time held-out patch evaluation per unchanged manifest, and is selected explicitly per run; YOLOX fine-tuning is unsupported.
+See [night review and training status](docs/11-night-separation-and-learning.md). The main mission has zero saved corrections, so no user-trained candidate exists yet. The separate light head supports explicit-label refits, reports validation metrics, permits one-time held-out patch evaluation per unchanged manifest, and supports audited promotion/rollback; a promoted model becomes the default selector for future mission runs, while base rules remain selectable. YOLOX fine-tuning is unsupported.

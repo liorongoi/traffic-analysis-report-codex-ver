@@ -63,6 +63,8 @@ class HttpTests(unittest.TestCase):
         self.assertIn('function renderLearningReport()',script)
         self.assertIn('function renderLearningCapabilities()',script)
         self.assertIn('candidateValidation',script)
+        self.assertIn("new Option(tr('promotedLearningModel'),'@promoted')",script)
+        self.assertIn("night_head_id=choice==='@promoted'?learningInfo?.governance?.promoted_candidate_id",script)
         self.assertIn('correct_timing',script)
         self.assertIn('videoMetadataUnavailable',script)
         self.assertIn("action:'merge'",script)
