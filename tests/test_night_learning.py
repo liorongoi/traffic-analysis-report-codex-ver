@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 from PIL import Image
 from road_traffic.night import propose,patch_features
-from road_traffic.learning import inventory,train,load_head,candidates
+from road_traffic.learning import inventory,train,load_head,candidates,evaluate_test,evaluation_status
 from road_traffic.store import Library
 
 
@@ -68,6 +68,22 @@ class LightLearningTests(unittest.TestCase):
         self.assertEqual(train(self.lib,self.m)['id'],result['id'])
         other=self.lib.create('Other','Latvia','Europe/Riga')
         with self.assertRaises(ValueError):load_head(self.lib,other,result['id'])
+    def test_independent_test_evaluation_is_recorded_once_without_training_side_effects(self):
+        for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Synthetic test',role='training')
+        self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Synthetic test',role='test')
+        candidate=train(self.lib,self.m);before=next(c for c in candidates(self.lib,self.m) if c['id']==candidate['id'])
+        status=evaluation_status(self.lib,self.m)
+        self.assertEqual(status['test_regions'],2);self.assertFalse(status['already_evaluated'])
+        result=evaluate_test(self.lib,self.m,candidate['id'],'Independent reviewer')
+        self.assertEqual(result['status'],'completed');self.assertEqual(result['report']['regions'],2)
+        self.assertFalse(result['report']['test_labels_used_for_fit_or_validation'])
+        self.assertFalse(result['report']['automatic_promotion'])
+        self.assertEqual(set(result['report']['per_class']),{'headlight','streetlight'})
+        after=next(c for c in candidates(self.lib,self.m) if c['id']==candidate['id'])
+        self.assertEqual(after['artifact_hash'],before['artifact_hash'])
+        self.assertEqual(evaluation_status(self.lib,self.m)['already_evaluated'],True)
+        with self.assertRaisesRegex(ValueError,'already been used'):
+            evaluate_test(self.lib,self.m,candidate['id'],'Second reviewer')
     def test_unmodified_unclassified_or_low_confidence_do_not_train(self):
         labels=self.labels();labels[0]['review_confidence']=2;labels[1]['reviewed']=False
         self.lib.review(self.m,self.rows[0]['id'],0,labels,'Synthetic test',role='training')

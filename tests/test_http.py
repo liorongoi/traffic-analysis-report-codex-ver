@@ -87,6 +87,7 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="desktopAlerts"',page)
             self.assertIn('id="sourceReconciliation"',page)
             self.assertIn('id="sourceLinkCandidates"',page)
+            self.assertIn('id="evaluateNightTest"',page)
             self.assertIn('id="videoClipExports"',page)
             self.assertIn('id="hardwareReport"',page)
             self.assertIn('id="learningReport"',page)
@@ -125,6 +126,10 @@ class HttpTests(unittest.TestCase):
         with self.request('/api/images?mission='+mission) as response:self.assertEqual(json.load(response),[])
         with self.request('/api/source-reconciliation?mission='+mission) as response:
             self.assertEqual(json.load(response),{'candidates':[],'history':[]})
+        with self.request('/api/night-learning?mission='+mission) as response:
+            learning=json.load(response)
+        self.assertEqual(learning['evaluation']['test_regions'],0)
+        self.assertFalse(learning['evaluation']['already_evaluated'])
         with self.request('/api/export?mission='+mission) as response:
             rows=list(csv.reader(io.StringIO(response.read().decode('utf-8-sig'))))
         self.assertEqual(len(rows),1)

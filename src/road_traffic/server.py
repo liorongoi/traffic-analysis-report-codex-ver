@@ -157,9 +157,10 @@ def serve(workspace, web, port=8765, open_browser=False):
                     path=context_file(library,query['mission'][0],query['crop'][0])
                     return self.reply(200,path.read_bytes(),'image/jpeg')
                 if parsed.path == '/api/night-learning':
-                    from .learning import inventory,candidates
+                    from .learning import inventory,candidates,evaluation_status
                     m=query['mission'][0]
-                    return self.reply(200,{'inventory':inventory(library,m),'candidates':candidates(library,m)})
+                    return self.reply(200,{'inventory':inventory(library,m),'candidates':candidates(library,m),
+                        'evaluation':evaluation_status(library,m)})
                 if parsed.path == '/api/inference':
                     return self.reply(200,inference.status(query['mission'][0]))
                 if parsed.path == '/api/video/media':
@@ -365,6 +366,16 @@ def serve(workspace, web, port=8765, open_browser=False):
                         inference.training_active=True
                     try:
                         result=train(library,data['mission'])
+                    finally:
+                        with inference.lock:inference.training_active=False
+                elif self.path == '/api/night-learning/evaluate-test':
+                    from .learning import evaluate_test
+                    with inference.lock:
+                        if inference.training_active or any(p.poll() is None for p in inference.processes.values()):
+                            raise ValueError('Finish active processing before evaluating the held-out test set')
+                        inference.training_active=True
+                    try:
+                        result=evaluate_test(library,data['mission'],data.get('candidate_id'),data.get('operator'))
                     finally:
                         with inference.lock:inference.training_active=False
                 elif self.path == '/api/inference/stop':

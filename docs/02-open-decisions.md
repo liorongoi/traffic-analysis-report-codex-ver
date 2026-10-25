@@ -24,3 +24,4 @@
 - Half-open schedule intervals [start, end), local weekday referring to the start day; overnight end times belong to the next day. All-day windows require an explicit option, not equal start/end times.
 - Exclusion masks override inclusion masks. Camera-view/ROI changes create configuration versions; they do not rewrite reviewed runs.
 - One processing task at a time initially, with inference/review priority over background training. Real target profiling may justify more concurrency.
+- **Video track merge/split behavior (decided 2026-10-25):** corrected identities. A confirmed merge produces one corrected logical event; a confirmed split produces child events. Preserve immutable original tracks/events and append operator corrections so the audit trail can reconstruct both original and corrected identities. Exports use corrected logical identities.

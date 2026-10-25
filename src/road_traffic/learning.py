@@ -14,7 +14,18 @@ def prepare(library,mission):
           id TEXT PRIMARY KEY,status TEXT,progress INTEGER,created TEXT,finished TEXT,evidence_hash TEXT UNIQUE,
           evidence TEXT,artifact TEXT,artifact_hash TEXT,report TEXT,error TEXT);
           CREATE TRIGGER IF NOT EXISTS immutable_night_artifact BEFORE UPDATE OF artifact,artifact_hash,evidence,evidence_hash ON night_training
-          WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'immutable trained candidate'); END;''')
+          WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'immutable trained candidate'); END;
+          CREATE TABLE IF NOT EXISTS night_evaluations(
+            id TEXT PRIMARY KEY,mission_id TEXT NOT NULL,candidate_id TEXT NOT NULL REFERENCES night_training(id),
+            candidate_hash TEXT NOT NULL,test_fingerprint TEXT NOT NULL,operator TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('running','completed','failed')),
+            report TEXT,error TEXT,created TEXT NOT NULL,finished TEXT);
+          CREATE UNIQUE INDEX IF NOT EXISTS one_completed_night_test_manifest
+            ON night_evaluations(mission_id,test_fingerprint) WHERE status='completed';
+          CREATE TRIGGER IF NOT EXISTS immutable_night_evaluations_u BEFORE UPDATE ON night_evaluations
+            WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'completed test evaluation is immutable'); END;
+          CREATE TRIGGER IF NOT EXISTS immutable_night_evaluations_d BEFORE DELETE ON night_evaluations
+            BEGIN SELECT RAISE(ABORT,'test evaluation history is append-only'); END;''')
 
 
 def inventory(library,mission):
@@ -75,6 +86,95 @@ def load_head(library,mission,identifier,expected_hash=None):
     data=json.loads(path.read_text())
     if data['feature_schema']!=FEATURE_SCHEMA:raise ValueError('Incompatible correction feature schema')
     return Head(data,identifier),row['artifact_hash']
+
+
+def _test_fingerprint(records):
+    manifest=[{'sha256':row['sha256'],'box':[round(float(v),6) for v in row['box']]}
+        for row in records]
+    manifest.sort(key=lambda item:(item['sha256'],item['box']))
+    return hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def _feature_vectors(library,mission,records):
+    import numpy as np
+    from PIL import Image
+    from .night import patch_features
+    vectors=[]
+    for row in records:
+        with Image.open(library.image_path(mission,row['image_id'])) as image:
+            if image.width*image.height>24_000_000:raise ValueError('Evaluation image exceeds adapter pixel budget')
+            rgb=np.asarray(image.convert('RGB'))
+        vectors.append(patch_features(rgb,row['box']))
+    return np.asarray(vectors,dtype=np.float64)
+
+
+def evaluation_status(library,mission):
+    prepare(library,mission)
+    data=inventory(library,mission)
+    fingerprint=_test_fingerprint(data['test'])
+    with library.connect(mission) as c:
+        rows=[dict(row) for row in c.execute('''SELECT * FROM night_evaluations
+          WHERE mission_id=? ORDER BY created,id''',(mission,))]
+    for row in rows:
+        row['report']=json.loads(row['report']) if row['report'] else None
+    return {'test_fingerprint':fingerprint,'test_regions':len(data['test']),
+        'test_images':len({row['image_id'] for row in data['test']}),
+        'already_evaluated':any(row['status']=='completed' and row['test_fingerprint']==fingerprint for row in rows),
+        'evaluations':rows}
+
+
+def evaluate_test(library,mission,candidate_id,operator):
+    if not isinstance(operator,str) or not operator.strip() or len(operator.strip())>120:
+        raise ValueError('Enter an operator name of up to 120 characters')
+    prepare(library,mission)
+    data=inventory(library,mission)
+    if not data['test']:
+        raise ValueError('No eligible independent test labels are available')
+    head,candidate_hash=load_head(library,mission,candidate_id)
+    model=head.data
+    test_views={row['view'] for row in data['test']}
+    if test_views!={model.get('view')}:
+        raise ValueError('Test examples must match the candidate’s verified camera view')
+    fingerprint=_test_fingerprint(data['test']);evaluation_id=str(uuid.uuid4())
+    with library.connect(mission) as c:
+        c.execute('BEGIN IMMEDIATE')
+        if c.execute('SELECT 1 FROM night_evaluations WHERE mission_id=? AND test_fingerprint=? AND status=\'completed\'',
+                     (mission,fingerprint)).fetchone():
+            raise ValueError('This unchanged test set has already been used for an independent evaluation')
+        c.execute('''INSERT INTO night_evaluations(id,mission_id,candidate_id,candidate_hash,
+          test_fingerprint,operator,status,created) VALUES (?,?,?,?,?,?,?,?)''',
+          (evaluation_id,mission,candidate_id,candidate_hash,fingerprint,operator.strip(),'running',now()))
+    try:
+        vectors=_feature_vectors(library,mission,data['test'])
+        actual=[row['class'] for row in data['test']]
+        predicted=[head.predict(vector)[0] for vector in vectors]
+        labels=sorted(set(actual)|set(predicted))
+        metrics={};confusion={label:{other:0 for other in labels} for label in labels}
+        for truth,guess in zip(actual,predicted):confusion[truth][guess]+=1
+        for label in labels:
+            tp=sum(t==label and p==label for t,p in zip(actual,predicted))
+            fp=sum(t!=label and p==label for t,p in zip(actual,predicted))
+            fn=sum(t==label and p!=label for t,p in zip(actual,predicted))
+            precision=tp/(tp+fp) if tp+fp else 0.;recall=tp/(tp+fn) if tp+fn else 0.
+            metrics[label]={'precision':precision,'recall':recall,
+                'f1':2*precision*recall/(precision+recall) if precision+recall else 0.,
+                'support':actual.count(label)}
+        report={'regions':len(actual),'images':len({row['image_id'] for row in data['test']}),
+            'per_class':metrics,'confusion_matrix':confusion,
+            'accuracy':sum(a==p for a,p in zip(actual,predicted))/len(actual),
+            'macro_f1':sum(item['f1'] for item in metrics.values())/len(metrics),
+            'scope':'held-out labeled light patches for this frozen candidate; not whole-image vehicle or traffic-count accuracy',
+            'test_labels_used_for_fit_or_validation':False,'automatic_promotion':False}
+        with library.connect(mission) as c:
+            c.execute("UPDATE night_evaluations SET status='completed',report=?,finished=? WHERE id=? AND status='running'",
+                (json.dumps(report,sort_keys=True),now(),evaluation_id))
+        return {'id':evaluation_id,'candidate_id':candidate_id,'candidate_hash':candidate_hash,
+            'test_fingerprint':fingerprint,'operator':operator.strip(),'status':'completed','report':report}
+    except Exception as exc:
+        with library.connect(mission) as c:
+            c.execute("UPDATE night_evaluations SET status='failed',error=?,finished=? WHERE id=? AND status='running'",
+                (str(exc)[:1000],now(),evaluation_id))
+        raise
 
 
 def train(library,mission):
