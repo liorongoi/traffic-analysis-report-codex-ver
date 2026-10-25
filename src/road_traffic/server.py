@@ -367,7 +367,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                         origin_provenance=data.get('origin_provenance'))
                 elif self.path == '/api/video/runs':
                     result=video_inference.start(data['mission'],data['source_id'],data['tracker_policy'],
-                        threshold=data['threshold'],tiled=data['tiled'])
+                        threshold=data['threshold'],tiled=data['tiled'],
+                        target_labels=data.get('target_labels'))
                 elif self.path == '/api/video/runs/resume':
                     result=video_inference.resume(data['mission'],data['run'])
                 elif self.path == '/api/video/runs/cancel':

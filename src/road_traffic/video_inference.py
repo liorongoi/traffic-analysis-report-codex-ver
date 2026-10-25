@@ -57,8 +57,9 @@ class VideoInferenceService:
                 f'Unable to start video worker: {type(exc).__name__}: {exc}')
             raise
 
-    def start(self, mission, source_id, tracker_policy, *, threshold, tiled):
+    def start(self, mission, source_id, tracker_policy, *, threshold, tiled, target_labels=None):
         from .detector import VERSION, model_pack
+        from .detector import VEHICLES
         settings = self.library.settings(mission)
         if settings['input_type'] != 'videos' or settings['analysis_mode'] != 'video_traffic':
             raise ValueError('Automatic video analysis supports Video Traffic missions only')
@@ -66,9 +67,18 @@ class VideoInferenceService:
             raise ValueError('Detector threshold must be between 0.01 and 0.90')
         if type(tiled) is not bool:
             raise ValueError('tiled must be a boolean')
+        supported_labels=tuple(VEHICLES.values())
+        if target_labels is None:target_labels=list(supported_labels)
+        if (not isinstance(target_labels,list) or not target_labels
+                or any(not isinstance(label,str) for label in target_labels)
+                or len(set(target_labels))!=len(target_labels)
+                or not set(target_labels).issubset(supported_labels)):
+            raise ValueError('Choose one or more supported video vehicle classes')
+        target_labels=[label for label in supported_labels if label in target_labels]
         _, sha = model_pack(self.pack)
         config = {'detector': {'version': VERSION, 'sha256': sha,
             'threshold': float(threshold), 'tiled': tiled,
+            'target_labels':target_labels,
             'device': 'CPUExecutionProvider', 'human_confirmation': True}}
         with self.inference.lock:
             if self.inference.training_active:
@@ -150,13 +160,15 @@ class VideoInferenceService:
 
 class VehicleProposalAdapter:
     """Keep model class labels while exposing only detection geometry to tracking."""
-    def __init__(self, detector):
+    def __init__(self, detector, target_labels=None):
         self.detector = detector
+        self.target_labels=set(target_labels) if target_labels is not None else None
 
     def infer(self, rgb_frame):
         return [{'label': item.get('label') or item.get('suggested_kind') or item.get('kind'),
             'box': item['box'], 'score': item.get('score',item.get('confidence'))}
-            for item in self.detector.infer(rgb_frame)]
+            for item in self.detector.infer(rgb_frame)
+            if self.target_labels is None or (item.get('label') or item.get('suggested_kind') or item.get('kind')) in self.target_labels]
 
 
 def execute_worker(library, mission, run_id, pack):
@@ -194,7 +206,8 @@ def execute_worker(library, mission, run_id, pack):
 
     try:
         return video_store.execute_video_run(library, mission, run_id,
-            VehicleProposalAdapter(detector), should_cancel=should_cancel)
+            VehicleProposalAdapter(detector,detector_config.get('target_labels')),
+            should_cancel=should_cancel)
     except Exception as exc:
         with library.connect(mission) as conn:
             row = conn.execute('SELECT status FROM video_runs WHERE mission_id=? AND id=?',

@@ -65,6 +65,7 @@ class HttpTests(unittest.TestCase):
         self.assertIn('correct_timing',script)
         self.assertIn('videoMetadataUnavailable',script)
         self.assertIn("action:'merge'",script)
+        self.assertIn('target_labels',script)
         self.assertIn('Notification.requestPermission()',script)
         self.assertIn('notifyDesktopAlerts(alerts)',script)
         with self.request('/timezone-countries.json') as response:
@@ -81,6 +82,7 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="videoEventTableExports"',page)
             self.assertIn('id="videoPlayer"',page)
             self.assertIn('id="videoMediaMetadata"',page)
+            self.assertIn('id="videoTargetLabels"',page)
             self.assertIn('id="mergeViewButton"',page)
             self.assertIn('id="desktopAlerts"',page)
             self.assertIn('id="videoClipExports"',page)

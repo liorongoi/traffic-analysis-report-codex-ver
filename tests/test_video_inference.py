@@ -4,7 +4,7 @@ import unittest
 
 from road_traffic.inference import InferenceService
 from road_traffic.store import Library
-from road_traffic.video_inference import VideoInferenceService
+from road_traffic.video_inference import VehicleProposalAdapter, VideoInferenceService
 from road_traffic.video_store import create_run, register_video, transition
 
 
@@ -45,7 +45,8 @@ class VideoInferenceServiceTests(unittest.TestCase):
     def test_supervisor_starts_cancels_recovers_and_resumes_same_run(self):
         source = self.source()
         result = self.service.start(self.mission, source['id'], self.tracker_policy(),
-            threshold=.18, tiled=False)
+            threshold=.18, tiled=False,target_labels=['truck','bus'])
+        self.assertEqual(result['config']['detector']['target_labels'],['bus','truck'])
         run_id = result['run']
         process = self.inference.processes[(self.mission, run_id)]
         self.assertIsNone(process.poll())
@@ -71,7 +72,21 @@ class VideoInferenceServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'threshold'):
             self.service.start(self.mission, source['id'], self.tracker_policy(),
                 threshold=.001, tiled=False)
+        with self.assertRaisesRegex(ValueError,'vehicle classes'):
+            self.service.start(self.mission,source['id'],self.tracker_policy(),
+                threshold=.18,tiled=False,target_labels=[])
+        with self.assertRaisesRegex(ValueError,'vehicle classes'):
+            self.service.start(self.mission,source['id'],self.tracker_policy(),
+                threshold=.18,tiled=False,target_labels=['semi-trailer'])
         self.assertEqual(self.service.status(self.mission), [])
+
+    def test_video_proposal_adapter_filters_to_the_saved_target_classes(self):
+        class Detector:
+            def infer(self,rgb):
+                return [{'label':'truck','box':[0,0,.2,.2],'score':.8},
+                    {'label':'car','box':[.3,0,.2,.2],'score':.7}]
+        result=VehicleProposalAdapter(Detector(),['truck']).infer(object())
+        self.assertEqual([item['label'] for item in result],['truck'])
 
     def test_plate_video_run_uses_only_the_plate_pack_and_existing_worker_slot(self):
         (self.root/'plate-output').mkdir()
