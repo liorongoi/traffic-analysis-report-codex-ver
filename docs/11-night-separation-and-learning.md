@@ -34,6 +34,8 @@ A request for the location of any other correction workspace/export is pending. 
 4. Choose **Train light correction candidate** once eligible examples exist. Inspect its report. With no validation labels, accuracy remains unmeasured.
 5. Select the saved candidate under **Correction model for next run**, then start a new inference run. Suggestions from that head remain uncalibrated and do not automatically become confirmed vehicles.
 
+The learning panel now shows training/validation/test/exclusion counts, the selected candidate's artifact hash and per-class validation metrics, and recent candidate status/failure history. Test labels are counted but not shown to the fitter or used for validation. Candidate selection remains explicit per run; selecting **None** returns to the base context rules.
+
 ## Executed tests
 
 At this checkpoint, **50 tests passed**, including synthetic single/pair headlights, recurring lamps not paired as headlights, nearby fixture glare, elongated streaks, missing-background uncertainty, no-label training refusal, explicit refit/versioning, validation isolation, checkpoint tampering, review-only exclusion and real-worker application of a trained synthetic correction head. The current full suite has since grown to 55 passing Python checks after adding mission-configuration coverage. Synthetic labels were confined to test workspaces and are not evidence of Fintraffic accuracy.
