@@ -46,9 +46,7 @@ def execute(library,mission,run,pack):
             with Image.open(library.image_path(mission,row['id'])) as image:
                 if image.width*image.height>24_000_000:raise ValueError('Image exceeds this adapter pixel budget')
                 return np.asarray(image.convert('RGB'))
-        # Background references stay within one manual view assignment, or an
-        # explicit Fintraffic source-view key. Unassigned camera files do not mix.
-        refs=[];masks=[];reference_grays=[];shape=None;view=None;anchor=None
+        # Background references stay in separate manual/source camera views.
         def row_view_key(row):
             if row.get('view_id'):
                 return 'manual:'+row['view_id']
@@ -59,36 +57,41 @@ def execute(library,mission,run,pack):
         with library.connect(mission) as conn:
             if conn.execute("SELECT status FROM inference_runs WHERE id=?",(run,)).fetchone()['status']!='running':return
             conn.execute("UPDATE inference_runs SET stage='building_light_background' WHERE id=?",(run,))
-        if config.get('night_lights'):
-            for row in inputs:
-                with library.connect(mission) as conn:
-                    if conn.execute('SELECT stop_requested FROM inference_runs WHERE id=?',(run,)).fetchone()[0]:break
-                provenance=json.loads(row['provenance'])
-                candidate_view=row_view_key(row)
-                if candidate_view is None or row['id'] in heldout:continue
-                rgb=load(row);gray=cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY)
-                if not illumination(rgb)['low_light'] or gray.size>2_000_000:continue
-                if shape is None:
-                    shape=gray.shape;view=candidate_view;anchor=cv2.resize(gray,(160,90)).astype(float).ravel()
-                if gray.shape!=shape or candidate_view!=view:continue
-                signature=cv2.resize(gray,(160,90)).astype(float).ravel()
-                similarity=float(np.corrcoef(anchor,signature)[0,1])
-                if not np.isfinite(similarity) or similarity<.8:continue
-                refs.append({'image_id':row['id'],'sha256':row['sha256']});masks.append(light_mask(gray));reference_grays.append(gray)
-                if len(refs)>=32:break
         reference_folder=library.location(mission)/'inference'/run
         reference_folder.mkdir(parents=True,exist_ok=True)
-        counts=np.sum(masks,axis=0,dtype=np.uint16) if masks else None
-        background_path=reference_folder/'light-background.npz'
-        stack=np.asarray(reference_grays,dtype=np.uint8)
-        median=np.median(stack,axis=0) if len(stack) else np.zeros((0,0),np.float32)
-        mad=np.median(np.abs(stack.astype(np.float32)-median),axis=0) if len(stack) else median
-        np.savez_compressed(background_path,median=median,mad=mad,counts=counts if counts is not None else np.zeros((0,0),np.uint16),reference_ids=np.asarray([r['image_id'] for r in refs]))
-        background={'path':str(background_path.relative_to(library.location(mission))),'sha256':digest(background_path),
-            'references':refs,'view':view,'min_reference_images':5,'persistence_threshold':.6,
-            'rule':'leave-target-out persistence plus novelty >= max(25,3*MAD) above median; held-out references excluded; similarity >= 0.8'}
-        refindex={r['image_id']:i for i,r in enumerate(refs)}
-        for number,row in enumerate(pending_inputs,start=len(completed)):
+        from .light_background import build_view_backgrounds,load_background
+        def stopped():
+            with library.connect(mission) as conn:
+                state=conn.execute('SELECT status,stop_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
+            return not state or state['status']!='running' or bool(state['stop_requested'])
+        if config.get('night_lights'):
+            backgrounds=build_view_backgrounds(inputs,heldout,row_view_key,load,reference_folder,
+                stopped,cv2_module=cv2,light_mask_fn=light_mask,illumination_fn=illumination)
+        else:
+            backgrounds={}
+        pending_by_view={}
+        for row in pending_inputs:
+            pending_by_view.setdefault(row_view_key(row),[]).append(row)
+        ordered_pending=[row for group in pending_by_view.values() for row in group]
+        number=len(completed)
+        active_view_key=object()
+        for row in ordered_pending:
+            view_key=row_view_key(row)
+            if view_key!=active_view_key:
+                active_view_key=view_key
+                background_info=backgrounds.get(view_key)
+                background_data=load_background(background_info) if background_info else None
+                refs=background_info['references'] if background_info else []
+                refindex={ref['image_id']:i for i,ref in enumerate(refs)}
+                counts=background_data['counts'] if background_data else None
+                median=background_data['median'] if background_data else None
+                mad=background_data['mad'] if background_data else None
+                stack=background_data['stack'] if background_data else None
+                masks=background_data['masks'] if background_data else None
+                anchor=background_data['anchor'] if background_data else None
+                shape=median.shape if median is not None else None
+            background=({**background_info,'path':str(background_info['path'].relative_to(library.location(mission)))}
+                if background_info else None)
             with library.connect(mission) as conn:
                 state=conn.execute('SELECT status,stop_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
                 if not state or state['status']!='running':return
@@ -106,7 +109,7 @@ def execute(library,mission,run,pack):
                 details.update({'width':w,'height':h,**illumination(rgb)})
                 predictions=detector.infer(rgb)
                 if config.get('night_lights') and details['low_light']:
-                    persistent=None;light_context=None;usable=counts is not None and gray.shape==shape and row_view_key(row)==view
+                    persistent=None;light_context=None;usable=counts is not None and gray.shape==shape
                     similarity=float(np.corrcoef(anchor,cv2.resize(gray,(160,90)).astype(float).ravel())[0,1]) if usable else 0
                     if usable and np.isfinite(similarity) and similarity>=.8:
                         n=len(refs);local=counts.copy()
@@ -145,7 +148,8 @@ def execute(library,mission,run,pack):
                     conn.rollback();return
                 conn.execute('INSERT INTO predictions VALUES (?,?,?,?,?,?)',(run,row['id'],json.dumps(predictions),json.dumps(details),elapsed,error))
                 conn.execute('UPDATE inference_runs SET done=? WHERE id=?',(number+1,run))
-            print(json.dumps({'run':run,'done':number+1,'total':len(inputs),'detections':details.get('detections',0),'lights':details.get('lights_count',0),'elapsed':round(elapsed,3),'error':error}),flush=True)
+            number+=1
+            print(json.dumps({'run':run,'done':number,'total':len(inputs),'detections':details.get('detections',0),'lights':details.get('lights_count',0),'elapsed':round(elapsed,3),'error':error}),flush=True)
         with library.connect(mission) as conn:
             failures=conn.execute('SELECT COUNT(*) FROM predictions WHERE inference_id=? AND error IS NOT NULL',(run,)).fetchone()[0]
             conn.execute("UPDATE inference_runs SET status=?,stage='finished',finished=? WHERE id=? AND status='running'",
