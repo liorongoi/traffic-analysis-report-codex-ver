@@ -68,8 +68,16 @@ class LightLearningTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'Validation set exceeds'):
                 train(self.lib,self.m)
         self.assertEqual(candidates(self.lib,self.m),[])
+    def test_partial_review_contributes_only_explicit_labels_and_is_counted(self):
+        self.lib.review(self.m,self.rows[0]['id'],0,self.labels()[:1],'Reviewer',role='training',status='partial')
+        data=inventory(self.lib,self.m)
+        self.assertEqual(len(data['training']),1)
+        self.assertEqual(data['review_completion']['training'],{
+            'images_with_eligible_labels':1,'fully_reviewed_images':0,
+            'partially_reviewed_images':1,'eligible_regions':1})
     def test_explicit_fit_versions_head_and_reports_validation(self):
-        for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Synthetic test',role='training')
+        self.lib.review(self.m,self.rows[0]['id'],0,self.labels(),'Synthetic test',role='training',status='partial')
+        self.lib.review(self.m,self.rows[1]['id'],0,self.labels(),'Synthetic test',role='training',status='reviewed')
         self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Synthetic test',role='validation')
         result=train(self.lib,self.m);self.assertEqual(result['status'],'completed');self.assertEqual(result['report']['training_regions'],4)
         self.assertEqual(result['report']['validation']['regions'],2);self.assertFalse(result['report']['test_labels_used'])
@@ -79,9 +87,12 @@ class LightLearningTests(unittest.TestCase):
         self.assertIsNone(result['report']['base_checkpoint'])
         self.assertEqual(result['report']['resource_profile']['workers'],1)
         self.assertEqual(result['report']['resource_profile']['max_training_regions'],5000)
+        self.assertEqual(result['report']['review_completion']['training']['fully_reviewed_images'],1)
+        self.assertEqual(result['report']['review_completion']['training']['partially_reviewed_images'],1)
         manifest=json.loads(next(row for row in candidates(self.lib,self.m) if row['id']==result['id'])['evidence'])
         self.assertEqual(manifest['class_schema'],['headlight','streetlight'])
         self.assertEqual(manifest['preprocessing_config']['feature_schema'],'light-patch-v1')
+        self.assertEqual({row['review_status'] for row in manifest['training']},{'partial','reviewed'})
         self.assertIsNone(head.data['base_checkpoint'])
         self.assertEqual(train(self.lib,self.m)['id'],result['id'])
         other=self.lib.create('Other','Latvia','Europe/Riga')

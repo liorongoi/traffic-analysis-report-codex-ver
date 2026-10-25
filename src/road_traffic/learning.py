@@ -76,7 +76,8 @@ def inventory(library,mission):
             if label not in NIGHT_CLASSES or not a.get('reviewed') or a.get('rejected') or a.get('review_confidence',0)<3:continue
             candidate={'review_id':r['id'],'revision':r['revision'],'image_id':r['image_id'],'sha256':r['sha256'],
                 'view':Path(r['name']).name.split('_')[0] if json.loads(r['provenance']).get('preset')=='fintraffic' else None,
-                'annotation_index':i,'class':label,'box':a['box'],'role':r['role'],'prediction_id':a.get('prediction_id'),
+                'annotation_index':i,'class':label,'box':a['box'],'role':r['role'],'review_status':r['status'],
+                'prediction_id':a.get('prediction_id'),
                 'base_rule_class':BASE_SUBTYPE_CLASSES.get(a.get('light_subtype'))
                     if a.get('origin')=='night-light-heuristic' and a.get('kind')=='light' and a.get('prediction_id') else None}
             # Avoid overweighting duplicate overlapping rectangles; latest annotation owns overlap.
@@ -88,6 +89,17 @@ def inventory(library,mission):
         unique={}
         for row in sorted(result[role],key=lambda r:r['review_id']):unique[(row['sha256'],tuple(round(v,6) for v in row['box']))]=row
         result[role]=list(unique.values())
+    result['review_completion']={}
+    for role in ('training','validation','test'):
+        images={}
+        for row in result[role]:
+            images[row['sha256']]=row['review_status']
+        result['review_completion'][role]={
+            'images_with_eligible_labels':len(images),
+            'fully_reviewed_images':sum(status=='reviewed' for status in images.values()),
+            'partially_reviewed_images':sum(status=='partial' for status in images.values()),
+            'eligible_regions':len(result[role]),
+        }
     result['eligible_training_images']=len({r['sha256'] for r in result['training']})
     result['classes']=sorted({r['class'] for r in result['training']})
     return result
@@ -342,6 +354,7 @@ def train(library,mission):
         'fitter':'linear-600-l2-0.03-v1','feature_schema':FEATURE_SCHEMA,
         'preprocessing_config':{'feature_schema':FEATURE_SCHEMA,'maximum_source_image_pixels':24_000_000},
         'class_schema':data['classes'],'resource_profile':NIGHT_TRAINING_PROFILE,
+        'review_completion':data['review_completion'],
         'base_checkpoint':None,
         'base_checkpoint_note':'Trained from scratch as a downstream light-patch head; YOLOX and base context rules remain unchanged.'}
     manifest={'training':data['training'],'validation':data['validation'],**training_plan}
@@ -382,7 +395,7 @@ def train(library,mission):
         report={'training_regions':len(x),'training_images':data['eligible_training_images'],'classes':classes,
             'dataset_version':dataset_version,'base_checkpoint':None,
             'algorithm':training_plan['algorithm'],'preprocessing_config':training_plan['preprocessing_config'],
-            'resource_profile':NIGHT_TRAINING_PROFILE,
+            'resource_profile':NIGHT_TRAINING_PROFILE,'review_completion':data['review_completion'],
             'promotion':'candidate only; must be selected explicitly for a new inference run','test_labels_used':False,'validation':None}
         if data['validation']:
             predicted=[head.predict(v)[0] for v in features(data['validation'])];actual=[r['class'] for r in data['validation']]

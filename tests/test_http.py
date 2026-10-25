@@ -63,6 +63,8 @@ class HttpTests(unittest.TestCase):
         self.assertIn('function renderLearningReport()',script)
         self.assertIn('function renderLearningCapabilities()',script)
         self.assertIn('candidateValidation',script)
+        self.assertIn('review_completion',script)
+        self.assertIn('candidateTrainingEvidenceStatus',script)
         self.assertIn("new Option(tr('promotedLearningModel'),'@promoted')",script)
         self.assertIn("night_head_id=choice==='@promoted'?learningInfo?.governance?.promoted_candidate_id",script)
         self.assertIn('function resolveTimezoneSearch()',script)
