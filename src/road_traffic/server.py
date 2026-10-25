@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from .store import Library
 from . import video_store, video_clips, video_event_exports
+from . import source_reconciliation
 
 
 def serve(workspace, web, port=8765, open_browser=False):
@@ -195,6 +196,10 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200,history(library,query['mission'][0]))
                 if parsed.path == '/api/monitoring':
                     return self.reply(200,monitor.status(query['mission'][0]))
+                if parsed.path == '/api/source-reconciliation':
+                    mission=query['mission'][0]
+                    return self.reply(200,{'candidates':source_reconciliation.candidates(library,mission),
+                        'history':source_reconciliation.history(library,mission)})
                 if parsed.path == '/api/scan-windows':
                     return self.reply(200,library.scan_windows(query['mission'][0]))
                 if parsed.path == '/api/views':
@@ -288,6 +293,9 @@ def serve(workspace, web, port=8765, open_browser=False):
                     elif action=='acknowledge_alerts':
                         result=monitor.acknowledge(data['mission'],data.get('ids'))
                     else:raise ValueError('Choose pause, resume, or acknowledge_alerts')
+                elif self.path == '/api/source-reconciliation':
+                    result=source_reconciliation.record(library,data['mission'],data.get('image_a_id'),
+                        data.get('image_b_id'),data.get('action'),data.get('operator'))
                 elif self.path == '/api/views':
                     action=data.get('action')
                     if action == 'create':
