@@ -7,7 +7,9 @@ native execution or installer correctness; those remain separate Windows gates.
 import argparse
 import hashlib
 import json
+from email.parser import Parser
 from pathlib import Path
+import re
 import shutil
 import struct
 
@@ -22,7 +24,25 @@ def sha256_file(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def validate_windows_python(runtime):
+def parse_lock(lock_path):
+    pins = {}
+    for line_number, raw in enumerate(Path(lock_path).read_text(encoding='utf-8').splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith('#'):
+            continue
+        match = re.fullmatch(r'([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+!-]+)', line)
+        if not match:
+            raise ValueError(f'Windows runtime lock must contain exact name==version pins (line {line_number})')
+        name = re.sub(r'[-_.]+', '-', match.group(1)).lower()
+        if name in pins:
+            raise ValueError(f'Duplicate package in Windows runtime lock: {match.group(1)}')
+        pins[name] = match.group(2)
+    if not pins:
+        raise ValueError('Windows runtime lock contains no exact package pins')
+    return pins
+
+
+def validate_windows_python(runtime, lock_path):
     runtime = Path(runtime).resolve(strict=True)
     executable = runtime / 'python.exe'
     if not executable.is_file():
@@ -49,6 +69,17 @@ def validate_windows_python(runtime):
         raise ValueError('Offline Windows runtime is missing packages: ' + ', '.join(missing))
     if not (site_packages / 'tzdata' / 'zoneinfo' / 'Asia' / 'Jerusalem').is_file():
         raise ValueError('Offline tzdata zone database is incomplete')
+    expected = parse_lock(lock_path)
+    installed = {}
+    for metadata_path in site_packages.glob('*.dist-info/METADATA'):
+        metadata = Parser().parsestr(metadata_path.read_text(encoding='utf-8', errors='replace'))
+        name, version = metadata.get('Name'), metadata.get('Version')
+        if name and version:
+            installed[re.sub(r'[-_.]+', '-', name).lower()] = version
+    mismatches = [f'{name}=={version} (found {installed.get(name, "missing")})'
+        for name, version in expected.items() if installed.get(name) != version]
+    if mismatches:
+        raise ValueError('Offline Windows runtime does not match its pinned lock: ' + ', '.join(mismatches))
     return runtime
 
 
@@ -97,7 +128,10 @@ def payload_manifest(root):
 
 def stage(project, runtime):
     project = Path(project).resolve(strict=True)
-    runtime = validate_windows_python(runtime)
+    lock_path = project / 'requirements-inference-windows.lock.txt'
+    if not lock_path.is_file():
+        raise ValueError('Pinned Windows runtime lock is missing')
+    runtime = validate_windows_python(runtime, lock_path)
     vehicle_pack = project / 'model-packs' / 'yolox-s'
     plate_pack = project / 'model-packs' / 'license-plate-yolox'
     validate_model_pack(vehicle_pack, 'vehicle')
@@ -116,6 +150,7 @@ def stage(project, runtime):
             shutil.copytree(project / name, output / name,
                 ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
         shutil.copy2(project / 'README.md', output / 'README.md')
+        shutil.copy2(lock_path, output / lock_path.name)
         shutil.copytree(project / 'scripts', output / 'scripts',
             ignore=shutil.ignore_patterns('__pycache__', '*.pyc', 'run-dev.sh', 'stage-windows.py',
                 'verify-real-detector.py'))

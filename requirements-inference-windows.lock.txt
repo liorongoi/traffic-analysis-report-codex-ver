@@ -1,0 +1,12 @@
+# Exact package versions for the portable Windows CPU runtime.
+# Stage matching Windows wheels in the runtime; this file does not download them.
+av==18.1.0
+flatbuffers==25.12.19
+numpy==2.5.4
+onnxruntime==1.31.0
+opencv-python-headless==5.0.0.93
+packaging==26.3
+pillow==13.0.0
+protobuf==7.36.2
+tzdata==2026.5
+watchdog==6.0.0

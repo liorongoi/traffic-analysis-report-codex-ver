@@ -16,7 +16,7 @@ LAUNCHER = runpy.run_path(str(ROOT / 'scripts' / 'launch.py'))
 
 class WindowsPackagingTests(unittest.TestCase):
     @staticmethod
-    def fake_windows_runtime(runtime):
+    def fake_windows_runtime(runtime, lock_path):
         runtime.mkdir(parents=True, exist_ok=True)
         executable = bytearray(512)
         executable[:2] = b'MZ'
@@ -32,6 +32,11 @@ class WindowsPackagingTests(unittest.TestCase):
         zone = site / 'tzdata' / 'zoneinfo' / 'Asia' / 'Jerusalem'
         zone.parent.mkdir(parents=True, exist_ok=True)
         zone.write_bytes(b'zone fixture')
+        for name, version in STAGER['parse_lock'](lock_path).items():
+            metadata = site / f'{name}-{version}.dist-info'
+            metadata.mkdir()
+            (metadata / 'METADATA').write_text(f'Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n',
+                encoding='utf-8')
 
     @staticmethod
     def fake_model_pack(pack, kind):
@@ -70,13 +75,19 @@ class WindowsPackagingTests(unittest.TestCase):
     def test_windows_runtime_staging_requires_x64_and_offline_dependencies(self):
         with tempfile.TemporaryDirectory() as temp:
             runtime = Path(temp)
-            self.fake_windows_runtime(runtime)
-            self.assertEqual(STAGER['validate_windows_python'](runtime), runtime.resolve())
+            lock = ROOT / 'requirements-inference-windows.lock.txt'
+            self.fake_windows_runtime(runtime, lock)
+            self.assertEqual(STAGER['validate_windows_python'](runtime, lock), runtime.resolve())
+            metadata = next((runtime / 'Lib' / 'site-packages').glob('numpy-*.dist-info/METADATA'))
+            metadata.write_text('Metadata-Version: 2.1\nName: numpy\nVersion: 0\n', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'numpy==.*found 0'):
+                STAGER['validate_windows_python'](runtime, lock)
+            metadata.write_text('Metadata-Version: 2.1\nName: numpy\nVersion: 2.5.4\n', encoding='utf-8')
             executable = bytearray((runtime / 'python.exe').read_bytes())
             struct.pack_into('<H', executable, 0x84, 0x14c)
             (runtime / 'python.exe').write_bytes(executable)
             with self.assertRaisesRegex(ValueError, 'Windows x64'):
-                STAGER['validate_windows_python'](runtime)
+                STAGER['validate_windows_python'](runtime, lock)
 
     def test_launch_receipt_is_bound_to_the_payload_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -100,16 +111,19 @@ class WindowsPackagingTests(unittest.TestCase):
             (project / 'README.md').write_text('project', encoding='utf-8')
             for name in STAGER['REQUIRED_SCRIPTS']:
                 (project / 'scripts' / name).write_text('entry point', encoding='utf-8')
+            lock = ROOT / 'requirements-inference-windows.lock.txt'
+            (project / lock.name).write_bytes(lock.read_bytes())
             (project / 'web' / 'app.js').write_text('web app', encoding='utf-8')
             (project / 'docs' / '07-deployment.md').write_text('deployment notes', encoding='utf-8')
             self.fake_model_pack(project / 'model-packs' / 'yolox-s', 'vehicle')
             self.fake_model_pack(project / 'model-packs' / 'license-plate-yolox', 'plate')
             runtime = Path(temp) / 'runtime'
-            self.fake_windows_runtime(runtime)
+            self.fake_windows_runtime(runtime, lock)
             staged = STAGER['stage'](project, runtime)
             expected = ('scripts/run-inference.py', 'scripts/run-video-analysis.py',
                 'model-packs/license-plate-yolox/plate_yolox_tiny_640.onnx',
-                'model-packs/license-plate-yolox/NOTICE', 'web/app.js', 'docs/07-deployment.md')
+                'model-packs/license-plate-yolox/NOTICE', 'web/app.js', 'docs/07-deployment.md',
+                'requirements-inference-windows.lock.txt')
             for relative in expected:
                 self.assertTrue((staged / relative).is_file(), relative)
             manifest = json.loads((staged / 'payload-manifest.json').read_text(encoding='utf-8'))
