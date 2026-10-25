@@ -65,6 +65,8 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="videoWorkflow"',page)
             self.assertIn('id="videoRunForm"',page)
             self.assertIn('id="videoEventList"',page)
+            self.assertIn('id="exportVideoEventTable"',page)
+            self.assertIn('id="videoEventTableExports"',page)
             self.assertIn('id="videoPlayer"',page)
             self.assertIn('id="videoClipExports"',page)
             self.assertIn('id="hardwareReport"',page)
@@ -132,6 +134,45 @@ class HttpTests(unittest.TestCase):
                 self.request('/api/video/clips',{'mission':mission,'event_id':'missing',
                     'pre_seconds':1,'post_seconds':1,'operator':'Operator'})
             self.assertEqual(exc.exception.code,400)
+
+    def test_video_event_table_export_api_writes_and_downloads_configured_formats(self):
+        from road_traffic.store import Library
+        from road_traffic.video_store import create_run, register_video
+        with tempfile.TemporaryDirectory() as external:
+            source_root=Path(external)/'video-sources';source_root.mkdir()
+            output_root=Path(external)/'video-exports';output_root.mkdir()
+            (source_root/'כביש.mp4').write_bytes(b'video API fixture')
+            with self.request('/api/missions',{'name':'Video event export API','country':'Israel',
+                    'zone':'Asia/Jerusalem','input_type':'videos','analysis_mode':'video_traffic',
+                    'source_root':str(source_root),'output_root':str(output_root),
+                    'export_formats':['csv','xlsx']}) as response:
+                mission=json.load(response)['id']
+            library=Library(self.tmp.name)
+            source=register_video(library,mission,'כביש.mp4')
+            run=create_run(library,mission,source['id'],{'detector':{'version':'api','sha256':'api'},
+                'tracker_policy':{'max_gap_seconds':[1,2],'minimum_iou':.2,'max_center_distance':.2,
+                    'association_margin':.05,'compatible_label_groups':[]}})
+            with library.connect(mission) as conn:
+                conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                    first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,last_time_base_den,
+                    first_offset_num,first_offset_den,last_offset_num,last_offset_den,first_utc,last_utc,labels,
+                    observation_count,association_uncertain,uncertainty_reasons,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    ('api-event',mission,run['id'],source['id'],'track-api',0,1,1000,100,1,1000,
+                     0,1,1,10,None,None,'["car"]',2,0,'[]','2026-10-25T00:00:00+00:00'))
+            with self.request('/api/video/event-exports',{'mission':mission,'run':run['id'],
+                    'operator':'API reviewer'}) as response:
+                result=json.load(response)
+            self.assertEqual(result['status'],'completed')
+            self.assertEqual({item['format'] for item in result['files']},{'csv','xlsx'})
+            with self.request('/api/video/event-exports?mission='+mission+'&run='+run['id']) as response:
+                history=json.load(response)
+            self.assertEqual(len(history),2)
+            csv_export=next(item for item in result['files'] if item['format']=='csv')
+            with self.request(csv_export['download_url']) as response:
+                self.assertEqual(response.headers['Content-Type'],'text/csv; charset=utf-8')
+                self.assertIn('api-event',response.read().decode('utf-8-sig'))
+
     def test_plate_crop_detector_http_flow_uses_local_model_and_output_folder(self):
         with tempfile.TemporaryDirectory() as external:
             root=Path(external);source=root/'source';output=root/'output'

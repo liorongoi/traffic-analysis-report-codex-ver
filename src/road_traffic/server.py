@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from .store import Library
-from . import video_store, video_clips
+from . import video_store, video_clips, video_event_exports
 
 
 def serve(workspace, web, port=8765, open_browser=False):
@@ -26,6 +26,7 @@ def serve(workspace, web, port=8765, open_browser=False):
     monitor = SourceMonitor(library,on_batch=inference.start_continuous_batch)
     monitor.start()
     video_clips.reconcile_exports(library)
+    video_event_exports.reconcile_exports(library)
     token = secrets.token_urlsafe(32)
     class Handler(BaseHTTPRequestHandler):
         def reply(self, status, data, content='application/json; charset=utf-8'):
@@ -114,6 +115,22 @@ def serve(workspace, web, port=8765, open_browser=False):
                 for block in iter(lambda: stream.read(1024 * 1024), b''):
                     self.wfile.write(block)
 
+        def download_event_table(self, query):
+            path = video_event_exports.export_file(library, query['mission'][0], query['export'][0])
+            size = path.stat().st_size
+            content = ('text/csv; charset=utf-8' if path.suffix.lower() == '.csv' else
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            self.send_response(200)
+            self.send_header('Content-Type', content)
+            self.send_header('Content-Length', str(size))
+            self.send_header('Content-Disposition', f'attachment; filename="{path.name}"')
+            self.send_header('Cache-Control', 'private, no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            with path.open('rb') as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b''):
+                    self.wfile.write(block)
+
         def do_GET(self):
             if not self.valid_host():
                 return self.reply(403, {'error': 'Loopback host required'})
@@ -148,6 +165,11 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.stream_video(query)
                 if parsed.path == '/api/video/clips':
                     return self.reply(200,video_clips.exports(library,query['mission'][0]))
+                if parsed.path == '/api/video/event-exports':
+                    return self.reply(200,video_event_exports.exports(library,query['mission'][0],
+                        query.get('run',[None])[0]))
+                if parsed.path == '/api/video/event-exports/download':
+                    return self.download_event_table(query)
                 if parsed.path == '/api/video/clips/download':
                     return self.download_clip(query)
                 if parsed.path == '/api/video/sources':
@@ -359,6 +381,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                     finally:
                         with inference.lock:
                             inference.training_active=False
+                elif self.path == '/api/video/event-exports':
+                    result=video_event_exports.export_run(library,data['mission'],data['run'],data['operator'])
                 else:
                     return self.reply(404, {'error':'Not found'})
                 self.reply(200,result)
