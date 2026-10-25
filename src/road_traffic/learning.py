@@ -13,6 +13,17 @@ BASE_SUBTYPE_CLASSES={
     'reflection_suspect':'reflection',
     'uncertain_light':'other',
 }
+NIGHT_TRAINING_PROFILE={
+    'id':'night-head-cpu-bounded-v1',
+    'device':'CPU',
+    'workers':1,
+    'concurrent_inference_or_training':False,
+    'max_training_regions':5000,
+    'max_validation_regions':5000,
+    'max_image_pixels':24_000_000,
+    'feature_extraction':'one source image loaded at a time; one 13-value feature vector per region',
+    'host_memory_selection':'not applicable to the bounded downstream head; detector resource profiles are separate',
+}
 
 
 def prepare(library,mission):
@@ -317,14 +328,25 @@ def train(library,mission):
     if data['eligible_training_images']<2 or len(data['classes'])<2 or len(data['training'])<4:
         return {'status':'needs_labels','message':'Need explicit training labels (confidence >=3) for at least two classes, four regions and two images. Validation/test never fit.',
             'inventory':data,'checkpoint_created':False}
+    if len(data['training'])>NIGHT_TRAINING_PROFILE['max_training_regions']:
+        raise ValueError('Training set exceeds this small-head budget; no labels were silently dropped')
+    if len(data['validation'])>NIGHT_TRAINING_PROFILE['max_validation_regions']:
+        raise ValueError('Validation set exceeds this small-head budget; no labels were silently dropped')
     views={r['view'] for r in data['training']}
     if None in views or len(views)!=1:raise ValueError('Assign a verified single camera view before fitting; only explicit Fintraffic views are currently supported')
-    if len(data['training'])>5000:raise ValueError('Training set exceeds this small-head budget; no labels were silently dropped')
     for m in library.missions():
         with library.connect(m['id']) as c:
             exists=c.execute("SELECT 1 FROM sqlite_master WHERE name='inference_runs'").fetchone()
             if exists and c.execute("SELECT 1 FROM inference_runs WHERE status IN ('queued','running')").fetchone():raise ValueError('Finish active inference before fitting a light head')
-    evidence=json.dumps({'training':data['training'],'validation':data['validation'],'feature_schema':FEATURE_SCHEMA,'fitter':'linear-600-l2-0.03-v1'},sort_keys=True);fingerprint=hashlib.sha256(evidence.encode()).hexdigest()
+    training_plan={'algorithm':'regularized-multinomial-linear-downstream-head',
+        'fitter':'linear-600-l2-0.03-v1','feature_schema':FEATURE_SCHEMA,
+        'preprocessing_config':{'feature_schema':FEATURE_SCHEMA,'maximum_source_image_pixels':24_000_000},
+        'class_schema':data['classes'],'resource_profile':NIGHT_TRAINING_PROFILE,
+        'base_checkpoint':None,
+        'base_checkpoint_note':'Trained from scratch as a downstream light-patch head; YOLOX and base context rules remain unchanged.'}
+    manifest={'training':data['training'],'validation':data['validation'],**training_plan}
+    evidence=json.dumps(manifest,sort_keys=True);fingerprint=hashlib.sha256(evidence.encode()).hexdigest()
+    dataset_version=fingerprint
     with library.connect(mission) as c:
         old=c.execute('SELECT * FROM night_training WHERE evidence_hash=?',(fingerprint,)).fetchone()
         if old:return {'status':old['status'],'id':old['id'],'reused_evidence':True}
@@ -352,9 +374,15 @@ def train(library,mission):
                 with library.connect(mission) as c:c.execute('UPDATE night_training SET progress=? WHERE id=?',(int(step/6),identifier))
         model={'feature_schema':FEATURE_SCHEMA,'classes':classes,'mean':mean.tolist(),'scale':scale.tolist(),
                'weights':weights.tolist(),'bias':bias.tolist(),'fitting':'regularized multinomial linear head; YOLOX frozen',
-               'evidence_hash':fingerprint,'scope':'mission-local fixed-view light patches','view':next(iter(views)),'calibrated':False}
+               'evidence_hash':fingerprint,'dataset_version':dataset_version,
+               'resource_profile':NIGHT_TRAINING_PROFILE,
+               'base_checkpoint':None,
+               'scope':'mission-local fixed-view light patches','view':next(iter(views)),'calibrated':False}
         head=Head(model,identifier)
         report={'training_regions':len(x),'training_images':data['eligible_training_images'],'classes':classes,
+            'dataset_version':dataset_version,'base_checkpoint':None,
+            'algorithm':training_plan['algorithm'],'preprocessing_config':training_plan['preprocessing_config'],
+            'resource_profile':NIGHT_TRAINING_PROFILE,
             'promotion':'candidate only; must be selected explicitly for a new inference run','test_labels_used':False,'validation':None}
         if data['validation']:
             predicted=[head.predict(v)[0] for v in features(data['validation'])];actual=[r['class'] for r in data['validation']]

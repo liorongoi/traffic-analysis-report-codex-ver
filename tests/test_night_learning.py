@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import numpy as np
 from PIL import Image
 from road_traffic.night import propose,patch_features
@@ -60,12 +61,28 @@ class LightLearningTests(unittest.TestCase):
     def test_no_labels_does_not_create_checkpoint(self):
         result=train(self.lib,self.m)
         self.assertEqual(result['status'],'needs_labels');self.assertFalse(result['checkpoint_created']);self.assertEqual(candidates(self.lib,self.m),[])
+    def test_training_profile_rejects_oversized_validation_set_before_checkpoint(self):
+        oversized={'eligible_training_images':2,'classes':['headlight','streetlight'],
+            'training':[{} for _ in range(4)],'validation':[{} for _ in range(5001)]}
+        with patch('road_traffic.learning.inventory',return_value=oversized):
+            with self.assertRaisesRegex(ValueError,'Validation set exceeds'):
+                train(self.lib,self.m)
+        self.assertEqual(candidates(self.lib,self.m),[])
     def test_explicit_fit_versions_head_and_reports_validation(self):
         for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Synthetic test',role='training')
         self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Synthetic test',role='validation')
         result=train(self.lib,self.m);self.assertEqual(result['status'],'completed');self.assertEqual(result['report']['training_regions'],4)
         self.assertEqual(result['report']['validation']['regions'],2);self.assertFalse(result['report']['test_labels_used'])
         head,sha=load_head(self.lib,self.m,result['id']);self.assertEqual(len(sha),64)
+        self.assertEqual(result['report']['dataset_version'],
+            next(row for row in candidates(self.lib,self.m) if row['id']==result['id'])['evidence_hash'])
+        self.assertIsNone(result['report']['base_checkpoint'])
+        self.assertEqual(result['report']['resource_profile']['workers'],1)
+        self.assertEqual(result['report']['resource_profile']['max_training_regions'],5000)
+        manifest=json.loads(next(row for row in candidates(self.lib,self.m) if row['id']==result['id'])['evidence'])
+        self.assertEqual(manifest['class_schema'],['headlight','streetlight'])
+        self.assertEqual(manifest['preprocessing_config']['feature_schema'],'light-patch-v1')
+        self.assertIsNone(head.data['base_checkpoint'])
         self.assertEqual(train(self.lib,self.m)['id'],result['id'])
         other=self.lib.create('Other','Latvia','Europe/Riga')
         with self.assertRaises(ValueError):load_head(self.lib,other,result['id'])

@@ -488,7 +488,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 elif self.path == '/api/night-learning/train':
                     from .learning import train
                     with inference.lock:
-                        if inference.training_active or any(p.poll() is None for p in inference.processes.values()):raise ValueError('Finish active processing before fitting the light head')
+                        if inference.training_active or inference._has_active_worker():raise ValueError('Finish active processing before fitting the light head')
                         inference.training_active=True
                     try:
                         result=train(library,data['mission'])
@@ -497,7 +497,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 elif self.path == '/api/night-learning/evaluate-test':
                     from .learning import evaluate_test
                     with inference.lock:
-                        if inference.training_active or any(p.poll() is None for p in inference.processes.values()):
+                        if inference.training_active or inference._has_active_worker():
                             raise ValueError('Finish active processing before evaluating the held-out test set')
                         inference.training_active=True
                     try:

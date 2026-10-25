@@ -167,6 +167,12 @@ class InferenceRecoveryTests(unittest.TestCase):
             status=next(job for job in service.status(self.mission) if job['id']==run)
         self.assertEqual(status['resource_usage'],measured)
 
+    def test_active_video_worker_occupies_shared_training_slot_after_service_restart(self):
+        service=InferenceService(self.lib,self.root/'model-pack')
+        orphan={'id':'video-run','status':'running','worker_pid':os.getpid(),'frames_done':4}
+        with patch('road_traffic.video_store.runs',return_value=[orphan]):
+            self.assertTrue(service._has_active_worker())
+
     def test_start_snapshots_operator_resource_profile_and_applies_cpu_thread_limit(self):
         from road_traffic.detector import VERSION
         gib=1024**3
