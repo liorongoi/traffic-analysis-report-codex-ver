@@ -2,6 +2,7 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 from fractions import Fraction
 from pathlib import Path
+import json
 import subprocess
 import sqlite3
 import sys
@@ -253,6 +254,55 @@ class VideoStoreTests(unittest.TestCase):
             'correct_class', {'label': 'heavy goods vehicle'})
         self.assertEqual(corrected['revision'], 1)
         self.assertEqual(events(self.library, self.mission, run['id'])[0]['review_status'], 'corrected')
+
+    def test_video_event_timing_correction_snaps_to_saved_track_frames(self):
+        source = register_video(self.library, self.mission, 'clip.mkv',
+            recording_start_utc=self.origin, origin_provenance='confirmed recorder log')
+        run = create_run(self.library, self.mission, source['id'], self.config())
+        event_id = 'timing-correction-event'
+        track_id = f"{run['id']}:track-0001"
+        with self.library.connect(self.mission) as conn:
+            conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,last_time_base_den,
+                first_offset_num,first_offset_den,last_offset_num,last_offset_den,first_utc,last_utc,labels,
+                observation_count,association_uncertain,representative_box,uncertainty_reasons,created)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (event_id,self.mission,run['id'],source['id'],track_id,0,1,2,3,1,2,0,1,3,2,
+                 self.origin.isoformat(),(self.origin+timedelta(seconds=1.5)).isoformat(),
+                 '["car"]',4,0,'[0.2,0.2,0.1,0.1]','[]','2026-10-25T00:00:00+00:00'))
+            for frame_index in range(4):
+                conn.execute('''INSERT INTO video_frame_detections(mission_id,run_id,source_id,frame_index,
+                    pts,time_base_num,time_base_den,offset_seconds,detections,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                    (self.mission,run['id'],source['id'],frame_index,frame_index,1,2,
+                     frame_index/2,json.dumps([{'track_id':track_id,'label':'car','box':[.2,.2,.1,.1]}]),
+                     '2026-10-25T00:00:00+00:00'))
+        with self.assertRaisesRegex(ValueError, 'within the original event interval'):
+            review_event(self.library,self.mission,event_id,0,'Operator','correct_timing',
+                {'first_offset_seconds':-0.1,'last_offset_seconds':1.5})
+        with self.assertRaisesRegex(ValueError, 'start must not follow'):
+            review_event(self.library,self.mission,event_id,0,'Operator','correct_timing',
+                {'first_offset_seconds':1.2,'last_offset_seconds':0.6})
+        saved = review_event(self.library,self.mission,event_id,0,'Operator','correct_timing',
+            {'first_offset_seconds':'0.6','last_offset_seconds':'1.4'})
+        self.assertEqual(saved['revision'],1)
+        corrected = events(self.library,self.mission,run['id'])[0]
+        self.assertEqual(corrected['review_status'],'corrected')
+        self.assertEqual((corrected['first_pts'],corrected['last_pts']),(1,3))
+        self.assertEqual((corrected['first_offset_num'],corrected['first_offset_den']),(1,2))
+        self.assertEqual((corrected['last_offset_num'],corrected['last_offset_den']),(3,2))
+        self.assertEqual(corrected['first_utc'],
+            (self.origin+timedelta(seconds=.5)).astimezone(timezone.utc).isoformat())
+        self.assertEqual((corrected['original_first_offset_seconds'],
+            corrected['original_last_offset_seconds']),(0.0,1.5))
+        self.assertEqual(corrected['payload']['first_frame_index'],1)
+        self.assertEqual(corrected['payload']['last_frame_index'],3)
+        reviewed = review_event(self.library,self.mission,event_id,1,'Operator','accept')
+        self.assertEqual(reviewed['revision'],2)
+        accepted = events(self.library,self.mission,run['id'])[0]
+        self.assertEqual(accepted['review_status'],'accepted')
+        self.assertEqual((accepted['first_pts'],accepted['last_pts']),(1,3))
+        self.assertEqual(accepted['timing_payload']['first_frame_index'],1)
 
     def test_source_registration_honors_flat_directory_setting(self):
         flat_mission = self.library.create('Flat video mission', 'Israel', 'Asia/Jerusalem', {

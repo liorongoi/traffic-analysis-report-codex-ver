@@ -705,31 +705,110 @@ def events(library, mission, run_id, *, limit=100, offset=0):
         if not conn.execute('SELECT 1 FROM video_runs WHERE id=? AND mission_id=?',
                 (run_id, mission)).fetchone():
             raise ValueError('Video run not found')
-        rows = conn.execute('''SELECT e.*,r.revision,r.operator,r.action,r.payload,r.created reviewed_at
+        rows = conn.execute('''SELECT e.*,r.revision,r.operator,r.action,r.payload,r.created reviewed_at,
+            s.recording_start_utc,t.payload timing_payload,c.payload class_payload
             FROM video_events e LEFT JOIN video_event_reviews r ON r.event_id=e.id
             AND r.revision=(SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id)
+            LEFT JOIN video_event_reviews t ON t.event_id=e.id AND t.revision=(
+              SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id AND x.action='correct_timing')
+            LEFT JOIN video_event_reviews c ON c.event_id=e.id AND c.revision=(
+              SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id AND x.action='correct_class')
+            JOIN video_sources s ON s.id=e.source_id AND s.mission_id=e.mission_id
             WHERE e.mission_id=? AND e.run_id=? ORDER BY (1.0*e.first_offset_num/e.first_offset_den),e.id LIMIT ? OFFSET ?''',
             (mission, run_id, limit, offset)).fetchall()
     result = []
     for row in rows:
         item = dict(row)
-        for key in ('labels', 'uncertainty_reasons', 'payload', 'representative_box'):
+        for key in ('labels', 'uncertainty_reasons', 'payload', 'timing_payload', 'class_payload', 'representative_box'):
             item[key] = json.loads(item[key]) if item[key] is not None else None
+        if item['timing_payload'] is not None:
+            with library.connect(mission) as correction_conn:
+                item = apply_event_timing(correction_conn, item)
+        if item['class_payload'] is not None:
+            item['original_labels'] = item['labels']
+            corrected_label = item['class_payload'].get('label')
+            if corrected_label:
+                item['labels'] = [corrected_label]
         item['review_status'] = {'accept': 'accepted', 'reject': 'rejected',
-            'reopen': 'pending', 'correct_class': 'corrected', 'mark_duplicate': 'duplicate'}.get(item['action'], 'pending')
+            'reopen': 'pending', 'correct_class': 'corrected', 'correct_timing': 'corrected',
+            'mark_duplicate': 'duplicate'}.get(item['action'], 'pending')
         result.append(item)
     return sorted(result, key=lambda item: (Fraction(item['first_offset_num'], item['first_offset_den']), item['id']))
+
+
+def _frame_timestamp_for_track(conn, event, frame_index):
+    row = conn.execute('''SELECT pts,time_base_num,time_base_den,detections
+        FROM video_frame_detections WHERE mission_id=? AND run_id=? AND frame_index=?''',
+        (event['mission_id'], event['run_id'], frame_index)).fetchone()
+    if not row:
+        raise ValueError('Timing correction must use an analyzed frame from this event')
+    try:
+        detections = json.loads(row['detections'])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError('Saved frame detections are corrupt') from exc
+    if not any(isinstance(detection, dict) and detection.get('track_id') == event['track_id']
+            for detection in detections):
+        raise ValueError('Timing correction frame must contain this event track')
+    return VideoTimestamp(row['pts'], row['time_base_num'], row['time_base_den'])
+
+
+def apply_event_timing(conn, event):
+    """Project an append-only timing correction onto a saved event row."""
+    result = dict(event)
+    payload = result.get('timing_payload', result.get('payload'))
+    if not isinstance(payload, dict):
+        raise ValueError('Saved event timing correction is invalid')
+    first_index = payload.get('first_frame_index')
+    last_index = payload.get('last_frame_index')
+    if (isinstance(first_index, bool) or not isinstance(first_index, int)
+            or isinstance(last_index, bool) or not isinstance(last_index, int)
+            or first_index > last_index):
+        raise ValueError('Saved event timing correction has invalid frame indexes')
+    first = _frame_timestamp_for_track(conn, result, first_index)
+    last = _frame_timestamp_for_track(conn, result, last_index)
+    original_first = Fraction(result['first_offset_num'], result['first_offset_den'])
+    original_last = Fraction(result['last_offset_num'], result['last_offset_den'])
+    if (first.offset_seconds > last.offset_seconds or first.offset_seconds < original_first
+            or last.offset_seconds > original_last):
+        raise ValueError('Saved event timing correction has a reversed interval')
+    result['original_first_offset_seconds'] = float(Fraction(result['first_offset_num'], result['first_offset_den']))
+    result['original_last_offset_seconds'] = float(Fraction(result['last_offset_num'], result['last_offset_den']))
+    result.update(first_pts=first.pts, first_time_base_num=first.time_base_num,
+        first_time_base_den=first.time_base_den, first_offset_num=first.offset_seconds.numerator,
+        first_offset_den=first.offset_seconds.denominator, last_pts=last.pts,
+        last_time_base_num=last.time_base_num, last_time_base_den=last.time_base_den,
+        last_offset_num=last.offset_seconds.numerator, last_offset_den=last.offset_seconds.denominator)
+    origin_text = result.get('recording_start_utc')
+    origin = datetime.fromisoformat(origin_text) if origin_text else None
+    result['first_utc'] = first.utc_at(origin).isoformat() if origin else None
+    result['last_utc'] = last.utc_at(origin).isoformat() if origin else None
+    return result
 
 
 def event_thumbnail(library, mission, event_id):
     """Render a bounded JPEG preview from the event's verified source frame."""
     prepare(library, mission)
     with library.connect(mission) as conn:
-        event = conn.execute('''SELECT source_id,last_pts,last_time_base_num,last_time_base_den,
-            representative_box FROM video_events WHERE id=? AND mission_id=?''',
+        event = conn.execute('''SELECT e.*,s.recording_start_utc,t.payload timing_payload
+            FROM video_events e JOIN video_sources s ON s.id=e.source_id AND s.mission_id=e.mission_id
+            LEFT JOIN video_event_reviews t ON t.event_id=e.id AND t.revision=(
+              SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id AND x.action='correct_timing')
+            WHERE e.id=? AND e.mission_id=?''',
             (event_id, mission)).fetchone()
     if not event:
         raise ValueError('Video event not found in this mission')
+    event = dict(event)
+    if event.get('timing_payload'):
+        event['timing_payload'] = json.loads(event['timing_payload'])
+        with library.connect(mission) as conn:
+            event = apply_event_timing(conn, event)
+            selected = conn.execute('''SELECT detections FROM video_frame_detections
+                WHERE mission_id=? AND run_id=? AND frame_index=?''',
+                (mission,event['run_id'],event['timing_payload']['last_frame_index'])).fetchone()
+        detections = json.loads(selected['detections']) if selected else []
+        matched = next((item for item in detections if isinstance(item,dict)
+            and item.get('track_id')==event['track_id']),None)
+        event['representative_box'] = _json(matched['box']) if matched else None
     if not event['representative_box']:
         raise ValueError('This saved event predates frame preview metadata')
     box = json.loads(event['representative_box'])
@@ -787,8 +866,8 @@ def review_event(library, mission, event_id, expected_revision, operator, action
     operator = operator.strip() if isinstance(operator, str) else ''
     if not 1 <= len(operator) <= 120:
         raise ValueError('Operator is required for video event review')
-    if action not in ('accept', 'reject', 'reopen', 'correct_class', 'mark_duplicate'):
-        raise ValueError('Unsupported video event correction; merge, split, and timing edits await detailed design')
+    if action not in ('accept', 'reject', 'reopen', 'correct_class', 'correct_timing', 'mark_duplicate'):
+        raise ValueError('Unsupported video event correction; track merge and split remain to be designed')
     payload = {} if payload is None else payload
     if not isinstance(payload, dict):
         raise ValueError('Video event review payload must be a mapping')
@@ -802,11 +881,24 @@ def review_event(library, mission, event_id, expected_revision, operator, action
         if not isinstance(duplicate_of, str) or duplicate_of == event_id:
             raise ValueError('Duplicate correction requires a different event ID')
         payload = {'duplicate_of': duplicate_of}
+    elif action == 'correct_timing':
+        requested = []
+        for name in ('first_offset_seconds', 'last_offset_seconds'):
+            value = payload.get(name)
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise ValueError('Timing correction requires start and end seconds')
+            try:
+                offset = Fraction(str(value))
+            except (ValueError, ZeroDivisionError):
+                raise ValueError('Timing correction seconds must be finite numbers')
+            requested.append(offset)
+        if requested[0] > requested[1]:
+            raise ValueError('Timing correction start must not follow its end')
     elif payload:
         raise ValueError(f'{action} does not accept a payload')
     with library.connect(mission) as conn:
         conn.execute('BEGIN IMMEDIATE')
-        event = conn.execute('SELECT id,run_id FROM video_events WHERE id=? AND mission_id=?',
+        event = conn.execute('SELECT * FROM video_events WHERE id=? AND mission_id=?',
             (event_id, mission)).fetchone()
         if not event:
             raise ValueError('Video event not found in this mission')
@@ -814,6 +906,37 @@ def review_event(library, mission, event_id, expected_revision, operator, action
                 'SELECT 1 FROM video_events WHERE id=? AND run_id=?',
                 (payload['duplicate_of'], event['run_id'])).fetchone():
             raise ValueError('Duplicate target must be another event in the same run')
+        if action == 'correct_timing':
+            first_original = Fraction(event['first_offset_num'], event['first_offset_den'])
+            last_original = Fraction(event['last_offset_num'], event['last_offset_den'])
+            if requested[0] < first_original or requested[1] > last_original:
+                raise ValueError('Timing corrections may trim only within the original event interval')
+            frames = conn.execute('''SELECT frame_index,pts,time_base_num,time_base_den,detections
+                FROM video_frame_detections WHERE mission_id=? AND run_id=?
+                AND offset_seconds>=? AND offset_seconds<=? ORDER BY frame_index''',
+                (mission, event['run_id'], float(first_original)-1e-9,
+                 float(last_original)+1e-9)).fetchall()
+            candidates = []
+            for frame in frames:
+                timestamp = VideoTimestamp(frame['pts'], frame['time_base_num'], frame['time_base_den'])
+                if not first_original <= timestamp.offset_seconds <= last_original:
+                    continue
+                try:
+                    frame_detections = json.loads(frame['detections'])
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise ValueError('Saved frame detections are corrupt') from exc
+                if any(isinstance(detection, dict) and detection.get('track_id') == event['track_id']
+                        for detection in frame_detections):
+                    candidates.append((timestamp.offset_seconds, frame['frame_index']))
+            if not candidates:
+                raise ValueError('No saved analyzed observations are available for this event')
+            first_observation = min(candidates, key=lambda pair: (abs(pair[0] - requested[0]), pair[1]))
+            last_observation = min(candidates, key=lambda pair: (abs(pair[0] - requested[1]), pair[1]))
+            if first_observation[1] > last_observation[1] or first_observation[0] > last_observation[0]:
+                raise ValueError('Timing correction resolves to a reversed frame interval')
+            payload = {'first_frame_index': first_observation[1], 'last_frame_index': last_observation[1],
+                'requested_first_offset': [requested[0].numerator, requested[0].denominator],
+                'requested_last_offset': [requested[1].numerator, requested[1].denominator]}
         current = conn.execute('SELECT COALESCE(MAX(revision),0) FROM video_event_reviews WHERE event_id=?',
             (event_id,)).fetchone()[0]
         if current != expected_revision:

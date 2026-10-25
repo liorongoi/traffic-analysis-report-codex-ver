@@ -65,12 +65,22 @@ def export_event_clip(library, mission, event_id, pre_seconds, post_seconds, ope
     if not 1 <= len(operator) <= 120:
         raise ValueError('Operator is required for clip export')
     with library.connect(mission) as conn:
-        event = conn.execute('''SELECT e.*,r.source_id,s.sha256 source_sha256
+        event = conn.execute('''SELECT e.*,r.source_id,s.sha256 source_sha256,
+            s.recording_start_utc,review.action,review.payload,timing.payload timing_payload
             FROM video_events e JOIN video_runs r ON r.id=e.run_id AND r.mission_id=e.mission_id
             JOIN video_sources s ON s.id=e.source_id AND s.mission_id=e.mission_id
+            LEFT JOIN video_event_reviews review ON review.event_id=e.id AND review.revision=(
+              SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id)
+            LEFT JOIN video_event_reviews timing ON timing.event_id=e.id AND timing.revision=(
+              SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id AND x.action='correct_timing')
             WHERE e.id=? AND e.mission_id=?''', (event_id, mission)).fetchone()
     if not event:
         raise ValueError('Video event not found in this mission')
+    event = dict(event)
+    if event.get('timing_payload'):
+        event['timing_payload'] = json.loads(event['timing_payload'])
+        with library.connect(mission) as timing_conn:
+            event = video_store.apply_event_timing(timing_conn, event)
     settings = library.settings(mission)
     output_text = library._configured_directory(settings['output_root'], 'output', writable=True)
     if not output_text:

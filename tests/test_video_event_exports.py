@@ -76,7 +76,8 @@ class VideoEventExportTests(unittest.TestCase):
         self.assertEqual(row['source_sha256'], self.source['sha256'])
         self.assertEqual(row['run_id'], self.run['id'])
         self.assertEqual(row['video_name'], "'=קamera-01.mp4")
-        self.assertEqual(json.loads(row['labels']), ['car'])
+        self.assertEqual(json.loads(row['labels']), ['טנדר'])
+        self.assertEqual(json.loads(row['original_labels']), ['car'])
         self.assertEqual(row['review_status'], 'corrected')
         self.assertEqual(row['review_operator'], 'בּוֹדֵק')
         self.assertEqual(json.loads(row['review_payload']), {'label': 'טנדר'})
@@ -122,6 +123,30 @@ class VideoEventExportTests(unittest.TestCase):
         Path(export['output_path']).write_bytes(b'tampered')
         with self.assertRaisesRegex(ValueError, 'SHA-256 check'):
             export_file(self.library, self.mission, export['id'])
+
+    def test_timing_correction_exports_effective_and_original_intervals(self):
+        track_id = 'track-0001'
+        with self.library.connect(self.mission) as conn:
+            for frame_index in (10,15,20):
+                conn.execute('''INSERT INTO video_frame_detections(mission_id,run_id,source_id,frame_index,
+                    pts,time_base_num,time_base_den,offset_seconds,detections,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                    (self.mission,self.run['id'],self.source['id'],frame_index,frame_index,1,10,
+                     frame_index/10,json.dumps([{'track_id':track_id,'label':'car','box':[.1,.2,.3,.4]}]),
+                     '2026-10-25T00:00:02+00:00'))
+        review_event(self.library,self.mission,self.event_id,1,'Operator','correct_timing',
+            {'first_offset_seconds':'1.4','last_offset_seconds':'1.9'})
+        result = export_run(self.library,self.mission,self.run['id'],'Operator')
+        csv_export = next(item for item in result['files'] if item['format']=='csv')
+        with export_file(self.library,self.mission,csv_export['id']).open(
+                encoding='utf-8-sig',newline='') as stream:
+            row = next(csv.DictReader(stream))
+        self.assertEqual(row['first_offset_seconds'],'1.5')
+        self.assertEqual(row['last_offset_seconds'],'2.0')
+        self.assertEqual(row['original_first_offset_seconds'],'1.0')
+        self.assertEqual(row['original_last_offset_seconds'],'2.0')
+        self.assertEqual(row['review_action'],'correct_timing')
+        self.assertEqual(json.loads(row['review_payload'])['first_frame_index'],15)
 
     def test_interrupted_publish_recovers_atomically(self):
         result = export_run(self.library, self.mission, self.run['id'], 'Operator')

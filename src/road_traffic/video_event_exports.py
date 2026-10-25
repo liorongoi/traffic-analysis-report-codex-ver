@@ -16,6 +16,8 @@ HEADERS = ('mission_id', 'run_id', 'source_id', 'source_sha256', 'video_name',
     'source_relative_path', 'event_id', 'track_id', 'first_pts', 'first_time_base_num',
     'first_time_base_den', 'last_pts', 'last_time_base_num', 'last_time_base_den',
     'first_offset_seconds', 'last_offset_seconds', 'first_utc', 'last_utc', 'labels',
+    'original_labels', 'timing_correction', 'class_correction',
+    'original_first_offset_seconds', 'original_last_offset_seconds',
     'observation_count', 'association_uncertain', 'uncertainty_reasons', 'review_revision',
     'review_action', 'review_status', 'review_operator', 'reviewed_at', 'review_payload',
     'representative_box', 'clip_exports')
@@ -73,29 +75,51 @@ def _prepare(library, mission):
 
 def _rows(conn, mission, run_id):
     return conn.execute('''SELECT e.*,s.original_name,s.source_relative_path,s.sha256 source_sha256,
+        s.recording_start_utc,t.payload timing_payload,c.payload class_payload,
         r.revision review_revision,r.action review_action,r.operator review_operator,
         r.created reviewed_at,r.payload review_payload
         FROM video_events e
         JOIN video_sources s ON s.id=e.source_id AND s.mission_id=e.mission_id
         LEFT JOIN video_event_reviews r ON r.event_id=e.id AND r.revision=(
           SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id)
+        LEFT JOIN video_event_reviews t ON t.event_id=e.id AND t.revision=(
+          SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id AND x.action='correct_timing')
+        LEFT JOIN video_event_reviews c ON c.event_id=e.id AND c.revision=(
+          SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id AND x.action='correct_class')
         WHERE e.mission_id=? AND e.run_id=?
         ORDER BY e.first_offset_num*1.0/e.first_offset_den,e.id''', (mission, run_id))
 
 
-def _values(row, clips):
+def _values(conn, row, clips):
+    row = dict(row)
+    payload = json.loads(row['review_payload']) if row['review_payload'] else None
+    timing_payload = json.loads(row['timing_payload']) if row['timing_payload'] else None
+    class_payload = json.loads(row['class_payload']) if row['class_payload'] else None
+    if timing_payload is not None:
+        projection = {**row, 'timing_payload': timing_payload}
+        row = video_store.apply_event_timing(conn, projection)
+    original_labels = json.loads(row['labels'])
+    if class_payload and class_payload.get('label'):
+        row['labels'] = json.dumps([class_payload['label']], ensure_ascii=False)
     action = row['review_action']
     status = {'accept': 'accepted', 'reject': 'rejected', 'reopen': 'pending',
-        'correct_class': 'corrected', 'mark_duplicate': 'duplicate'}.get(action, 'pending')
+        'correct_class': 'corrected', 'correct_timing': 'corrected',
+        'mark_duplicate': 'duplicate'}.get(action, 'pending')
     first_offset = row['first_offset_num'] / row['first_offset_den']
     last_offset = row['last_offset_num'] / row['last_offset_den']
-    payload = json.loads(row['review_payload']) if row['review_payload'] else None
+    original_first = row.get('original_first_offset_seconds', first_offset)
+    original_last = row.get('original_last_offset_seconds', last_offset)
     return [row['mission_id'], row['run_id'], row['source_id'], row['source_sha256'],
         row['original_name'], row['source_relative_path'], row['id'], row['track_id'],
         row['first_pts'], row['first_time_base_num'], row['first_time_base_den'],
         row['last_pts'], row['last_time_base_num'], row['last_time_base_den'],
         first_offset, last_offset, row['first_utc'], row['last_utc'],
-        json.dumps(json.loads(row['labels']), ensure_ascii=False), row['observation_count'],
+        json.dumps(json.loads(row['labels']), ensure_ascii=False),
+        json.dumps(original_labels, ensure_ascii=False),
+        json.dumps(timing_payload, ensure_ascii=False) if timing_payload is not None else '',
+        json.dumps(class_payload, ensure_ascii=False) if class_payload is not None else '',
+        original_first, original_last,
+        row['observation_count'],
         bool(row['association_uncertain']), json.dumps(json.loads(row['uncertainty_reasons']), ensure_ascii=False),
         row['review_revision'] or 0, action or '', status, row['review_operator'] or '', row['reviewed_at'] or '',
         json.dumps(payload, ensure_ascii=False) if payload is not None else '',
@@ -151,7 +175,7 @@ def _write_xlsx(conn, mission, run_id, temp_path, row_count):
                     for i, name in enumerate(HEADERS))+'</row>').encode('utf-8'))
                 for row_number in range(2, data_rows + 2):
                     row = next(rows)
-                    values = _values(row, _clips_for_event(conn, row['id']))
+                    values = _values(conn, row, _clips_for_event(conn, row['id']))
                     content = ''.join(_cell_xml(_column_name(i + 1), row_number, value)
                         for i, value in enumerate(values))
                     sheet.write(f'<row r="{row_number}">{content}</row>'.encode('utf-8'))
@@ -165,7 +189,7 @@ def _write_csv(conn, mission, run_id, temp_path):
         writer.writerow(HEADERS)
         rows = _rows(conn, mission, run_id)
         for row in rows:
-            writer.writerow([_cell(value) for value in _values(row, _clips_for_event(conn, row['id']))])
+            writer.writerow([_cell(value) for value in _values(conn, row, _clips_for_event(conn, row['id']))])
             row_count += 1
         stream.flush()
         os.fsync(stream.fileno())

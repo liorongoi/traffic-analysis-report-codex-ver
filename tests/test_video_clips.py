@@ -7,10 +7,11 @@ from pathlib import Path
 from fractions import Fraction
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from road_traffic.store import Library, now
 from road_traffic.video_clips import export_event_clip, export_file, exports
-from road_traffic.video_store import create_run, register_video
+from road_traffic.video_store import create_run, register_video, review_event
 
 
 def write_video(path):
@@ -98,6 +99,25 @@ print(json.dumps(timestamps))
             export_event_clip(self.library,self.mission,self.event_id,.2,.2,' ')
         with self.assertRaisesRegex(ValueError,'between 0 and 600'):
             export_event_clip(self.library,self.mission,self.event_id,601,.2,'Operator')
+
+    def test_clip_export_uses_saved_timing_correction_after_review(self):
+        with self.library.connect(self.mission) as conn:
+            for frame_index in (8,12):
+                conn.execute('''INSERT INTO video_frame_detections(mission_id,run_id,source_id,frame_index,
+                    pts,time_base_num,time_base_den,offset_seconds,detections,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                    (self.mission,self.run['id'],self.source['id'],frame_index,frame_index,1,5,
+                     frame_index/5,json.dumps([{'track_id':'track-a','label':'car','box':[.1,.2,.3,.4]}]),
+                     now()))
+        review_event(self.library,self.mission,self.event_id,0,'Operator','correct_timing',
+            {'first_offset_seconds':'1.4','last_offset_seconds':'2.6'})
+        def fake_encode(source, destination, start, end):
+            Path(destination).write_bytes(b'encoded fixture')
+            return 1
+        with patch('road_traffic.video_clips._encode_clip', side_effect=fake_encode):
+            clip = export_event_clip(self.library,self.mission,self.event_id,.2,.2,'Operator')
+        self.assertEqual((clip['requested_start_num'],clip['requested_start_den']),(7,5))
+        self.assertEqual((clip['requested_end_num'],clip['requested_end_den']),(13,5))
 
     def test_download_refuses_tampered_export(self):
         clip = export_event_clip(self.library,self.mission,self.event_id,.2,.2,'Operator')
