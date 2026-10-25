@@ -1,13 +1,13 @@
 # Traffic Analysis — independent offline application
 
-## Working inference and review preview (2026-10-24)
+## Working inference and review preview (2026-10-25)
 
 This is a **separate project**, outside SpectraScope. Its source, workspace, database, launch port and installer identity are independent.
 
 Implemented:
 
 - Browser review interface with English/Hebrew switching, RTL/LTR layout and directionally isolated timestamps/filenames.
-- Mission setup stores input type, one analysis mode, location/time zone, source/output paths, recursion, processing preference and export formats in a per-mission SQLite configuration. The backend validates configured directories and prevents image import or inference for unsupported mission types/modes.
+- Mission setup stores input type, one analysis mode, location/time zone, source/output paths, recursion, processing preference and export formats in a per-mission SQLite configuration. It searches installed IANA zone names plus curated city/country aliases and previews UTC-to-local offsets/DST; map boundaries and city aliases cover the five supported countries only. The backend validates configured directories and prevents image import or inference for unsupported mission types/modes.
 - Import batches remain separate runs; non-recursive image imports honor the saved mission setting.
 - Explicit camera filename parser (`DDMMYYYY-HHmm-suffix`, UTC minute precision) and explicit Fintraffic manifest importer (UTC second precision).
 - Recursively import camera images. Fintraffic imports verify every image against its provided SHA-256 manifest. Originals stay untouched; independent mission snapshots are verified again when viewed.
