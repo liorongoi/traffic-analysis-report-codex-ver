@@ -104,8 +104,12 @@ class VideoStoreTests(unittest.TestCase):
             checkpoint(self.library, self.mission, run['id'], frame_index=0,
                 timestamp=VideoTimestamp(0, 1, 1000), tracker_state=mismatched_state)
         first = checkpoint(self.library, self.mission, run['id'], frame_index=0,
-            timestamp=VideoTimestamp(0, 1, 1000), tracker_state=tracker.state())
+            timestamp=VideoTimestamp(0, 1, 1000), tracker_state=tracker.state(),
+            progress_elapsed_seconds=1.5,estimated_remaining_seconds=4.25)
         self.assertEqual(first['frames_done'], 1)
+        progress=run_detail(self.library,self.mission,run['id'])
+        self.assertEqual(progress['progress_elapsed_seconds'],1.5)
+        self.assertEqual(progress['estimated_remaining_seconds'],4.25)
 
         tracker.update(VideoTimestamp(100, 1, 1000), [
             {'label': 'car', 'box': [.21, .2, .1, .1]}])

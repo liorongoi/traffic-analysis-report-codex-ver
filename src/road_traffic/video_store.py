@@ -31,7 +31,8 @@ def schema(conn):
       stage TEXT NOT NULL,total_frames INTEGER,frames_done INTEGER NOT NULL DEFAULT 0,
       current_pts INTEGER,current_time_base_num INTEGER,current_time_base_den INTEGER,
       tracker_checkpoint TEXT NOT NULL,last_frame_fingerprint TEXT,config TEXT NOT NULL,created TEXT NOT NULL,
-      updated TEXT NOT NULL,finished TEXT,error TEXT,worker_pid INTEGER,cancel_requested INTEGER NOT NULL DEFAULT 0);
+      updated TEXT NOT NULL,finished TEXT,error TEXT,worker_pid INTEGER,cancel_requested INTEGER NOT NULL DEFAULT 0,
+      progress_elapsed_seconds REAL,estimated_remaining_seconds REAL);
     CREATE INDEX IF NOT EXISTS video_runs_mission_idx ON video_runs(mission_id,created,id);
     CREATE UNIQUE INDEX IF NOT EXISTS one_active_video_run ON video_runs(mission_id)
       WHERE status IN ('queued','running','paused');
@@ -97,6 +98,10 @@ def schema(conn):
         conn.execute('ALTER TABLE video_runs ADD COLUMN worker_pid INTEGER')
     if 'cancel_requested' not in columns:
         conn.execute('ALTER TABLE video_runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0')
+    if 'progress_elapsed_seconds' not in columns:
+        conn.execute('ALTER TABLE video_runs ADD COLUMN progress_elapsed_seconds REAL')
+    if 'estimated_remaining_seconds' not in columns:
+        conn.execute('ALTER TABLE video_runs ADD COLUMN estimated_remaining_seconds REAL')
     event_columns = {row['name'] for row in conn.execute('PRAGMA table_info(video_events)')}
     if 'representative_box' not in event_columns:
         conn.execute('ALTER TABLE video_events ADD COLUMN representative_box TEXT')
@@ -423,7 +428,8 @@ def _frame_detections(detections, assignments):
 
 
 def checkpoint(library, mission, run_id, *, frame_index, timestamp, tracker_state, closed_tracks=(),
-               detections=(), assignments=()):
+               detections=(), assignments=(), progress_elapsed_seconds=None,
+               estimated_remaining_seconds=None):
     prepare(library, mission)
     if isinstance(frame_index, bool) or not isinstance(frame_index, int) or frame_index < 0:
         raise ValueError('frame_index must be a non-negative integer')
@@ -478,9 +484,9 @@ def checkpoint(library, mission, run_id, *, frame_index, timestamp, tracker_stat
              timestamp.time_base_den,float(offset),_json(frame_detections),now()))
         conn.execute('''UPDATE video_runs SET stage='analyzing',frames_done=?,current_pts=?,
             current_time_base_num=?,current_time_base_den=?,tracker_checkpoint=?,
-            last_frame_fingerprint=?,updated=? WHERE id=?''',
+            last_frame_fingerprint=?,progress_elapsed_seconds=?,estimated_remaining_seconds=?,updated=? WHERE id=?''',
             (frame_index + 1, timestamp.pts, timestamp.time_base_num, timestamp.time_base_den,
-             state_json, fingerprint, now(), run_id))
+             state_json, fingerprint, progress_elapsed_seconds, estimated_remaining_seconds, now(), run_id))
     return {'duplicate': False, 'frames_done': frame_index + 1, 'events_inserted': events_inserted}
 
 
@@ -563,10 +569,13 @@ def execute_video_run(library, mission, run_id, detector, *, should_cancel=None,
             previous = VideoTimestamp(run['current_pts'], run['current_time_base_num'],
                 run['current_time_base_den'])
 
+        latest_progress = {}
         def progress(item):
             if item.total_frames is not None and run['total_frames'] is None:
                 set_total_frames(library, mission, run_id, item.total_frames)
                 run['total_frames'] = item.total_frames
+            latest_progress['elapsed_seconds'] = item.elapsed_seconds
+            latest_progress['estimated_remaining_seconds'] = item.estimated_remaining_seconds
             if progress_callback is not None:
                 progress_callback(item)
 
@@ -580,7 +589,9 @@ def execute_video_run(library, mission, run_id, detector, *, should_cancel=None,
                 checkpoint(library, mission, run_id, frame_index=record.frame_index,
                     timestamp=record.timestamp, tracker_state=tracker.state(),
                     closed_tracks=record.closed_tracks, detections=record.detections,
-                    assignments=record.assignments)
+                    assignments=record.assignments,
+                    progress_elapsed_seconds=latest_progress.get('elapsed_seconds'),
+                    estimated_remaining_seconds=latest_progress.get('estimated_remaining_seconds'))
             elif isinstance(record, VideoTrackClosure):
                 transition(library, mission, run_id, 'completed', final_tracks=record.tracks)
         return run_detail(library, mission, run_id)
@@ -634,8 +645,11 @@ def transition(library, mission, run_id, target, *, error=None, final_tracks=())
         finished = now() if target in ('completed', 'failed', 'cancelled') else None
         worker_pid = None if target in ('queued', 'completed', 'failed', 'cancelled') else run['worker_pid']
         cancel_requested = 0 if target == 'queued' else run['cancel_requested']
-        conn.execute('UPDATE video_runs SET status=?,stage=?,updated=?,finished=?,error=?,worker_pid=?,cancel_requested=? WHERE id=?',
-            (target, target, now(), finished, error, worker_pid, cancel_requested, run_id))
+        conn.execute('''UPDATE video_runs SET status=?,stage=?,updated=?,finished=?,error=?,worker_pid=?,cancel_requested=?,
+            progress_elapsed_seconds=CASE WHEN ?='running' THEN NULL ELSE progress_elapsed_seconds END,
+            estimated_remaining_seconds=CASE WHEN ?='running' THEN NULL ELSE estimated_remaining_seconds END
+            WHERE id=?''',
+            (target, target, now(), finished, error, worker_pid, cancel_requested,target,target,run_id))
     return {'run': run_id, 'status': target, 'events_inserted': event_count}
 
 
@@ -668,7 +682,7 @@ def sources(library, mission):
 def runs(library, mission):
     prepare(library, mission)
     with library.connect(mission) as conn:
-        rows = conn.execute('SELECT id,mission_id,source_id,status,stage,total_frames,frames_done,created,updated,finished,error,worker_pid,cancel_requested FROM video_runs WHERE mission_id=? ORDER BY created DESC,id',
+        rows = conn.execute('SELECT id,mission_id,source_id,status,stage,total_frames,frames_done,progress_elapsed_seconds,estimated_remaining_seconds,created,updated,finished,error,worker_pid,cancel_requested FROM video_runs WHERE mission_id=? ORDER BY created DESC,id',
             (mission,)).fetchall()
     return [dict(row) for row in rows]
 

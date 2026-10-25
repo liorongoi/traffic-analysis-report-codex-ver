@@ -70,13 +70,15 @@ class InferenceLedgerTests(unittest.TestCase):
         self.run=create_run(self.lib,self.m,{'model':'explicit-test-double'})
         self.pred=[{'kind':'candidate','label':'car','box':[.1,.1,.2,.2],'score':.7,'prediction_id':'fixture-1','origin':'model'}]
         with self.lib.connect(self.m) as conn:
-            conn.execute('INSERT INTO predictions VALUES (?,?,?,?,?,?)',(self.run,self.image,json.dumps(self.pred),'{}',.1,None))
+            conn.execute('INSERT INTO predictions VALUES (?,?,?,?,?,?)',(self.run,self.image,json.dumps(self.pred),'{}',.8,None))
             conn.execute("UPDATE inference_runs SET status='completed',done=1 WHERE id=?",(self.run,))
     def tearDown(self):self.temp.cleanup()
     def test_model_proposals_appear_without_becoming_reviewed(self):
         row=self.lib.images(self.m)[0]
         self.assertEqual(row['revision'],0);self.assertEqual(row['review_status'],'unreviewed')
         self.assertEqual(json.loads(row['annotations']),self.pred)
+        progress=next(item for item in runs(self.lib,self.m) if item['id']==self.run)
+        self.assertEqual(progress['average_item_seconds'],.8)
 
     def test_run_configuration_includes_immutable_mission_and_source_snapshots(self):
         row=self.lib.images(self.m)[0]

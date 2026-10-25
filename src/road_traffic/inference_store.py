@@ -118,7 +118,9 @@ def create_run(library,mission,config,source_run=None):
 def runs(library,mission):
     prepare(library,mission)
     with library.connect(mission) as conn:
-        return [dict(r) for r in conn.execute('SELECT * FROM inference_runs ORDER BY created DESC')]
+        return [dict(r) for r in conn.execute('''SELECT r.*,
+            (SELECT AVG(p.elapsed) FROM predictions p WHERE p.inference_id=r.id) AS average_item_seconds
+            FROM inference_runs r ORDER BY r.created DESC''')]
 
 
 def latest_run_id(library,mission):
