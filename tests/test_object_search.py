@@ -27,6 +27,13 @@ class ObjectSearchTests(unittest.TestCase):
         self.assertIn('color', spec['interpretation']['unsupported_or_unobservable'])
         self.assertEqual(spec['scope']['run'], 'run-1')
 
+    def test_specification_example_semi_trailer_phrase_is_parsed_without_inventing_subtype_evidence(self):
+        spec = interpret('Find every occurrence of a semi-trailer truck', mission_id='mission')
+        self.assertEqual(spec['categories'], ['truck'])
+        self.assertEqual(spec['required_attributes'], [{'attribute': 'subtype', 'value': 'semi_trailer'}])
+        self.assertIn('fine vehicle subtype', spec['interpretation']['unsupported_or_unobservable'])
+        self.assertTrue(spec['operator_confirmation_required'])
+
     def test_interpretation_binds_the_exact_saved_run_schedule_views_and_regions(self):
         with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as source:
             library = Library(workspace)

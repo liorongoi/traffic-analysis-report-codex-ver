@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _CATEGORIES = {
     'car': ('car', ('car', 'cars', 'sedan', 'sedans', 'מכונית', 'מכוניות')),
-    'truck': ('truck', ('truck', 'trucks', 'pickup', 'pickups', 'lorry', 'lorries', 'משאית', 'משאיות', 'טנדר', 'טנדרים')),
+    'truck': ('truck', ('truck', 'trucks', 'pickup', 'pickups', 'lorry', 'lorries',
+                        'semi-trailer', 'semi-trailers', 'semitrailer', 'semitrailers',
+                        'משאית', 'משאיות', 'טנדר', 'טנדרים')),
     'bus': ('bus', ('bus', 'buses', 'coach', 'coaches', 'אוטובוס', 'אוטובוסים')),
     'motorcycle': ('motorcycle', ('motorcycle', 'motorcycles', 'motorbike', 'motorbikes', 'אופנוע', 'אופנועים')),
     'bicycle': ('bicycle', ('bicycle', 'bicycles', 'bike', 'bikes', 'אופניים')),
@@ -30,8 +32,11 @@ _COLOR_ALIASES = {
     **{word: 'orange' for word in ('כתום', 'כתומה', 'כתומים', 'כתומות')},
 }
 _SUBTYPE_ALIASES = {'pickup': 'pickup', 'pickups': 'pickup', 'טנדר': 'pickup', 'טנדרים': 'pickup',
+                    'semi-trailer': 'semi_trailer', 'semi-trailers': 'semi_trailer',
+                    'semitrailer': 'semi_trailer', 'semitrailers': 'semi_trailer',
                     'sedan': 'sedan', 'sedans': 'sedan', 'suv': 'suv', 'suvs': 'suv', 'van': 'van', 'vans': 'van'}
-_FILLER = {'find', 'show', 'locate', 'search', 'for', 'the', 'a', 'an', 'some', 'any', 'vehicle', 'vehicles',
+_FILLER = {'find', 'show', 'locate', 'search', 'for', 'of', 'the', 'a', 'an', 'some', 'any', 'all', 'every',
+           'each', 'occurrence', 'occurrences', 'vehicle', 'vehicles',
            'object', 'objects', 'that', 'are', 'is', 'with', 'having', 'in', 'at', 'from', 'during', 'captured',
            'image', 'images', 'please', 'and', 'or', 'not', 'without', 'except', 'exclude', 'excluding',
            'on', 'between', 'to', 'through', 'near', 'by', 'יום', 'ביום', 'בימי', 'בין', 'עד', 'ל',
