@@ -60,7 +60,7 @@ The Windows setup EXE has **not** been built or tested. It requires a complete W
 
 ## Requirements and design
 
-The verbatim request is in `docs/requirements-source.txt`. Design documents 01–08 describe the intended complete product; [current verification status](docs/09-verification.md) and [vehicle detection evidence](docs/10-vehicle-detection.md) record what has actually been implemented and tested. The [requirements fit review](docs/11-requirements-fit-review.md) summarizes current coverage and the remaining gaps.
+The verbatim request is in `docs/requirements-source.txt`. Design documents 01–08 describe the intended complete product; [current verification status](docs/09-verification.md) and [vehicle detection evidence](docs/10-vehicle-detection.md) record what has actually been implemented and tested. The [current section-by-section requirements traceability matrix](docs/12-requirements-traceability.md) links requirements to evidence and open gates; the [requirements fit review](docs/11-requirements-fit-review.md) summarizes current coverage and the remaining gaps.
 
 ## Night separation and correction learning
 

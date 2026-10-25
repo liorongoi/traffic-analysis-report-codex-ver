@@ -2,7 +2,7 @@
 
 The full source request is requirements-source.txt, preserved verbatim. This table groups requirements without removing their source detail. Status: F = first foundation increment; P = planned, not implemented. Test identifiers are acceptance obligations; only executed tests count as evidence.
 
-This table is the initial foundation-stage mapping, not a current completeness claim. For the current state of each requirement area, use [the requirements fit review](11-requirements-fit-review.md); for current vehicle/night inference evidence, use [document 10](10-vehicle-detection.md). Later implementation evidence supersedes foundation-era statuses where they differ.
+This table is the initial foundation-stage mapping, not a current completeness claim. Use the [current section-by-section requirements traceability matrix](12-requirements-traceability.md) and [requirements fit review](11-requirements-fit-review.md) for current status; for current vehicle/night inference evidence, use [document 10](10-vehicle-detection.md). Later implementation evidence supersedes foundation-era statuses where they differ.
 
 | ID | Requirement | Status | Verification |
 |---|---|---|---|
