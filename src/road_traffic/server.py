@@ -247,6 +247,11 @@ def serve(workspace, web, port=8765, open_browser=False):
                         result=library.assign_views(data['mission'],data.get('image_ids'),data.get('view_id'),data['operator'])
                     else:
                         raise ValueError('Choose create, rename, assign, or assign_many action')
+                elif self.path == '/api/views/proposals':
+                    from .view_grouping import propose
+                    if library.settings(data['mission'])['input_type'] != 'images':
+                        raise ValueError('Camera-view proposals require a still-image mission')
+                    result = propose(library, data['mission'])
                 elif self.path == '/api/view-regions':
                     action=data.get('action')
                     if action == 'create':

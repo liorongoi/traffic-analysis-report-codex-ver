@@ -70,6 +70,8 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="hardwareReport"',page)
             self.assertIn('id="objectSearchQuery"',page)
             self.assertIn('id="confirmObjectSearch"',page)
+            self.assertIn('id="proposeViews"',page)
+            self.assertIn('id="viewProposals"',page)
             with self.request('/api/hardware') as response:
                 hardware=json.load(response)
             self.assertIn('cpu',hardware)
@@ -143,6 +145,20 @@ class HttpTests(unittest.TestCase):
             result=json.load(response)
         self.assertEqual(result['matched_images'],0)
         self.assertEqual(result['matched_objects'],0)
+
+    def test_view_proposals_route_is_local_and_still_image_scoped(self):
+        with self.request('/api/missions',{'name':'View proposal fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        with self.request('/api/views/proposals',{'mission':mission}) as response:
+            result=json.load(response)
+        self.assertEqual(result['available_images'],0)
+        self.assertEqual(result['groups'],[])
+        with self.request('/api/missions',{'name':'Video view fixture','country':'Israel','zone':'Asia/Jerusalem',
+                'input_type':'videos','analysis_mode':'video_traffic'}) as response:
+            video_mission=json.load(response)['id']
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            self.request('/api/views/proposals',{'mission':video_mission})
+        self.assertEqual(exc.exception.code,400)
 
     def test_scan_window_api_round_trip_and_validation(self):
         with self.request('/api/missions',{'name':'Schedule fixture','country':'Latvia','zone':'Europe/Riga'}) as response:
