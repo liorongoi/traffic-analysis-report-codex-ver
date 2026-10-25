@@ -12,6 +12,15 @@
 
 The current review increment uses a local COCO-pretrained YOLOX-S ONNX pack from the official OpenCV Zoo distribution; see [vehicle detection evidence](10-vehicle-detection.md) for version, hash, license notes, and functional checks. This pack has not been accepted as an accuracy benchmark or production model. The candidates below remain research starting points, not approved datasets or dependencies. Iran data does not validate Lebanon/Israel/Latvia OCR. Company-provided authorized camera samples and country-specific labels are essential. Do not invoke hosted Roboflow or any online production API.
 
+## Video integration candidates
+
+- [Open Skoltech Car (OS:Car)](https://newpavlov.github.io/oscar-website/) documents CC BY 4.0 data, frame files named with Unix timestamps in microseconds, and assembled WebM sequences. The site says only a small portion is uploaded. This moving-car winter-road dataset may support a parser/pipeline smoke fixture after inspection of an actually available sequence and verification of frame-to-UTC alignment; it does not satisfy fixed-camera acceptance.
+- [Zenseact Open Dataset (ZOD)](https://zod.zenseact.com/) offers UTC GNSS/IMU with sampled dashcam images under CC BY-SA 4.0, but access requires approval and frame-to-time alignment must be verified.
+- [AI City 2019](https://www.aicitychallenge.org/2019-data-sets/) better matches fixed traffic cameras and supplies relative synchronization offsets, but requires a participation agreement and does not establish absolute UTC.
+- The [Zenodo traffic-evaluation videos](https://zenodo.org/records/14041920) have no declared license or timezone on the record and are therefore not cleared for use.
+
+No candidate has been acquired or accepted. Do not include media in the repository until its exact terms, provenance, and UTC alignment are confirmed.
+
 ## Selection and evidence
 
 Compare a simple baseline with compatible pretrained vehicle/small-object detectors, a light/background branch, tracking, and country-specific OCR. Record versions/commit/weight SHA/license/taxonomy/input needs/CPU and GPU memory. Choose only after applicable rights and measured evidence. A conversation model interprets queries; it does not produce ground-truth pixel detections.
