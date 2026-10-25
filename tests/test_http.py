@@ -68,6 +68,9 @@ class HttpTests(unittest.TestCase):
         self.assertIn('function resolveTimezoneSearch()',script)
         self.assertIn("fetch('/api/timezones')",script)
         self.assertIn("fetch('/timezone-cities.json')",script)
+        self.assertIn("fetch('/timezone-zones.json')",script)
+        self.assertIn('function chooseTimezoneLocation(country,zone,lon,lat)',script)
+        self.assertIn('timezone boundary',script.lower())
         self.assertIn('function timezoneCityMatches(query)',script)
         self.assertIn('function applyTimezoneCity(city)',script)
         self.assertNotIn('Continuous video monitoring is not implemented.',script)
@@ -86,11 +89,15 @@ class HttpTests(unittest.TestCase):
         with self.request('/timezone-countries.json') as response:
             self.assertEqual(response.status,200)
             self.assertIn('application/json',response.headers['Content-Type'])
-            self.assertEqual(len(json.load(response)['features']),5)
+            self.assertEqual(len(json.load(response)['features']),239)
+        with self.request('/timezone-zones.json') as response:
+            self.assertEqual(response.status,200)
+            self.assertIn('application/json',response.headers['Content-Type'])
+            self.assertEqual(len(json.load(response)['features']),419)
         with self.request('/timezone-cities.json') as response:
             self.assertEqual(response.status,200)
             self.assertIn('application/json',response.headers['Content-Type'])
-            self.assertEqual(len(json.load(response)['cities']),670)
+            self.assertEqual(len(json.load(response)['cities']),34188)
         with self.request('/') as response:
             page=response.read().decode('utf-8')
             self.assertIn('id="lanLogout"',page)

@@ -353,6 +353,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     return self.reply(200, ('\ufeff'+stream.getvalue()).encode('utf-8'), 'text/csv; charset=utf-8')
                 files = {'/':'index.html','/app.js':'app.js','/style.css':'style.css',
                     '/timezone-countries.json':'data/timezone-countries.json',
+                    '/timezone-zones.json':'data/timezone-zones.json',
                     '/timezone-cities.json':'data/timezone-cities.json'}
                 if parsed.path in files:
                     path = Path(web) / files[parsed.path]
