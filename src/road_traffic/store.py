@@ -137,6 +137,7 @@ class Library:
             CREATE TABLE IF NOT EXISTS views(
                 id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
                 name TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL,
+                merged_into TEXT REFERENCES views(id),
                 UNIQUE(mission_id,name));
             CREATE TABLE IF NOT EXISTS image_view_history(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
@@ -169,6 +170,12 @@ class Library:
             CREATE TRIGGER IF NOT EXISTS immutable_view_region_history_d BEFORE DELETE ON view_region_history
                 BEGIN SELECT RAISE(ABORT,'view region history is immutable'); END;
         ''')
+        view_columns={row['name'] for row in conn.execute('PRAGMA table_info(views)')}
+        if 'merged_into' not in view_columns:
+            conn.execute('ALTER TABLE views ADD COLUMN merged_into TEXT REFERENCES views(id)')
+        conn.execute('''CREATE TRIGGER IF NOT EXISTS one_way_view_merge BEFORE UPDATE OF merged_into ON views
+            WHEN OLD.merged_into IS NOT NULL OR NEW.merged_into IS NULL
+            BEGIN SELECT RAISE(ABORT,'camera view merge history cannot be reversed'); END''')
         return conn
 
     def create(self, name, country, zone, settings=None):
@@ -385,9 +392,10 @@ class Library:
                     SELECT h.view_id,COUNT(*) image_count,MIN(i.name) representative_name,MIN(i.id) representative_image_id
                     FROM latest l JOIN image_view_history h ON h.image_id=l.image_id AND h.revision=l.revision
                     JOIN images i ON i.id=h.image_id WHERE h.view_id IS NOT NULL GROUP BY h.view_id)
-                SELECT v.id,v.name,v.created,v.updated,COALESCE(c.image_count,0) image_count,
-                    c.representative_name,c.representative_image_id
+                SELECT v.id,v.name,v.created,v.updated,v.merged_into,target.name merged_into_name,
+                    COALESCE(c.image_count,0) image_count,c.representative_name,c.representative_image_id
                 FROM views v LEFT JOIN counts c ON c.view_id=v.id
+                LEFT JOIN views target ON target.id=v.merged_into AND target.mission_id=v.mission_id
                 WHERE v.mission_id=? ORDER BY v.name COLLATE NOCASE''',(mission,mission)).fetchall()
             return [dict(row) for row in rows]
 
@@ -409,7 +417,8 @@ class Library:
         with self.connect(mission) as conn:
             if conn.execute('SELECT 1 FROM views WHERE mission_id=? AND name=? COLLATE NOCASE',(mission,name)).fetchone():
                 raise ValueError('A camera view with this name already exists')
-            conn.execute('INSERT INTO views VALUES (?,?,?,?,?)',(identifier,mission,name,created,created))
+            conn.execute('INSERT INTO views(id,mission_id,name,created,updated) VALUES (?,?,?,?,?)',
+                (identifier,mission,name,created,created))
             conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
                 (mission,identifier,'created',json.dumps({'name':name},ensure_ascii=False),operator,created))
         return {'id':identifier,'name':name,'created':created,'updated':created}
@@ -420,8 +429,9 @@ class Library:
         if not 1 <= len(name) <= 80:raise ValueError('View name must contain 1–80 characters')
         if not 1 <= len(operator) <= 120:raise ValueError('Operator is required for view history')
         with self.connect(mission) as conn:
-            current=conn.execute('SELECT name FROM views WHERE id=? AND mission_id=?',(identifier,mission)).fetchone()
+            current=conn.execute('SELECT name,merged_into FROM views WHERE id=? AND mission_id=?',(identifier,mission)).fetchone()
             if not current:raise ValueError('Camera view not found')
+            if current['merged_into']:raise ValueError('A merged camera view is retained for history and cannot be renamed')
             if current['name']==name:return {'id':identifier,'name':name,'unchanged':True}
             if conn.execute('SELECT 1 FROM views WHERE mission_id=? AND id<>? AND name=? COLLATE NOCASE',
                 (mission,identifier,name)).fetchone():
@@ -431,13 +441,53 @@ class Library:
                 (mission,identifier,'renamed',json.dumps({'before':current['name'],'after':name},ensure_ascii=False),operator,now()))
         return {'id':identifier,'name':name}
 
+    def merge_views(self, mission, source_id, target_id, operator):
+        """Move current source-view assignments to target and retain a merge audit."""
+        operator=operator.strip() if isinstance(operator,str) else ''
+        if not 1 <= len(operator) <= 120:raise ValueError('Operator is required for view history')
+        if source_id==target_id:raise ValueError('Choose two different camera views')
+        with self.connect(mission) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            source=conn.execute('SELECT * FROM views WHERE id=? AND mission_id=?',(source_id,mission)).fetchone()
+            target=conn.execute('SELECT * FROM views WHERE id=? AND mission_id=?',(target_id,mission)).fetchone()
+            if not source or not target:raise ValueError('Both camera views must belong to this mission')
+            if source['merged_into']:raise ValueError('This source camera view was already merged')
+            if target['merged_into']:raise ValueError('Choose an active target camera view')
+            image_ids=[row['image_id'] for row in conn.execute('''SELECT h.image_id
+                FROM image_view_history h JOIN (
+                  SELECT image_id,MAX(revision) revision FROM image_view_history WHERE mission_id=? GROUP BY image_id
+                ) latest ON latest.image_id=h.image_id AND latest.revision=h.revision
+                WHERE h.mission_id=? AND h.view_id=?''',(mission,mission,source_id))]
+            created=now()
+            for image_id in image_ids:
+                revision=conn.execute('SELECT COALESCE(MAX(revision),0)+1 FROM image_view_history WHERE mission_id=? AND image_id=?',
+                    (mission,image_id)).fetchone()[0]
+                conn.execute('''INSERT INTO image_view_history(mission_id,image_id,view_id,revision,operator,created)
+                    VALUES (?,?,?,?,?,?)''',(mission,image_id,target_id,revision,operator,created))
+                conn.execute('''INSERT INTO view_events(mission_id,view_id,action,details,operator,created)
+                    VALUES (?,?,?,?,?,?)''',(mission,target_id,'image_assigned',json.dumps({
+                        'image_id':image_id,'revision':revision,'reason':'view_merge','source_view_id':source_id},
+                        ensure_ascii=False,sort_keys=True),operator,created))
+            details=json.dumps({'source_view_id':source_id,'source_name':source['name'],
+                'target_view_id':target_id,'target_name':target['name'],'moved_images':len(image_ids),
+                'source_regions_retained':True,'target_regions_apply_to_reassigned_images':True},
+                ensure_ascii=False,sort_keys=True)
+            conn.execute('UPDATE views SET merged_into=?,updated=? WHERE id=? AND mission_id=?',
+                (target_id,created,source_id,mission))
+            conn.execute('''INSERT INTO view_events(mission_id,view_id,action,details,operator,created)
+                VALUES (?,?,?,?,?,?)''',(mission,source_id,'merged_into',details,operator,created))
+            conn.execute('''INSERT INTO view_events(mission_id,view_id,action,details,operator,created)
+                VALUES (?,?,?,?,?,?)''',(mission,target_id,'merged_from',details,operator,created))
+        return {'source_view_id':source_id,'target_view_id':target_id,'moved_images':len(image_ids),
+            'source_regions_retained':True,'target_regions_apply_to_reassigned_images':True}
+
     def assign_view(self, mission, image, view_id, operator):
         operator=operator.strip() if isinstance(operator,str) else ''
         if not 1 <= len(operator) <= 120:raise ValueError('Operator is required for view history')
         with self.connect(mission) as conn:
             if not conn.execute('SELECT 1 FROM images WHERE id=?',(image,)).fetchone():
                 raise ValueError('Image not found in this mission')
-            if view_id and not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=?',(view_id,mission)).fetchone():
+            if view_id and not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=? AND merged_into IS NULL',(view_id,mission)).fetchone():
                 raise ValueError('Camera view not found in this mission')
             previous=conn.execute('SELECT view_id FROM image_view_history WHERE image_id=? ORDER BY revision DESC LIMIT 1',(image,)).fetchone()
             if previous and previous['view_id']==view_id:
@@ -461,7 +511,7 @@ class Library:
             raise ValueError('Image IDs must be non-empty strings')
         images=list(dict.fromkeys(images))
         with self.connect(mission) as conn:
-            if view_id and not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=?',(view_id,mission)).fetchone():
+            if view_id and not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=? AND merged_into IS NULL',(view_id,mission)).fetchone():
                 raise ValueError('Camera view not found in this mission')
             if not conn.execute('SELECT 1 FROM mission WHERE id=?',(mission,)).fetchone():
                 raise ValueError('Mission not found')
@@ -509,7 +559,7 @@ class Library:
         if not 1<=len(operator)<=120:raise ValueError('Operator is required for region history')
         key=str(uuid.uuid4());created=now()
         with self.connect(mission) as conn:
-            if not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=?',(view_id,mission)).fetchone():
+            if not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=? AND merged_into IS NULL',(view_id,mission)).fetchone():
                 raise ValueError('Camera view not found in this mission')
             conn.execute('''INSERT INTO view_region_history
                 (mission_id,region_key,view_id,revision,action,kind,polygon,operator,created) VALUES (?,?,?,?,?,?,?,?,?)''',
@@ -525,7 +575,8 @@ class Library:
         if kind not in ('include','exclude'):raise ValueError('Region kind must be include or exclude')
         if not 1<=len(operator)<=120:raise ValueError('Operator is required for region history')
         with self.connect(mission) as conn:
-            previous=conn.execute('SELECT * FROM view_region_history WHERE mission_id=? AND region_key=? ORDER BY revision DESC LIMIT 1',
+            previous=conn.execute('''SELECT h.* FROM view_region_history h JOIN views v ON v.id=h.view_id
+                WHERE h.mission_id=? AND h.region_key=? AND v.merged_into IS NULL ORDER BY h.revision DESC LIMIT 1''',
                 (mission,region_key)).fetchone()
             if not previous or previous['action']=='delete':raise ValueError('View region not found')
             revision=previous['revision']+1;created=now()
@@ -540,7 +591,8 @@ class Library:
         operator=operator.strip() if isinstance(operator,str) else ''
         if not 1<=len(operator)<=120:raise ValueError('Operator is required for region history')
         with self.connect(mission) as conn:
-            previous=conn.execute('SELECT * FROM view_region_history WHERE mission_id=? AND region_key=? ORDER BY revision DESC LIMIT 1',
+            previous=conn.execute('''SELECT h.* FROM view_region_history h JOIN views v ON v.id=h.view_id
+                WHERE h.mission_id=? AND h.region_key=? AND v.merged_into IS NULL ORDER BY h.revision DESC LIMIT 1''',
                 (mission,region_key)).fetchone()
             if not previous or previous['action']=='delete':raise ValueError('View region not found')
             revision=previous['revision']+1;created=now()

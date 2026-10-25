@@ -64,6 +64,7 @@ class HttpTests(unittest.TestCase):
         self.assertIn('candidateValidation',script)
         self.assertIn('correct_timing',script)
         self.assertIn('videoMetadataUnavailable',script)
+        self.assertIn("action:'merge'",script)
         with self.request('/timezone-countries.json') as response:
             self.assertEqual(response.status,200)
             self.assertIn('application/json',response.headers['Content-Type'])
@@ -78,6 +79,7 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="videoEventTableExports"',page)
             self.assertIn('id="videoPlayer"',page)
             self.assertIn('id="videoMediaMetadata"',page)
+            self.assertIn('id="mergeViewButton"',page)
             self.assertIn('id="videoClipExports"',page)
             self.assertIn('id="hardwareReport"',page)
             self.assertIn('id="learningReport"',page)
@@ -310,6 +312,33 @@ class HttpTests(unittest.TestCase):
         for row in images:
             with self.request('/api/view-history?mission='+mission+'&image='+row['id']) as response:
                 self.assertEqual(json.load(response)[0]['view_name'],'Approach A')
+
+    def test_camera_view_merge_api_archives_source_and_keeps_assignment_audit(self):
+        from road_traffic.store import Library
+        with self.request('/api/missions',{'name':'Merge view fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        lib=Library(self.tmp.name)
+        with tempfile.TemporaryDirectory() as source:
+            write_test_image(Path(source)/'17052026-1604-view-a.jpg')
+            write_test_image(Path(source)/'17052026-1605-view-b.jpg',(55,85,125))
+            lib.import_folder(mission,source,'camera')
+        images=lib.images(mission)
+        views=[]
+        for name in ('North','South'):
+            with self.request('/api/views',{'mission':mission,'action':'create','name':name,'operator':'Operator'}) as response:
+                views.append(json.load(response))
+        with self.request('/api/views',{'mission':mission,'action':'assign','image_id':images[0]['id'],
+            'view_id':views[0]['id'],'operator':'Operator'}) as response:json.load(response)
+        with self.request('/api/views',{'mission':mission,'action':'merge','source_id':views[0]['id'],
+            'target_id':views[1]['id'],'operator':'Reviewer'}) as response:
+            self.assertEqual(json.load(response)['moved_images'],1)
+        with self.request('/api/views?mission='+mission) as response:
+            groups={item['id']:item for item in json.load(response)}
+        self.assertEqual(groups[views[0]['id']]['merged_into'],views[1]['id'])
+        self.assertEqual(groups[views[1]['id']]['image_count'],1)
+        with self.request('/api/view-history?mission='+mission+'&image='+images[0]['id']) as response:
+            history=json.load(response)
+        self.assertEqual([item['view_id'] for item in history],[views[0]['id'],views[1]['id']])
 
     def test_view_region_api_round_trip_and_append_only_history(self):
         from road_traffic.store import Library
