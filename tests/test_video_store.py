@@ -7,11 +7,16 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from fractions import Fraction
+
+import av
+import numpy as np
+from PIL import Image
 
 from road_traffic.store import Library
 from road_traffic.tracking import TrackerPolicy, VideoTrackManager
 from road_traffic.video_store import (checkpoint, create_run, events, register_video,
-    execute_video_run, review_event, run_detail, source_path, transition)
+    execute_video_run, event_thumbnail, review_event, run_detail, source_path, transition)
 from road_traffic.video_timeline import VideoTimestamp
 
 
@@ -134,6 +139,36 @@ class VideoStoreTests(unittest.TestCase):
         with self.library.connect(self.mission) as conn:
             with self.assertRaisesRegex(sqlite3.IntegrityError, 'video events are immutable'):
                 conn.execute("UPDATE video_events SET labels='[]' WHERE id=?", (item['id'],))
+
+    def test_event_preview_uses_verified_frame_and_marks_saved_vehicle_box(self):
+        with av.open(str(self.video_file), mode='w', format='matroska') as output:
+            stream = output.add_stream('mpeg4', rate=25)
+            stream.width, stream.height = 64, 48
+            stream.pix_fmt = 'yuv420p'
+            stream.time_base = Fraction(1, 1000)
+            for pts, value in ((0, 20), (40, 80), (160, 140)):
+                frame = av.VideoFrame.from_ndarray(np.full((48, 64, 3), value, dtype=np.uint8), format='rgb24')
+                frame.pts = pts
+                frame.time_base = Fraction(1, 1000)
+                for packet in stream.encode(frame):
+                    output.mux(packet)
+            for packet in stream.encode():
+                output.mux(packet)
+        source = register_video(self.library, self.mission, 'clip.mkv')
+        run = create_run(self.library, self.mission, source['id'], self.config())
+        transition(self.library, self.mission, run['id'], 'running')
+        tracker = VideoTrackManager(TrackerPolicy(max_gap_seconds=Fraction(1, 2),
+            minimum_iou=.2, max_center_distance=.15, association_margin=.05), run_id=run['id'])
+        tracker.update(VideoTimestamp(160, 1, 1000), [
+            {'label': 'car', 'box': [.2, .25, .3, .4]}])
+        transition(self.library, self.mission, run['id'], 'completed', final_tracks=tracker.finish())
+        saved = events(self.library, self.mission, run['id'])
+        self.assertEqual(saved[0]['representative_box'], [.2, .25, .3, .4])
+        preview = event_thumbnail(self.library, self.mission, saved[0]['id'])
+        self.assertTrue(preview.startswith(b'\xff\xd8'))
+        from io import BytesIO
+        with Image.open(BytesIO(preview)) as image:
+            self.assertEqual(image.size, (64, 48))
 
     def test_origin_requires_provenance_and_utc_is_never_guessed(self):
         with self.assertRaisesRegex(ValueError, 'provenance is required'):

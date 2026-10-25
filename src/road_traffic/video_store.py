@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fractions import Fraction
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -43,6 +44,7 @@ def schema(conn):
       last_offset_num INTEGER NOT NULL,last_offset_den INTEGER NOT NULL,
       first_utc TEXT,last_utc TEXT,labels TEXT NOT NULL,observation_count INTEGER NOT NULL,
       association_uncertain INTEGER NOT NULL CHECK(association_uncertain IN (0,1)),
+      representative_box TEXT,
       uncertainty_reasons TEXT NOT NULL,created TEXT NOT NULL,UNIQUE(run_id,track_id));
     CREATE INDEX IF NOT EXISTS video_events_run_time_idx ON video_events(run_id,first_offset_num,first_offset_den,id);
     CREATE TABLE IF NOT EXISTS video_event_reviews(
@@ -82,6 +84,9 @@ def schema(conn):
         conn.execute('ALTER TABLE video_runs ADD COLUMN worker_pid INTEGER')
     if 'cancel_requested' not in columns:
         conn.execute('ALTER TABLE video_runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0')
+    event_columns = {row['name'] for row in conn.execute('PRAGMA table_info(video_events)')}
+    if 'representative_box' not in event_columns:
+        conn.execute('ALTER TABLE video_events ADD COLUMN representative_box TEXT')
 
 
 def prepare(library, mission):
@@ -302,6 +307,7 @@ def _track_payload(track):
         'first_time_base_den': track.first_time_base_den, 'last_pts': track.last_pts,
         'last_time_base_num': track.last_time_base_num,
         'last_time_base_den': track.last_time_base_den, 'labels': list(track.labels),
+        'last_box': list(track.last_box),
         'observation_count': track.observation_count,
         'association_uncertain': track.association_uncertain,
         'uncertainty_reasons': list(track.uncertainty_reasons)}
@@ -341,13 +347,14 @@ def _insert_closed_tracks(conn, mission, run_id, source, tracks, created):
         cursor = conn.execute('''INSERT OR IGNORE INTO video_events(id,mission_id,run_id,source_id,track_id,
             first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,last_time_base_den,
             first_offset_num,first_offset_den,last_offset_num,last_offset_den,first_utc,last_utc,labels,
-            observation_count,association_uncertain,uncertainty_reasons,created)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            observation_count,association_uncertain,representative_box,uncertainty_reasons,created)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (event_id, mission, run_id, source['id'], track.track_id, first.pts, first.time_base_num,
              first.time_base_den, last.pts, last.time_base_num, last.time_base_den,
              first_offset.numerator, first_offset.denominator, last_offset.numerator, last_offset.denominator,
              first_utc, last_utc, _json(list(track.labels)), track.observation_count,
-             int(track.association_uncertain), _json(list(track.uncertainty_reasons)), created))
+             int(track.association_uncertain), _json(list(track.last_box)),
+             _json(list(track.uncertainty_reasons)), created))
         inserted += cursor.rowcount
     return inserted
 
@@ -609,12 +616,71 @@ def events(library, mission, run_id, *, limit=100, offset=0):
     result = []
     for row in rows:
         item = dict(row)
-        for key in ('labels', 'uncertainty_reasons', 'payload'):
+        for key in ('labels', 'uncertainty_reasons', 'payload', 'representative_box'):
             item[key] = json.loads(item[key]) if item[key] is not None else None
         item['review_status'] = {'accept': 'accepted', 'reject': 'rejected',
             'reopen': 'pending', 'correct_class': 'corrected', 'mark_duplicate': 'duplicate'}.get(item['action'], 'pending')
         result.append(item)
     return sorted(result, key=lambda item: (Fraction(item['first_offset_num'], item['first_offset_den']), item['id']))
+
+
+def event_thumbnail(library, mission, event_id):
+    """Render a bounded JPEG preview from the event's verified source frame."""
+    prepare(library, mission)
+    with library.connect(mission) as conn:
+        event = conn.execute('''SELECT source_id,last_pts,last_time_base_num,last_time_base_den,
+            representative_box FROM video_events WHERE id=? AND mission_id=?''',
+            (event_id, mission)).fetchone()
+    if not event:
+        raise ValueError('Video event not found in this mission')
+    if not event['representative_box']:
+        raise ValueError('This saved event predates frame preview metadata')
+    box = json.loads(event['representative_box'])
+    if (not isinstance(box, list) or len(box) != 4 or
+            any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+                for value in box)):
+        raise ValueError('Video event preview geometry is invalid')
+    import io
+    import av
+    from PIL import Image, ImageDraw
+    x, y, box_width, box_height = box
+    if x < 0 or y < 0 or box_width <= 0 or box_height <= 0 or x + box_width > 1 or y + box_height > 1:
+        raise ValueError('Video event preview geometry is outside normalized image bounds')
+
+    path = source_path(library, mission, event['source_id'])
+    target = Fraction(event['last_pts'] * event['last_time_base_num'], event['last_time_base_den'])
+    with av.open(str(path), mode='r') as container:
+        streams = container.streams.video
+        if not streams:
+            raise ValueError('Stored video source has no video stream')
+        stream = streams[0]
+        stream_time_base = Fraction(stream.time_base)
+        seek_pts = target / stream_time_base
+        container.seek(seek_pts.numerator // seek_pts.denominator, stream=stream, backward=True)
+        selected = None
+        for frame in container.decode(stream):
+            if frame.pts is None:
+                continue
+            frame_time = Fraction(frame.pts) * Fraction(frame.time_base or stream.time_base)
+            if frame_time == target:
+                selected = frame
+                break
+            if frame_time > target:
+                break
+    if selected is None:
+        raise ValueError('Could not seek to the saved event frame')
+    image = Image.fromarray(selected.to_ndarray(format='rgb24'), mode='RGB')
+    width, height = image.size
+    left = max(0, min(width - 1, round(x * width)))
+    top = max(0, min(height - 1, round(y * height)))
+    right = max(left + 1, min(width - 1, round((x + box_width) * width)))
+    bottom = max(top + 1, min(height - 1, round((y + box_height) * height)))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((left, top, right, bottom), outline=(255, 48, 48), width=max(2, round(min(width, height) / 120)))
+    image.thumbnail((800, 450), Image.Resampling.LANCZOS)
+    output = io.BytesIO()
+    image.save(output, format='JPEG', quality=82, optimize=True)
+    return output.getvalue()
 
 
 def review_event(library, mission, event_id, expected_revision, operator, action, payload=None):

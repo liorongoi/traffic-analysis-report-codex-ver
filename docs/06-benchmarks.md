@@ -10,7 +10,7 @@
 | IR-LPR https://github.com/mut-deep/IR-LPR | Iranian plate images/characters | Verify underlying data/weight rights separately from repository code |
 | ExDark https://github.com/cs-chan/Exclusively-Dark-Image-Dataset | Supplementary low-light images | Current terms require written commercial permission; third-party photo rights separate |
 
-The current review increment uses a local COCO-pretrained YOLOX-S ONNX pack from the official OpenCV Zoo distribution; see [vehicle detection evidence](10-vehicle-detection.md) for version, hash, license notes, and functional checks. This pack has not been accepted as an accuracy benchmark or production model. The candidates below remain research starting points, not approved datasets or dependencies. Iran data does not validate Lebanon/Israel/Latvia OCR. Company-provided authorized camera samples and country-specific labels are essential. Do not invoke hosted Roboflow or any online production API.
+The current review increment uses a local COCO-pretrained YOLOX-S ONNX pack from the official OpenCV Zoo distribution; see [vehicle detection evidence](10-vehicle-detection.md) for version, hash, license notes, and functional checks. This pack has not been accepted as an accuracy benchmark or production model. The candidates below remain research starting points, not approved datasets or dependencies. Data from Iran does not validate plate-region localization in Lebanon, Israel, or Latvia. Authorized camera samples and country-specific region labels are essential. Do not invoke hosted Roboflow or any online production API.
 
 ## Video integration candidates
 
@@ -23,7 +23,7 @@ No candidate has been acquired or accepted. Do not include media in the reposito
 
 ## Selection and evidence
 
-Compare a simple baseline with compatible pretrained vehicle/small-object detectors, a light/background branch, tracking, and country-specific OCR. Record versions/commit/weight SHA/license/taxonomy/input needs/CPU and GPU memory. Choose only after applicable rights and measured evidence. A conversation model interprets queries; it does not produce ground-truth pixel detections.
+Compare a simple baseline with compatible pretrained vehicle/small-object detectors, a light/background branch, tracking, and plate-region localization for Iran, Lebanon, Israel, and Latvia. Plate text recognition is excluded by the operator's scope amendment. Record versions/commit/weight SHA/license/taxonomy/input needs/CPU and GPU memory. Choose only after applicable rights and measured evidence. A conversation model interprets queries; it does not produce ground-truth pixel detections.
 
 Frozen dataset manifests: source URL, retrieval date, license decision, file checksums, split IDs, camera/view/time groups, label schema and transformation versions. Keep train/validation/test disjoint by related captures and recordings. Background warm-up rules must be declared; no hidden use of future test frames or labels.
 

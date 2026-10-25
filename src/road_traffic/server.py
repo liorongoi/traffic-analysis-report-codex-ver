@@ -157,6 +157,9 @@ def serve(workspace, web, port=8765, open_browser=False):
                 if parsed.path == '/api/video/events':
                     return self.reply(200,video_store.events(library,query['mission'][0],query['run'][0],
                         limit=int(query.get('limit',['100'])[0]),offset=int(query.get('offset',['0'])[0])))
+                if parsed.path == '/api/video/event-thumbnail':
+                    return self.reply(200,video_store.event_thumbnail(library,query['mission'][0],
+                        query['event_id'][0]),'image/jpeg')
                 if parsed.path == '/api/exports':
                     return self.reply(200,library.exports(query['mission'][0]))
                 if parsed.path == '/api/bulk-approval/preview':
