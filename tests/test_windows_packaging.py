@@ -114,6 +114,8 @@ class WindowsPackagingTests(unittest.TestCase):
             lock = ROOT / 'requirements-inference-windows.lock.txt'
             (project / lock.name).write_bytes(lock.read_bytes())
             (project / 'web' / 'app.js').write_text('web app', encoding='utf-8')
+            (project / 'web' / 'data').mkdir()
+            (project / 'web' / 'data' / 'timezone-cities.json').write_text('{"cities":[]}', encoding='utf-8')
             (project / 'docs' / '07-deployment.md').write_text('deployment notes', encoding='utf-8')
             self.fake_model_pack(project / 'model-packs' / 'yolox-s', 'vehicle')
             self.fake_model_pack(project / 'model-packs' / 'license-plate-yolox', 'plate')
@@ -123,7 +125,7 @@ class WindowsPackagingTests(unittest.TestCase):
             expected = ('scripts/run-inference.py', 'scripts/run-video-analysis.py',
                 'model-packs/license-plate-yolox/plate_yolox_tiny_640.onnx',
                 'model-packs/license-plate-yolox/NOTICE', 'web/app.js', 'docs/07-deployment.md',
-                'requirements-inference-windows.lock.txt')
+                'requirements-inference-windows.lock.txt', 'web/data/timezone-cities.json')
             for relative in expected:
                 self.assertTrue((staged / relative).is_file(), relative)
             manifest = json.loads((staged / 'payload-manifest.json').read_text(encoding='utf-8'))

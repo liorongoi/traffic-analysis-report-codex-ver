@@ -67,6 +67,9 @@ class HttpTests(unittest.TestCase):
         self.assertIn("night_head_id=choice==='@promoted'?learningInfo?.governance?.promoted_candidate_id",script)
         self.assertIn('function resolveTimezoneSearch()',script)
         self.assertIn("fetch('/api/timezones')",script)
+        self.assertIn("fetch('/timezone-cities.json')",script)
+        self.assertIn('function timezoneCityMatches(query)',script)
+        self.assertIn('function applyTimezoneCity(city)',script)
         self.assertNotIn('Continuous video monitoring is not implemented.',script)
         self.assertIn('Continuous video monitoring can be enabled after an explicit detector and tracker policy is saved.',script)
         self.assertIn('correct_timing',script)
@@ -84,6 +87,10 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(response.status,200)
             self.assertIn('application/json',response.headers['Content-Type'])
             self.assertEqual(len(json.load(response)['features']),5)
+        with self.request('/timezone-cities.json') as response:
+            self.assertEqual(response.status,200)
+            self.assertIn('application/json',response.headers['Content-Type'])
+            self.assertEqual(len(json.load(response)['cities']),670)
         with self.request('/') as response:
             page=response.read().decode('utf-8')
             self.assertIn('id="lanLogout"',page)

@@ -352,7 +352,8 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                             ("'"+row.get('operator','')) if row.get('operator','').lstrip().startswith(('=','+','-','@')) else row.get('operator','')])
                     return self.reply(200, ('\ufeff'+stream.getvalue()).encode('utf-8'), 'text/csv; charset=utf-8')
                 files = {'/':'index.html','/app.js':'app.js','/style.css':'style.css',
-                    '/timezone-countries.json':'data/timezone-countries.json'}
+                    '/timezone-countries.json':'data/timezone-countries.json',
+                    '/timezone-cities.json':'data/timezone-cities.json'}
                 if parsed.path in files:
                     path = Path(web) / files[parsed.path]
                     return self.reply(200, path.read_bytes(), mimetypes.guess_type(path.name)[0]+'; charset=utf-8')
