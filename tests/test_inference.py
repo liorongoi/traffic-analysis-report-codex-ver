@@ -143,6 +143,15 @@ class InferenceRecoveryTests(unittest.TestCase):
 
     def tearDown(self):self.temp.cleanup()
 
+    def test_continuous_batch_uses_saved_mission_profile(self):
+        mission=self.lib.create('Continuous profile','Israel','Asia/Jerusalem',{
+            'processing_mode':'continuous','resource_profile':'expanded'})
+        service=InferenceService(self.lib,self.root/'model-pack')
+        with patch.object(service,'start',return_value={'run':'new-run'}) as start:
+            result=service.start_continuous_batch(mission,'source-run')
+        self.assertEqual(result,{'run':'new-run'})
+        start.assert_called_once_with(mission,source_run='source-run',resource_profile='expanded')
+
     def test_start_snapshots_operator_resource_profile_and_applies_cpu_thread_limit(self):
         from road_traffic.detector import VERSION
         gib=1024**3

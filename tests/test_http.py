@@ -85,6 +85,7 @@ class HttpTests(unittest.TestCase):
         with self.request('/') as response:
             page=response.read().decode('utf-8')
             self.assertIn('id="lanLogout"',page)
+            self.assertIn('name="resource_profile"',page)
             self.assertIn('id="helpPanel"',page)
             self.assertIn('id="videoWorkflow"',page)
             self.assertIn('id="videoRunForm"',page)
@@ -495,7 +496,8 @@ class HttpTests(unittest.TestCase):
             data={'name':'Configured video mission','country':'Latvia','zone':'Europe/Riga',
                 'input_type':'videos','analysis_mode':'video_traffic','location':'Riga',
                 'source_root':str(source),'include_subdirectories':False,
-                'processing_mode':'continuous','output_root':str(output),'export_formats':['csv','xlsx']}
+                'processing_mode':'continuous','output_root':str(output),'export_formats':['csv','xlsx'],
+                'resource_profile':'expanded'}
             with self.request('/api/missions',data) as response:mission=json.load(response)['id']
             with self.request('/api/session') as response:
                 saved=next(m for m in json.load(response)['missions'] if m['id']==mission)
@@ -503,6 +505,7 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(saved['analysis_mode'],'video_traffic')
             self.assertFalse(saved['include_subdirectories'])
             self.assertEqual(saved['export_formats'],['csv','xlsx'])
+            self.assertEqual(saved['resource_profile'],'expanded')
             with self.assertRaises(urllib.error.HTTPError) as exc:
                 self.request('/api/inference/start',{'mission':mission})
             self.assertEqual(exc.exception.code,400)

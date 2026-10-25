@@ -92,7 +92,8 @@ class Library:
                     processing_mode TEXT NOT NULL DEFAULT 'once',
                     output_root TEXT NOT NULL DEFAULT '',
                     export_formats TEXT NOT NULL DEFAULT '["csv"]',
-                    continuous_video_policy TEXT NOT NULL DEFAULT ''
+                    continuous_video_policy TEXT NOT NULL DEFAULT '',
+                    resource_profile TEXT NOT NULL DEFAULT 'auto'
                 );
                 INSERT OR IGNORE INTO mission_settings(mission_id)
                 SELECT id FROM mission;
@@ -100,6 +101,8 @@ class Library:
         settings_columns={row['name'] for row in conn.execute('PRAGMA table_info(mission_settings)')}
         if 'continuous_video_policy' not in settings_columns:
             conn.execute("ALTER TABLE mission_settings ADD COLUMN continuous_video_policy TEXT NOT NULL DEFAULT ''")
+        if 'resource_profile' not in settings_columns:
+            conn.execute("ALTER TABLE mission_settings ADD COLUMN resource_profile TEXT NOT NULL DEFAULT 'auto'")
         conn.execute('''CREATE TABLE IF NOT EXISTS exports(
             id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
             inference_run TEXT, format TEXT NOT NULL, output_path TEXT NOT NULL,
@@ -200,6 +203,7 @@ class Library:
         input_type = settings.get('input_type', 'images')
         analysis_mode = settings.get('analysis_mode', 'general_traffic')
         processing_mode = settings.get('processing_mode', 'once')
+        resource_profile = settings.get('resource_profile', 'auto')
         export_formats = settings.get('export_formats', ['csv'])
         if isinstance(export_formats, str):
             export_formats = {'csv': ['csv'], 'xlsx': ['xlsx'], 'both': ['csv', 'xlsx']}.get(export_formats, [])
@@ -210,6 +214,8 @@ class Library:
             raise ValueError('Analysis mode is not valid for this input type')
         if processing_mode not in ('once', 'continuous'):
             raise ValueError('Processing mode must be once or continuous')
+        if resource_profile not in ('auto', 'conservative', 'expanded'):
+            raise ValueError('Resource profile must be auto, conservative, or expanded')
         if type(settings.get('include_subdirectories', True)) is not bool:
             raise ValueError('include_subdirectories must be a boolean')
         if not isinstance(export_formats, list) or not export_formats or any(not isinstance(value, str) or value not in ('csv', 'xlsx') for value in export_formats) or len(set(export_formats)) != len(export_formats):
@@ -247,7 +253,8 @@ class Library:
                     processing_mode TEXT NOT NULL,
                     output_root TEXT NOT NULL,
                     export_formats TEXT NOT NULL,
-                    continuous_video_policy TEXT NOT NULL DEFAULT ''
+                    continuous_video_policy TEXT NOT NULL DEFAULT '',
+                    resource_profile TEXT NOT NULL DEFAULT 'auto'
                 );
                 CREATE TABLE exports(
                     id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
@@ -313,10 +320,10 @@ class Library:
                 CREATE TRIGGER immutable_reviews_delete BEFORE DELETE ON reviews BEGIN SELECT RAISE(ABORT,'append-only review'); END;
                 ''')
                 conn.execute('INSERT INTO mission VALUES (?,?,?,?,?)', (mission, name.strip(), country, zone, now()))
-                conn.execute('INSERT INTO mission_settings(mission_id,input_type,analysis_mode,location,source_root,include_subdirectories,processing_mode,output_root,export_formats,continuous_video_policy) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                conn.execute('INSERT INTO mission_settings(mission_id,input_type,analysis_mode,location,source_root,include_subdirectories,processing_mode,output_root,export_formats,continuous_video_policy,resource_profile) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
                     (mission, input_type, analysis_mode, location.strip(), source_root,
                      int(settings.get('include_subdirectories', True)), processing_mode,
-                     output_root, json.dumps(export_formats), ''))
+                     output_root, json.dumps(export_formats), '', resource_profile))
         finally:
             conn.close()
         return mission

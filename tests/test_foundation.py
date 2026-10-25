@@ -154,13 +154,14 @@ class StoreTests(unittest.TestCase):
             'input_type':'images','analysis_mode':'object_search','location':'Riga bridge',
             'source_root':str(self.source),'include_subdirectories':False,
             'processing_mode':'continuous','output_root':str(output),
-            'export_formats':'both'})
+            'export_formats':'both','resource_profile':'conservative'})
         settings=self.lib.settings(mission)
         self.assertEqual(settings['input_type'],'images')
         self.assertEqual(settings['analysis_mode'],'object_search')
         self.assertEqual(settings['location'],'Riga bridge')
         self.assertFalse(settings['include_subdirectories'])
         self.assertEqual(settings['processing_mode'],'continuous')
+        self.assertEqual(settings['resource_profile'],'conservative')
         self.assertEqual(settings['export_formats'],['csv','xlsx'])
         self.assertEqual(self.lib.missions()[0]['source_root'],str(self.source.resolve()))
 
@@ -196,6 +197,11 @@ class StoreTests(unittest.TestCase):
         conn.commit();conn.close()
         self.assertEqual(self.lib.settings(mission)['input_type'],'images')
         self.assertEqual(self.lib.settings(mission)['export_formats'],['csv'])
+        self.assertEqual(self.lib.settings(mission)['resource_profile'],'auto')
+
+    def test_mission_rejects_unknown_resource_profile(self):
+        with self.assertRaisesRegex(ValueError,'Resource profile'):
+            self.lib.create('Bad profile','Israel','Asia/Jerusalem',{'resource_profile':'turbo'})
 
     def test_interrupted_exports_are_reconciled_after_restart(self):
         mission=self.lib.create('Export recovery','Israel','Asia/Jerusalem')

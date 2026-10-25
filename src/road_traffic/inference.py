@@ -154,7 +154,8 @@ class InferenceService:
                 return {'run':job['id'],'status':job['status'],'existing':True}
             return {'run':job['id'],'status':job['status'],'existing':True}
         try:
-            return self.start(mission,source_run=source_run)
+            return self.start(mission,source_run=source_run,
+                resource_profile=settings.get('resource_profile','auto'))
         except Exception:
             # _spawn can fail after the immutable run has already been committed.
             # Return that run so the durable monitor batch tracks the failed run

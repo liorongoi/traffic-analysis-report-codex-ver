@@ -388,7 +388,8 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 if self.path == '/api/missions':
                     settings = {key: data[key] for key in (
                         'input_type', 'analysis_mode', 'location', 'source_root',
-                        'include_subdirectories', 'processing_mode', 'output_root', 'export_formats'
+                        'include_subdirectories', 'processing_mode', 'output_root', 'export_formats',
+                        'resource_profile'
                     ) if key in data}
                     result = {'id': library.create(data['name'],data['country'],data['zone'],settings)}
                 elif self.path == '/api/export':
