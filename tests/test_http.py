@@ -135,6 +135,8 @@ class HttpTests(unittest.TestCase):
             learning=json.load(response)
         self.assertEqual(learning['evaluation']['test_regions'],0)
         self.assertFalse(learning['evaluation']['already_evaluated'])
+        self.assertIsNone(learning['governance']['promoted_candidate_id'])
+        self.assertEqual(learning['governance']['history'],[])
         capabilities={item['id']:item for item in learning['capabilities']}
         self.assertEqual(capabilities['night-light.multinomial-correction-head']['methods'][
             'downstream_classifier_training'],'supported')

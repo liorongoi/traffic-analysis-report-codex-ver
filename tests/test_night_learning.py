@@ -6,7 +6,8 @@ import unittest
 import numpy as np
 from PIL import Image
 from road_traffic.night import propose,patch_features
-from road_traffic.learning import inventory,train,load_head,candidates,evaluate_test,evaluation_status
+from road_traffic.learning import (inventory,train,load_head,candidates,evaluate_test,
+    evaluation_status,record_model_decision,governance_status)
 from road_traffic.store import Library
 
 
@@ -84,6 +85,25 @@ class LightLearningTests(unittest.TestCase):
         self.assertEqual(evaluation_status(self.lib,self.m)['already_evaluated'],True)
         with self.assertRaisesRegex(ValueError,'already been used'):
             evaluate_test(self.lib,self.m,candidate['id'],'Second reviewer')
+    def test_promotion_requires_current_test_evaluation_and_rollback_is_audited(self):
+        for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Synthetic test',role='training')
+        self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Synthetic test',role='test')
+        candidate=train(self.lib,self.m)
+        with self.assertRaisesRegex(ValueError,'Run the current held-out test evaluation'):
+            record_model_decision(self.lib,self.m,'promote',candidate['id'],'Reviewer','Manual review')
+        evaluate_test(self.lib,self.m,candidate['id'],'Independent reviewer')
+        promoted=record_model_decision(self.lib,self.m,'promote',candidate['id'],'Reviewer','Reviewed held-out report')
+        self.assertEqual(promoted['action'],'promote')
+        state=governance_status(self.lib,self.m)
+        self.assertEqual(state['promoted_candidate_id'],candidate['id'])
+        self.assertEqual(state['promoted_candidate_hash'],next(item for item in candidates(self.lib,self.m) if item['id']==candidate['id'])['artifact_hash'])
+        rollback=record_model_decision(self.lib,self.m,'rollback',None,'Reviewer','Return to base rules')
+        self.assertEqual(rollback['previous_candidate_id'],candidate['id'])
+        self.assertIsNone(governance_status(self.lib,self.m)['promoted_candidate_id'])
+        self.assertEqual([row['action'] for row in governance_status(self.lib,self.m)['history']],['promote','rollback'])
+        with self.lib.connect(self.m) as conn:
+            with self.assertRaisesRegex(Exception,'append-only'):
+                conn.execute('DELETE FROM night_model_decisions WHERE id=?',(promoted['id'],))
     def test_unmodified_unclassified_or_low_confidence_do_not_train(self):
         labels=self.labels();labels[0]['review_confidence']=2;labels[1]['reviewed']=False
         self.lib.review(self.m,self.rows[0]['id'],0,labels,'Synthetic test',role='training')

@@ -25,7 +25,17 @@ def prepare(library,mission):
           CREATE TRIGGER IF NOT EXISTS immutable_night_evaluations_u BEFORE UPDATE ON night_evaluations
             WHEN OLD.status='completed' BEGIN SELECT RAISE(ABORT,'completed test evaluation is immutable'); END;
           CREATE TRIGGER IF NOT EXISTS immutable_night_evaluations_d BEFORE DELETE ON night_evaluations
-            BEGIN SELECT RAISE(ABORT,'test evaluation history is append-only'); END;''')
+            BEGIN SELECT RAISE(ABORT,'test evaluation history is append-only'); END;
+          CREATE TABLE IF NOT EXISTS night_model_decisions(
+            id TEXT PRIMARY KEY,mission_id TEXT NOT NULL,candidate_id TEXT,candidate_hash TEXT,
+            previous_candidate_id TEXT,action TEXT NOT NULL CHECK(action IN ('promote','rollback')),
+            evaluation_id TEXT,operator TEXT NOT NULL,reason TEXT NOT NULL,created TEXT NOT NULL);
+          CREATE INDEX IF NOT EXISTS night_model_decisions_latest_idx
+            ON night_model_decisions(mission_id,created);
+          CREATE TRIGGER IF NOT EXISTS immutable_night_model_decisions_u BEFORE UPDATE ON night_model_decisions
+            BEGIN SELECT RAISE(ABORT,'model decision history is append-only'); END;
+          CREATE TRIGGER IF NOT EXISTS immutable_night_model_decisions_d BEFORE DELETE ON night_model_decisions
+            BEGIN SELECT RAISE(ABORT,'model decision history is append-only'); END;''')
 
 
 def inventory(library,mission):
@@ -121,6 +131,65 @@ def evaluation_status(library,mission):
         'test_images':len({row['image_id'] for row in data['test']}),
         'already_evaluated':any(row['status']=='completed' and row['test_fingerprint']==fingerprint for row in rows),
         'evaluations':rows}
+
+
+def governance_status(library,mission):
+    prepare(library,mission)
+    with library.connect(mission) as c:
+        rows=[dict(row) for row in c.execute('''SELECT * FROM night_model_decisions
+            WHERE mission_id=? ORDER BY rowid''',(mission,))]
+    latest=rows[-1] if rows else None
+    return {'promoted_candidate_id':latest['candidate_id'] if latest else None,
+        'promoted_candidate_hash':latest['candidate_hash'] if latest else None,
+        'rollback_target_id':latest['previous_candidate_id'] if latest else None,
+        'history':rows}
+
+
+def record_model_decision(library,mission,action,candidate_id,operator,reason):
+    if action not in ('promote','rollback'):
+        raise ValueError('Choose promote or rollback')
+    if not isinstance(operator,str) or not operator.strip() or len(operator.strip())>120:
+        raise ValueError('Enter an operator name of up to 120 characters')
+    if not isinstance(reason,str) or not reason.strip() or len(reason.strip())>1000:
+        raise ValueError('Record a promotion or rollback rationale of up to 1000 characters')
+    prepare(library,mission)
+    current=governance_status(library,mission)
+    previous=current['promoted_candidate_id']
+    if candidate_id==previous:
+        raise ValueError('The selected candidate is already active')
+    candidate_hash=None
+    evaluation_id=None
+    if candidate_id is not None:
+        _,candidate_hash=load_head(library,mission,candidate_id)
+    if action=='promote':
+        if candidate_id is None:
+            raise ValueError('Promote a completed candidate; use rollback to return to the base model')
+        data=inventory(library,mission)
+        fingerprint=_test_fingerprint(data['test'])
+        if not data['test']:
+            raise ValueError('Promotion requires an independent held-out test evaluation')
+        with library.connect(mission) as c:
+            evaluation=c.execute('''SELECT id,candidate_hash FROM night_evaluations
+                WHERE mission_id=? AND candidate_id=? AND test_fingerprint=? AND status='completed'
+                ORDER BY finished DESC,id DESC LIMIT 1''',(mission,candidate_id,fingerprint)).fetchone()
+        if not evaluation:
+            raise ValueError('Run the current held-out test evaluation before promotion')
+        if evaluation['candidate_hash']!=candidate_hash:
+            raise ValueError('The evaluated candidate artifact does not match the current candidate')
+        evaluation_id=evaluation['id']
+    else:
+        history_ids={row['candidate_id'] for row in current['history'] if row['candidate_id']}
+        if candidate_id is not None and candidate_id not in history_ids:
+            raise ValueError('Rollback target must be the base model or a previously promoted candidate')
+    identifier=str(uuid.uuid4())
+    with library.connect(mission) as c:
+        c.execute('''INSERT INTO night_model_decisions(id,mission_id,candidate_id,candidate_hash,
+            previous_candidate_id,action,evaluation_id,operator,reason,created)
+            VALUES (?,?,?,?,?,?,?,?,?,?)''',(identifier,mission,candidate_id,candidate_hash,previous,
+            action,evaluation_id,operator.strip(),reason.strip(),now()))
+    return {'id':identifier,'mission_id':mission,'candidate_id':candidate_id,
+        'candidate_hash':candidate_hash,'previous_candidate_id':previous,'action':action,
+        'evaluation_id':evaluation_id,'operator':operator.strip(),'reason':reason.strip()}
 
 
 def evaluate_test(library,mission,candidate_id,operator):

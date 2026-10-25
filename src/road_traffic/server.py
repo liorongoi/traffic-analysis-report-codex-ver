@@ -260,11 +260,12 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     path=context_file(library,query['mission'][0],query['crop'][0])
                     return self.reply(200,path.read_bytes(),'image/jpeg')
                 if parsed.path == '/api/night-learning':
-                    from .learning import inventory,candidates,evaluation_status
+                    from .learning import inventory,candidates,evaluation_status,governance_status
                     from .learning_capabilities import inventory as capability_inventory
                     m=query['mission'][0]
                     return self.reply(200,{'inventory':inventory(library,m),'candidates':candidates(library,m),
-                        'evaluation':evaluation_status(library,m),'capabilities':capability_inventory()})
+                        'evaluation':evaluation_status(library,m),'governance':governance_status(library,m),
+                        'capabilities':capability_inventory()})
                 if parsed.path == '/api/inference':
                     return self.reply(200,inference.status(query['mission'][0]))
                 if parsed.path == '/api/video/media':
@@ -497,6 +498,10 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         result=evaluate_test(library,data['mission'],data.get('candidate_id'),data.get('operator'))
                     finally:
                         with inference.lock:inference.training_active=False
+                elif self.path == '/api/night-learning/decision':
+                    from .learning import record_model_decision
+                    result=record_model_decision(library,data['mission'],data.get('action'),
+                        data.get('candidate_id'),data.get('operator'),data.get('reason'))
                 elif self.path == '/api/inference/stop':
                     result=inference.stop(data['mission'],data['run'])
                 elif self.path == '/api/video/sources':
