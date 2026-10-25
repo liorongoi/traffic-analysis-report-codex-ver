@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import uuid
+from functools import lru_cache
 
 from .store import now, safe_file
 from .tracking import TrackerPolicy
@@ -200,18 +201,31 @@ def source_detail(library, mission, source_id):
     return result
 
 
-def source_path(library, mission, source_id):
-    source = source_detail(library, mission, source_id)
-    try:
-        path = safe_file(library.location(mission), source['stored_relative_path'])
-    except (ValueError, FileNotFoundError) as exc:
-        raise ValueError('Stored video evidence is missing or unsafe') from exc
+@lru_cache(maxsize=256)
+def _verify_source_digest(path_text, expected_sha256, signature):
+    path = Path(path_text)
     digest = hashlib.sha256()
     with path.open('rb') as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(block)
-    if digest.hexdigest() != source['sha256']:
+    current = path.stat()
+    current_signature = (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns)
+    if current_signature != signature:
+        raise ValueError('Stored video evidence changed during its SHA-256 check')
+    if digest.hexdigest() != expected_sha256:
         raise ValueError('Stored video evidence failed its SHA-256 check')
+    return True
+
+
+def source_path(library, mission, source_id):
+    source = source_detail(library, mission, source_id)
+    try:
+        path = safe_file(library.location(mission), source['stored_relative_path'])
+        stat = path.stat()
+    except (ValueError, FileNotFoundError) as exc:
+        raise ValueError('Stored video evidence is missing or unsafe') from exc
+    signature = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+    _verify_source_digest(str(path), source['sha256'], signature)
     return path
 
 

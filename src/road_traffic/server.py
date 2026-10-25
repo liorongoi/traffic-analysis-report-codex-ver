@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import mimetypes
+import re
 import secrets
 import threading
 import webbrowser
@@ -40,6 +41,63 @@ def serve(workspace, web, port=8765, open_browser=False):
         def valid_host(self):
             return self.headers.get('Host') in (f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}')
 
+        def stream_video(self, query):
+            path = video_store.source_path(library, query['mission'][0], query['source'][0])
+            source = video_store.source_detail(library, query['mission'][0], query['source'][0])
+            size = path.stat().st_size
+            etag = f"\"{source['sha256']}\""
+            header = self.headers.get('Range')
+            if_range = self.headers.get('If-Range')
+            if if_range and if_range != etag:
+                header = None
+            start, end, status = 0, max(0, size - 1), 200
+            if header:
+                match = re.fullmatch(r'bytes=(\d*)-(\d*)', header.strip())
+                if not match or size == 0:
+                    match = None
+                if match:
+                    left, right = match.groups()
+                    if not left:
+                        suffix = int(right or 0)
+                        start = max(0, size - suffix) if suffix else size
+                        end = size - 1
+                    else:
+                        start = int(left)
+                        end = min(int(right), size - 1) if right else size - 1
+                    if start >= size or start > end:
+                        match = None
+                    else:
+                        status = 206
+                if not match:
+                    self.send_response(416)
+                    self.send_header('Content-Range', f'bytes */{size}')
+                    self.send_header('Content-Length', '0')
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.end_headers()
+                    return
+            length = max(0, end - start + 1)
+            self.send_response(status)
+            self.send_header('Content-Type', mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
+            self.send_header('Content-Length', str(length))
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('ETag', etag)
+            self.send_header('Cache-Control', 'private, no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            if status == 206:
+                self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+            self.end_headers()
+            if not length:
+                return
+            with path.open('rb') as stream:
+                stream.seek(start)
+                remaining = length
+                while remaining:
+                    block = stream.read(min(1024 * 1024, remaining))
+                    if not block:
+                        break
+                    self.wfile.write(block)
+                    remaining -= len(block)
+
         def do_GET(self):
             if not self.valid_host():
                 return self.reply(403, {'error': 'Loopback host required'})
@@ -56,6 +114,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200,{'inventory':inventory(library,m),'candidates':candidates(library,m)})
                 if parsed.path == '/api/inference':
                     return self.reply(200,inference.status(query['mission'][0]))
+                if parsed.path == '/api/video/media':
+                    return self.stream_video(query)
                 if parsed.path == '/api/video/sources':
                     return self.reply(200,video_store.sources(library,query['mission'][0]))
                 if parsed.path == '/api/video/runs':

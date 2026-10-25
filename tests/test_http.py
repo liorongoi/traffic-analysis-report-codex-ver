@@ -65,6 +65,7 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="videoWorkflow"',page)
             self.assertIn('id="videoRunForm"',page)
             self.assertIn('id="videoEventList"',page)
+            self.assertIn('id="videoPlayer"',page)
             for key in ('keyboardHelp','helpImport','helpSchedule','helpViews','helpReview','helpScope'):
                 self.assertIn(f'data-t="{key}"',page)
     def test_write_requires_session_token(self):
@@ -97,6 +98,15 @@ class HttpTests(unittest.TestCase):
                 'recording_start_utc':'2026-05-17T16:04:00+00:00','origin_provenance':'test metadata'}) as response:
                 source=json.load(response)
             self.assertEqual(source['recording_start_utc'],'2026-05-17T16:04:00+00:00')
+            media_path=f"/api/video/media?mission={mission}&source={source['id']}"
+            with self.request(media_path,headers={'Range':'bytes=1-4'}) as response:
+                self.assertEqual(response.status,206)
+                self.assertEqual(response.headers['Content-Range'],'bytes 1-4/13')
+                self.assertEqual(response.headers['Accept-Ranges'],'bytes')
+                self.assertEqual(response.read(),b'ideo')
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self.request(media_path,headers={'Range':'bytes=99-'})
+            self.assertEqual(exc.exception.code,416)
             with self.request('/api/video/sources?mission='+mission) as response:
                 self.assertEqual(json.load(response)[0]['id'],source['id'])
             with self.request('/api/video/runs?mission='+mission) as response:

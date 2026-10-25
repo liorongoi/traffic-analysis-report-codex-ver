@@ -49,6 +49,13 @@ class VideoStoreTests(unittest.TestCase):
             self.calls += 1
             return [{'label': 'car', 'box': [.2 + self.calls * .002, .2, .1, .1]}]
 
+    def test_stored_video_tampering_is_detected_even_after_digest_cache(self):
+        source = register_video(self.library, self.mission, 'clip.mkv')
+        stored = source_path(self.library, self.mission, source['id'])
+        stored.write_bytes(b'changed source bytes')
+        with self.assertRaisesRegex(ValueError, 'SHA-256 check'):
+            source_path(self.library, self.mission, source['id'])
+
     def test_source_snapshot_run_checkpoint_events_and_utc_are_durable(self):
         source = register_video(self.library, self.mission, 'clip.mkv',
             recording_start_utc=self.origin, origin_provenance='operator confirmed from recorder log')
