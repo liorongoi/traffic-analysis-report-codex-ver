@@ -165,7 +165,7 @@ class Library:
             CREATE TABLE IF NOT EXISTS view_region_history(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
                 region_key TEXT NOT NULL, view_id TEXT NOT NULL REFERENCES views(id), revision INTEGER NOT NULL,
-                action TEXT NOT NULL, kind TEXT NOT NULL, polygon TEXT NOT NULL,
+                action TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', polygon TEXT NOT NULL,
                 operator TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(region_key,revision));
             CREATE INDEX IF NOT EXISTS view_region_history_latest_idx
                 ON view_region_history(mission_id,view_id,region_key,revision);
@@ -184,6 +184,9 @@ class Library:
             CREATE TRIGGER IF NOT EXISTS immutable_view_region_history_d BEFORE DELETE ON view_region_history
                 BEGIN SELECT RAISE(ABORT,'view region history is immutable'); END;
         ''')
+        region_columns={row['name'] for row in conn.execute('PRAGMA table_info(view_region_history)')}
+        if 'name' not in region_columns:
+            conn.execute("ALTER TABLE view_region_history ADD COLUMN name TEXT NOT NULL DEFAULT ''")
         view_columns={row['name'] for row in conn.execute('PRAGMA table_info(views)')}
         if 'merged_into' not in view_columns:
             conn.execute('ALTER TABLE views ADD COLUMN merged_into TEXT REFERENCES views(id)')
@@ -293,7 +296,7 @@ class Library:
                 CREATE TABLE view_region_history(
                     id INTEGER PRIMARY KEY AUTOINCREMENT, mission_id TEXT NOT NULL REFERENCES mission(id),
                     region_key TEXT NOT NULL, view_id TEXT NOT NULL REFERENCES views(id), revision INTEGER NOT NULL,
-                    action TEXT NOT NULL, kind TEXT NOT NULL, polygon TEXT NOT NULL,
+                    action TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', polygon TEXT NOT NULL,
                     operator TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(region_key,revision));
                 CREATE INDEX view_region_history_latest_idx ON view_region_history(mission_id,view_id,region_key,revision);
                 CREATE INDEX image_view_history_mission_idx ON image_view_history(mission_id,image_id,revision);
@@ -580,40 +583,60 @@ class Library:
                 'SELECT * FROM view_region_history WHERE mission_id=? AND view_id=? ORDER BY region_key,revision',
                 (mission,view_id))]
 
-    def add_view_region(self, mission, view_id, kind, polygon, operator):
+    def add_view_region(self, mission, view_id, kind, polygon, operator, name=None):
         from .regions import validate_polygon
         polygon=validate_polygon(polygon)
         operator=operator.strip() if isinstance(operator,str) else ''
         if kind not in ('include','exclude'):raise ValueError('Region kind must be include or exclude')
+        name=name.strip() if isinstance(name,str) else ''
+        if len(name)>80:raise ValueError('Region name must be 80 characters or fewer')
         if not 1<=len(operator)<=120:raise ValueError('Operator is required for region history')
         key=str(uuid.uuid4());created=now()
         with self.connect(mission) as conn:
             if not conn.execute('SELECT 1 FROM views WHERE id=? AND mission_id=? AND merged_into IS NULL',(view_id,mission)).fetchone():
                 raise ValueError('Camera view not found in this mission')
+            if not name:
+                used={row['name'].casefold() for row in conn.execute('''SELECT h.name FROM view_region_history h
+                    WHERE h.mission_id=? AND h.view_id=? AND h.revision=(SELECT MAX(x.revision) FROM view_region_history x WHERE x.region_key=h.region_key)
+                    AND h.action='upsert' ''',(mission,view_id))}
+                ordinal=1
+                while f'{kind.title()} region {ordinal}'.casefold() in used:ordinal+=1
+                name=f'{kind.title()} region {ordinal}'
+            if conn.execute('''SELECT 1 FROM view_region_history h WHERE h.mission_id=? AND h.view_id=?
+                AND h.action='upsert' AND lower(h.name)=lower(?) AND h.revision=(SELECT MAX(x.revision)
+                FROM view_region_history x WHERE x.region_key=h.region_key)''',(mission,view_id,name)).fetchone():
+                raise ValueError('Region name must be unique within this camera view')
             conn.execute('''INSERT INTO view_region_history
-                (mission_id,region_key,view_id,revision,action,kind,polygon,operator,created) VALUES (?,?,?,?,?,?,?,?,?)''',
-                (mission,key,view_id,1,'upsert',kind,json.dumps(polygon),operator,created))
+                (mission_id,region_key,view_id,revision,action,kind,name,polygon,operator,created) VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                (mission,key,view_id,1,'upsert',kind,name,json.dumps(polygon),operator,created))
             conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
-                (mission,view_id,'region_created',json.dumps({'region_id':key,'kind':kind},ensure_ascii=False),operator,created))
+                (mission,view_id,'region_created',json.dumps({'region_id':key,'kind':kind,'name':name},ensure_ascii=False),operator,created))
         return next(region for region in self.view_regions(mission,view_id) if region['region_key']==key)
 
-    def update_view_region(self, mission, region_key, kind, polygon, operator):
+    def update_view_region(self, mission, region_key, kind, polygon, operator, name=None):
         from .regions import validate_polygon
         polygon=validate_polygon(polygon)
         operator=operator.strip() if isinstance(operator,str) else ''
         if kind not in ('include','exclude'):raise ValueError('Region kind must be include or exclude')
+        name=name.strip() if isinstance(name,str) else ''
         if not 1<=len(operator)<=120:raise ValueError('Operator is required for region history')
         with self.connect(mission) as conn:
             previous=conn.execute('''SELECT h.* FROM view_region_history h JOIN views v ON v.id=h.view_id
                 WHERE h.mission_id=? AND h.region_key=? AND v.merged_into IS NULL ORDER BY h.revision DESC LIMIT 1''',
                 (mission,region_key)).fetchone()
             if not previous or previous['action']=='delete':raise ValueError('View region not found')
+            name=name or previous['name'] or f'{kind.title()} region'
+            if len(name)>80:raise ValueError('Region name must be 80 characters or fewer')
+            if conn.execute('''SELECT 1 FROM view_region_history h WHERE h.mission_id=? AND h.view_id=? AND h.region_key<>?
+                AND h.action='upsert' AND lower(h.name)=lower(?) AND h.revision=(SELECT MAX(x.revision)
+                FROM view_region_history x WHERE x.region_key=h.region_key)''',(mission,previous['view_id'],region_key,name)).fetchone():
+                raise ValueError('Region name must be unique within this camera view')
             revision=previous['revision']+1;created=now()
             conn.execute('''INSERT INTO view_region_history
-                (mission_id,region_key,view_id,revision,action,kind,polygon,operator,created) VALUES (?,?,?,?,?,?,?,?,?)''',
-                (mission,region_key,previous['view_id'],revision,'upsert',kind,json.dumps(polygon),operator,created))
+                (mission_id,region_key,view_id,revision,action,kind,name,polygon,operator,created) VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                (mission,region_key,previous['view_id'],revision,'upsert',kind,name,json.dumps(polygon),operator,created))
             conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
-                (mission,previous['view_id'],'region_updated',json.dumps({'region_id':region_key,'revision':revision},ensure_ascii=False),operator,created))
+                (mission,previous['view_id'],'region_updated',json.dumps({'region_id':region_key,'revision':revision,'name':name},ensure_ascii=False),operator,created))
         return next(region for region in self.view_regions(mission,previous['view_id']) if region['region_key']==region_key)
 
     def delete_view_region(self, mission, region_key, operator):
@@ -626,8 +649,8 @@ class Library:
             if not previous or previous['action']=='delete':raise ValueError('View region not found')
             revision=previous['revision']+1;created=now()
             conn.execute('''INSERT INTO view_region_history
-                (mission_id,region_key,view_id,revision,action,kind,polygon,operator,created) VALUES (?,?,?,?,?,?,?,?,?)''',
-                (mission,region_key,previous['view_id'],revision,'delete',previous['kind'],previous['polygon'],operator,created))
+                (mission_id,region_key,view_id,revision,action,kind,name,polygon,operator,created) VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                (mission,region_key,previous['view_id'],revision,'delete',previous['kind'],previous['name'],previous['polygon'],operator,created))
             conn.execute('INSERT INTO view_events(mission_id,view_id,action,details,operator,created) VALUES (?,?,?,?,?,?)',
                 (mission,previous['view_id'],'region_deleted',json.dumps({'region_id':region_key,'revision':revision},ensure_ascii=False),operator,created))
         return {'id':region_key,'deleted':True,'revision':revision}

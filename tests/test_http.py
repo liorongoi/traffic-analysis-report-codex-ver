@@ -444,16 +444,19 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(json.load(response)['revision'],1)
         polygon=[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]
         with self.request('/api/view-regions',{'mission':mission,'action':'create','view_id':view['id'],
-            'kind':'include','polygon':polygon,'operator':'Operator'}) as response:
+            'kind':'include','name':'Northbound lane','polygon':polygon,'operator':'Operator'}) as response:
             region=json.load(response)
+        self.assertEqual(region['name'],'Northbound lane')
         with self.request('/api/view-regions?mission='+mission+'&view_id='+view['id']) as response:
             self.assertEqual(json.load(response)[0]['region_key'],region['region_key'])
         with self.request('/api/view-regions',{'mission':mission,'action':'update','region_id':region['region_key'],
-            'kind':'exclude','polygon':polygon,'operator':'Operator'}) as response:
-            self.assertEqual(json.load(response)['revision'],2)
+            'kind':'exclude','name':'Bus bay','polygon':polygon,'operator':'Operator'}) as response:
+            updated=json.load(response)
+        self.assertEqual((updated['revision'],updated['name']),(2,'Bus bay'))
         with self.request('/api/view-region-history?mission='+mission+'&view_id='+view['id']) as response:
             history=json.load(response)
         self.assertEqual([entry['action'] for entry in history],['upsert','upsert'])
+        self.assertEqual([entry['name'] for entry in history],['Northbound lane','Bus bay'])
         with self.request('/api/view-regions',{'mission':mission,'action':'delete','region_id':region['region_key'],
             'operator':'Operator'}) as response:
             self.assertTrue(json.load(response)['deleted'])

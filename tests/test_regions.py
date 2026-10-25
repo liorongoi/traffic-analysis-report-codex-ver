@@ -61,6 +61,29 @@ class RegionHistoryTests(unittest.TestCase):
             with self.assertRaisesRegex(sqlite3.IntegrityError,'immutable'):
                 conn.execute('UPDATE view_region_history SET operator=? WHERE region_key=?',('tamper',created['region_key']))
 
+    def test_named_regions_are_unique_and_names_remain_in_append_only_history(self):
+        polygon=[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]
+        region=self.library.add_view_region(self.mission,self.view['id'],'include',polygon,'Operator A','Northbound lane')
+        renamed=self.library.update_view_region(self.mission,region['region_key'],'include',polygon,'Operator B','Bus bay')
+        self.assertEqual((region['name'],renamed['name']),('Northbound lane','Bus bay'))
+        self.library.add_view_region(self.mission,self.view['id'],'exclude',polygon,'Operator C','Loading area')
+        with self.assertRaisesRegex(ValueError,'unique within this camera view'):
+            self.library.add_view_region(self.mission,self.view['id'],'include',polygon,'Operator D','BUS BAY')
+        history=self.library.view_region_history(self.mission,self.view['id'])
+        self.assertEqual({item['name'] for item in history},{'Northbound lane','Bus bay','Loading area'})
+        self.assertEqual([(item['revision'],item['name']) for item in history if item['region_key']==region['region_key']],
+            [(1,'Northbound lane'),(2,'Bus bay')])
+
+    def test_old_region_table_gets_additive_name_column_migration(self):
+        with self.library.connect(self.mission) as conn:
+            conn.execute('ALTER TABLE view_region_history DROP COLUMN name')
+        with self.library.connect(self.mission) as conn:
+            columns={row['name'] for row in conn.execute('PRAGMA table_info(view_region_history)')}
+        self.assertIn('name',columns)
+        created=self.library.add_view_region(self.mission,self.view['id'],'include',
+            [[.1,.1],[.9,.1],[.9,.9],[.1,.9]],'Operator','Legacy migration lane')
+        self.assertEqual(created['name'],'Legacy migration lane')
+
     def test_inference_run_keeps_region_snapshot_after_later_edits(self):
         polygon=[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]
         region=self.library.add_view_region(self.mission,self.view['id'],'include',polygon,'Operator A')
@@ -73,6 +96,7 @@ class RegionHistoryTests(unittest.TestCase):
         snapshot=config['view_regions_snapshot'][self.view['id']]
         self.assertEqual(snapshot[0]['revision'],1)
         self.assertEqual(snapshot[0]['kind'],'include')
+        self.assertEqual(snapshot[0]['name'],'Include region 1')
         self.assertEqual(snapshot[0]['polygon'],polygon)
 
     def test_unrelated_view_roi_change_does_not_flag_run(self):

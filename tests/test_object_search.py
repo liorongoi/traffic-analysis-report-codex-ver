@@ -119,6 +119,42 @@ class ObjectSearchTests(unittest.TestCase):
         self.assertEqual([item['image_id'] for item in result['results']], ['inside'])
         self.assertEqual(result['scope_filtered_images'], 2)
 
+    def test_search_applies_named_region_geometry_and_saved_exclusion_precedence(self):
+        target=[[.1,.1],[.8,.1],[.8,.8],[.1,.8]]
+        excluded=[[.3,.3],[.4,.3],[.4,.4],[.3,.4]]
+        scope={'run_id':'run-1','schedule':{'timezone':'Asia/Jerusalem'},
+            'view_assignments':[{'view_id':'north','view_name':'North gate'}],
+            'regions_by_view':{'north':[
+                {'id':'roi-1','revision':2,'name':'Northbound lane','kind':'include','polygon':target},
+                {'id':'roi-2','revision':1,'name':'Loading bay','kind':'exclude','polygon':excluded}]}}
+        spec=interpret('Find trucks inside Northbound lane',mission_id='mission',run_id='run-1',scope_snapshot=scope)
+        self.assertEqual(spec['view_id'],'north')
+        self.assertEqual(spec['region_filter']['region_id'],'roi-1')
+        row={'id':'inside','name':'inside.jpg','capture_utc':None,'view_id':'north','view_name':'North gate',
+            'revision':0,'review_prediction_run':None,'prediction_run':'run-1',
+            'predictions':[{'kind':'candidate','label':'truck','box':[.18,.18,.04,.04]},
+                {'kind':'candidate','label':'truck','box':[.33,.33,.04,.04]},
+                {'kind':'candidate','label':'truck','box':[.9,.9,.04,.04]}], 'annotations':'[]'}
+        result=execute(SearchLibrary([row]),'mission',spec,confirmed=True,scope_snapshot=scope)
+        self.assertEqual(result['matched_objects'],1)
+        self.assertEqual(result['results'][0]['objects'][0]['box'],[.18,.18,.04,.04])
+
+    def test_named_region_search_rejects_ambiguous_regions(self):
+        polygon=[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]
+        scope={'view_assignments':[], 'regions_by_view':{
+            'north':[{'id':'north-roi','name':'Driveway','kind':'include','polygon':polygon}],
+            'south':[{'id':'south-roi','name':'Driveway','kind':'include','polygon':polygon}]}}
+        with self.assertRaisesRegex(ValueError,'analysis region'):
+            interpret('Find cars in Driveway',scope_snapshot=scope)
+
+    def test_hebrew_named_region_query_resolves_saved_polygon(self):
+        scope={'view_assignments':[], 'regions_by_view':{'north':[
+            {'id':'north-roi','name':'נתיב צפון','kind':'include',
+             'polygon':[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]}]}}
+        spec=interpret('מצא משאיות בנתיב צפון',scope_snapshot=scope)
+        self.assertEqual(spec['region_filter']['region_id'],'north-roi')
+        self.assertEqual(spec['view_id'],'north')
+
     def test_overnight_weekday_filter_uses_start_day_and_hebrew_query(self):
         scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
             'view_assignments': [], 'regions_by_view': {}}

@@ -97,11 +97,11 @@ def create_run(library,mission,config,source_run=None):
         view_rows={row['image_id']:(row['view_id'],row['revision']) for row in conn.execute('''SELECT image_id,view_id,revision
             FROM image_view_history WHERE mission_id=? AND revision=(SELECT MAX(h.revision) FROM image_view_history h WHERE h.image_id=image_view_history.image_id)''',(mission,))}
         regions={}
-        for item in conn.execute('''SELECT h.region_key,h.view_id,h.revision,h.kind,h.polygon FROM view_region_history h
+        for item in conn.execute('''SELECT h.region_key,h.view_id,h.revision,h.kind,h.name,h.polygon FROM view_region_history h
             WHERE h.mission_id=? AND h.action='upsert'
             AND h.revision=(SELECT MAX(x.revision) FROM view_region_history x WHERE x.region_key=h.region_key)''',(mission,)):
             regions.setdefault(item['view_id'],[]).append({'id':item['region_key'],'revision':item['revision'],
-                'kind':item['kind'],'polygon':json.loads(item['polygon'])})
+                'kind':item['kind'],'name':item['name'],'polygon':json.loads(item['polygon'])})
         recorded_config={**config,'run_config_schema_version':1,'mission_snapshot':mission_snapshot,
             'mission_snapshot_provenance':'captured_at_run_start','source_run_id':source_run,
             'source_runs_snapshot':_source_run_snapshots(conn,[row['id'] for row in eligible_rows]),
@@ -198,13 +198,13 @@ def roi_drift(library,mission,run):
 def _current_regions(conn,mission,view_ids):
     snapshot={view_id:[] for view_id in view_ids if view_id}
     if not snapshot:return snapshot
-    for row in conn.execute('''SELECT h.region_key,h.view_id,h.revision,h.kind,h.polygon FROM view_region_history h
+    for row in conn.execute('''SELECT h.region_key,h.view_id,h.revision,h.kind,h.name,h.polygon FROM view_region_history h
         WHERE h.mission_id=? AND h.action='upsert'
         AND h.revision=(SELECT MAX(x.revision) FROM view_region_history x WHERE x.region_key=h.region_key)
         ORDER BY h.region_key,h.created''',(mission,)):
         if row['view_id'] in snapshot:
             snapshot[row['view_id']].append({'id':row['region_key'],'revision':row['revision'],
-                'kind':row['kind'],'polygon':json.loads(row['polygon'])})
+                'kind':row['kind'],'name':row['name'],'polygon':json.loads(row['polygon'])})
     return snapshot
 
 

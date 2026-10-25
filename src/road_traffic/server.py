@@ -445,9 +445,9 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 elif self.path == '/api/view-regions':
                     action=data.get('action')
                     if action == 'create':
-                        result=library.add_view_region(data['mission'],data['view_id'],data['kind'],data['polygon'],data['operator'])
+                        result=library.add_view_region(data['mission'],data['view_id'],data['kind'],data['polygon'],data['operator'],data.get('name'))
                     elif action == 'update':
-                        result=library.update_view_region(data['mission'],data['region_id'],data['kind'],data['polygon'],data['operator'])
+                        result=library.update_view_region(data['mission'],data['region_id'],data['kind'],data['polygon'],data['operator'],data.get('name'))
                     elif action == 'delete':
                         result=library.delete_view_region(data['mission'],data['region_id'],data['operator'])
                     else:

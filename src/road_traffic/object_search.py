@@ -135,6 +135,52 @@ def _extract_view_filter(text, scope_snapshot, selected_view):
     return text, chosen
 
 
+def _extract_region_filter(text, scope_snapshot, selected_view):
+    """Resolve a named ROI only from immutable geometry in the selected run."""
+    regions_by_view=(scope_snapshot or {}).get('regions_by_view') or {}
+    candidates=[]
+    for view_id, regions in regions_by_view.items():
+        if selected_view and view_id!=selected_view:
+            continue
+        for region in regions:
+            name=(region.get('name') or '').strip()
+            if name:
+                candidates.append((view_id,region,name))
+    matches=[]
+    lowered=text.casefold()
+    for view_id,region,name in candidates:
+        name_pattern=r'\s+'.join(re.escape(part) for part in name.casefold().split())
+        pattern=re.compile(r'(?<!\w)(?:(?:in|inside|within|at|near|by)\s+'
+            r'(?:(?:the|region|area)\s+)?|(?:בתוך|באזור)\s+|ב)'+name_pattern+r'(?!\w)',re.I)
+        for match in pattern.finditer(lowered):
+            matches.append((view_id,region,name,match.span()))
+    # Prefer the longest full region name where names share a prefix. If the
+    # same phrase names different view-specific polygons, require a view filter.
+    by_span={}
+    for item in matches:
+        by_span.setdefault(item[3],[]).append(item)
+    chosen=[]
+    for span,items in sorted(by_span.items()):
+        longest=max(item[3][1]-item[3][0] for item in items)
+        best=[item for item in items if item[3][1]-item[3][0]==longest]
+        if len({(item[0],item[1].get('id')) for item in best})>1:
+            raise ValueError('Choose a camera view to disambiguate this named analysis region')
+        item=best[0]
+        if not chosen or item[3][0]>=chosen[-1][3][1]:
+            chosen.append(item)
+    identities={(item[0],item[1].get('id')) for item in chosen}
+    if len(identities)>1:
+        raise ValueError('Search one named analysis region at a time')
+    if not chosen:
+        return text,None,selected_view
+    view_id,region,name,span=chosen[0]
+    if selected_view and selected_view!=view_id:
+        raise ValueError('The query analysis region is not in the selected camera view')
+    text=text[:span[0]]+' '+text[span[1]:]
+    return text,{'view_id':view_id,'region_id':region.get('id'),'name':name,
+        'kind':region.get('kind'),'polygon':region.get('polygon')},selected_view or view_id
+
+
 def _scope_timezone(scope_snapshot):
     schedule = (scope_snapshot or {}).get('schedule') or {}
     zone_name = schedule.get('timezone')
@@ -190,6 +236,8 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
         raise ValueError('Describe an object in 1–500 characters')
     query_without_time, schedule_filter = _extract_temporal_filter(query)
     query_without_scope, requested_view = _extract_view_filter(query_without_time, scope_snapshot, view_id)
+    query_without_scope, requested_region, requested_view = _extract_region_filter(
+        query_without_scope, scope_snapshot, requested_view)
     if schedule_filter:
         _scope_timezone(scope_snapshot)
     view_id = requested_view
@@ -248,6 +296,7 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
         'excluded_attributes': excluded_attributes,
         'mission_id': mission_id,
         'view_id': view_id,
+        'region_filter': requested_region,
         'run_id': run_id,
         'schedule_filter': schedule_filter,
         'scope_snapshot': json.loads(json.dumps(scope_snapshot, ensure_ascii=False)) if scope_snapshot is not None else None,
@@ -256,8 +305,9 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
             'run': run_id or 'no saved inference run exists',
             'run_scope': ('the run freezes its schedule, view assignments, and ROI input decisions'
                           if run_id else 'no saved run schedule or region scope is available'),
-            'region': ('selected view, if provided; otherwise all views in the saved run'
-                       if run_id else 'no saved run views are available'),
+            'region': (requested_region['name'] if requested_region else
+                       ('selected view, if provided; otherwise all views in the saved run'
+                        if run_id else 'no saved run views are available')),
         },
         'attribute_limits': ['color', 'fine vehicle subtype'],
         'operator_confirmation_required': True,
@@ -271,6 +321,7 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
         'excluded_attributes': excluded_attributes,
         'unsupported_or_unobservable': ['color', 'fine vehicle subtype'] if required or excluded_attributes else [],
         'requested_view': view_id or 'all views in selected run',
+        'requested_region': requested_region['name'] if requested_region else 'all saved run regions',
         'requested_local_schedule': schedule_filter or 'all captures in selected run',
         'execution': 'saved evidence search only; never an object-presence proof',
         'attribute_source_note': ('Color and fine subtype are not inferred by the detector. Search filters operator-recorded values; missing values remain uncertain.'),
@@ -298,6 +349,7 @@ def execute(library, mission: str, spec: dict, *, confirmed: bool, run: str | No
     matches = []
     uncertain_count = 0
     filtered_images = 0
+    from .regions import point_in_polygon
     for row in rows:
         if spec.get('view_id') and row.get('view_id') != spec['view_id']:
             filtered_images += 1
@@ -305,6 +357,14 @@ def execute(library, mission: str, spec: dict, *, confirmed: bool, run: str | No
         if not _matches_schedule(row, spec.get('schedule_filter') or {}, scope_snapshot):
             filtered_images += 1
             continue
+        requested_region=spec.get('region_filter')
+        row_regions=((scope_snapshot or {}).get('regions_by_view') or {}).get(row.get('view_id')) or []
+        if requested_region:
+            matching=next((region for region in row_regions if region.get('id')==requested_region.get('region_id')),None)
+            if not matching or matching.get('polygon')!=requested_region.get('polygon'):
+                filtered_images+=1
+                continue
+        exclusions=[region.get('polygon') for region in row_regions if region.get('kind')=='exclude']
         # A review only replaces predictions when it is explicitly bound to this exact run.
         if row.get('revision') and ((selected_run and row.get('review_prediction_run') == selected_run) or
                                      (not selected_run and not row.get('prediction_run') and not row.get('review_prediction_run'))):
@@ -317,6 +377,20 @@ def execute(library, mission: str, spec: dict, *, confirmed: bool, run: str | No
         for number, item in enumerate(items):
             if item.get('rejected') or item.get('kind') not in {'vehicle', 'candidate'}:
                 continue
+            box=item.get('box')
+            if requested_region:
+                if not isinstance(box,(list,tuple)) or len(box)!=4:
+                    continue
+                center=(float(box[0])+float(box[2])/2,float(box[1])+float(box[3])/2)
+                if (not point_in_polygon(center,requested_region['polygon']) or
+                    any(point_in_polygon(center,polygon) for polygon in exclusions)):
+                    continue
+            elif exclusions:
+                if not isinstance(box,(list,tuple)) or len(box)!=4:
+                    continue
+                center=(float(box[0])+float(box[2])/2,float(box[1])+float(box[3])/2)
+                if any(point_in_polygon(center,polygon) for polygon in exclusions):
+                    continue
             label = str(item.get('label', '')).casefold()
             category = next((name for name, (_, forms) in _CATEGORIES.items() if label in forms), None)
             if category and category not in spec['categories']:
