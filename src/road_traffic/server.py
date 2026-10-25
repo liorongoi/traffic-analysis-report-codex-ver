@@ -121,6 +121,9 @@ def serve(workspace, web, port=8765, open_browser=False):
             try:
                 if parsed.path == '/api/session':
                     return self.reply(200, {'token': token, 'missions': library.missions(), 'mode': 'loopback-development'})
+                if parsed.path == '/api/hardware':
+                    from .hardware import inventory
+                    return self.reply(200, inventory(library.root))
                 if parsed.path == '/api/images':
                     return self.reply(200, library.images(query['mission'][0],query.get('run',[None])[0]))
                 if parsed.path == '/api/night-learning':

@@ -41,7 +41,11 @@ The initial failed sample import was followed by a corrected successful 143-imag
 
 ## Current verification update — 2026-10-25
 
-The current suite contains 130 Python checks. Recent increments add deterministic source/output path-overlap checks, observer-adapter fallback coverage, video supervisor lifecycle/restart recovery tests, and HTTP video source/status route tests. The local `.venv` does not include Watchdog, so filesystem notification tests use an injected observer test double; actual OS/network-share delivery remains unverified. `watchdog==6.0.0` is an explicit application and offline runtime dependency, and the Windows staging validator rejects a runtime missing it. `node --check web/app.js` and `git diff --check` passed.
+The current suite contains 131 Python checks. Recent increments add deterministic source/output path-overlap checks, observer-adapter fallback coverage, video supervisor lifecycle/restart recovery tests, HTTP video source/status/clip routes, clip export hashing, and host-inventory reporting. The local `.venv` does not include Watchdog, so filesystem notification tests use an injected observer test double; actual OS/network-share delivery remains unverified. `watchdog==6.0.0` is an explicit application and offline runtime dependency, and the Windows staging validator rejects a runtime missing it. `node --check web/app.js` and `git diff --check` passed.
+
+## Host inventory update — 2026-10-25
+
+Added an on-demand `/api/hardware` report and a sidebar panel. It reads CPU model/logical cores, OS memory, visible GPU/driver inventory, ONNX Runtime provider names, and free disk capacity, then shows a conservative CPU memory profile. On this development Mac, a direct report returned CPU/RAM/disk values and advertised CoreML/Azure/CPU providers. Provider listing is explicitly not an execution test; GPU execution, Windows inventory, target 16/48 GB profiles, and storage throughput remain unverified. The new panel was covered by HTTP markup/API tests and JavaScript syntax checks, but not visually smoke-tested in the browser.
 
 ## Video timestamp-decoder update — 2026-10-25
 

@@ -67,6 +67,11 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="videoEventList"',page)
             self.assertIn('id="videoPlayer"',page)
             self.assertIn('id="videoClipExports"',page)
+            self.assertIn('id="hardwareReport"',page)
+            with self.request('/api/hardware') as response:
+                hardware=json.load(response)
+            self.assertIn('cpu',hardware)
+            self.assertEqual(hardware['gpu_execution'],'not verified by provider listing')
             for key in ('keyboardHelp','helpImport','helpSchedule','helpViews','helpReview','helpScope'):
                 self.assertIn(f'data-t="{key}"',page)
     def test_write_requires_session_token(self):

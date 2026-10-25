@@ -2,7 +2,7 @@
 
 Target: Windows workstation, 16/48 GB RAM, RTX A4000 or other graphics, one active user. Development execution on this Mac does not establish Windows or GPU compatibility.
 
-Detect actual physical/available memory and CPU. GPU metadata can come from a vendor utility, but actual execution-provider compatibility requires an adapter probe. Until a probe succeeds, recommendation is CPU. RAM profile and GPU choice are independent. Integrate bounded decoding/tiling/frame queues; avoid eager model loading and simultaneous inference/training memory contention. Proposed budgets reserve OS/application headroom and must be measured on both target classes; they are not performance guarantees.
+An on-demand local host report now reads CPU model/logical cores, OS-reported physical and available memory, GPU/driver details when an inventory utility is present, ONNX Runtime provider names, and free disk capacity. It does not load a vision model. Provider names are marked advertised only; GPU execution remains unverified until the selected model successfully runs on that provider. Storage throughput is not measured. The report proposes a conservative CPU memory profile from current capacity. The Windows implementation and target measurements still require native workstation validation. RAM profile and GPU choice are independent. Integrate bounded decoding/tiling/frame queues; avoid eager model loading and simultaneous inference/training memory contention. Proposed budgets reserve OS/application headroom and must be measured on both target classes; they are not performance guarantees.
 
 ## Packaging design
 

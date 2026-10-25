@@ -42,7 +42,7 @@ Fintraffic samples supplied by the user are imported locally into `workspace/sam
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-See [verification record](docs/09-verification.md). 130 Python checks and `node --check web/app.js` pass for the current build, including video workflow, source integrity, and byte-range API checks. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
+See [verification record](docs/09-verification.md). 131 Python checks and `node --check web/app.js` pass for the current build, including video workflow, host-inventory API, source integrity, and byte-range checks. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
 
 ## Not implemented yet
 
@@ -52,7 +52,7 @@ Video source/run/event storage is connected to a supervised child worker and aut
 
 The current development inference runtime is the independently staged `.venv`. `requirements-inference-macos.lock.txt` records its packages; installed runtime code never invokes pip.
 
-The budget helper proposes conservative memory limits; it does not yet measure hardware or configure a vision backend. No GPU execution has been verified.
+The on-demand host report reads CPU, RAM, GPU/driver inventory, runtime provider names, and free disk capacity, then proposes a conservative CPU memory profile. It does not measure storage throughput or prove provider compatibility. Windows target hardware and GPU execution remain unverified.
 
 The Windows setup EXE has **not** been built or tested. It requires a complete Windows x64 runtime and timezone pack staged independently, Inno Setup compilation, extracted-payload inspection and a native no-admin/offline Windows test. The preview uses an existing browser; the final application/browser-engine packaging is still outstanding. Do not use the setup source as proof that the finished offline application exists.
 
