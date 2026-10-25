@@ -128,6 +128,22 @@ class LightLearningTests(unittest.TestCase):
         self.assertEqual(comparison['regions'],2)
         self.assertFalse(comparison['test_labels_used_for_fit_or_validation'])
         self.assertIn('macro_f1',comparison['delta'])
+    def test_heldout_evaluation_compares_with_linked_base_context_proposals(self):
+        for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Reviewer',role='training')
+        base_classes={'headlight':'headlight_candidate','streetlight':'streetlight_suspect'}
+        test_labels=[{**item,'origin':'night-light-heuristic','prediction_id':f"prediction-{i}",
+            'light_subtype':base_classes[item['night_class']]} for i,item in enumerate(self.labels())]
+        self.lib.review(self.m,self.rows[2]['id'],0,test_labels,'Reviewer',role='test')
+        candidate=train(self.lib,self.m)
+        evaluation=evaluate_test(self.lib,self.m,candidate['id'],'Independent reviewer')
+        comparison=evaluation['report']['base_context_comparison']
+        self.assertEqual(comparison['status'],'compared')
+        self.assertEqual(comparison['baseline'],'saved_contextual_light_proposals')
+        self.assertEqual(comparison['paired_regions'],2)
+        self.assertEqual(comparison['test_regions'],2)
+        self.assertEqual(comparison['coverage'],1.0)
+        self.assertFalse(comparison['test_labels_used_for_fit_or_validation'])
+        self.assertIn('macro_f1',comparison['delta'])
     def test_promotion_requires_current_test_evaluation_and_rollback_is_audited(self):
         for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Synthetic test',role='training')
         self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Synthetic test',role='test')

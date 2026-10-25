@@ -7,6 +7,13 @@ from datetime import datetime
 from .store import now,digest
 from .night import NIGHT_CLASSES,FEATURE_SCHEMA
 
+BASE_SUBTYPE_CLASSES={
+    'headlight_candidate':'headlight',
+    'streetlight_suspect':'streetlight',
+    'reflection_suspect':'reflection',
+    'uncertain_light':'other',
+}
+
 
 def prepare(library,mission):
     with library.connect(mission) as c:
@@ -58,7 +65,9 @@ def inventory(library,mission):
             if label not in NIGHT_CLASSES or not a.get('reviewed') or a.get('rejected') or a.get('review_confidence',0)<3:continue
             candidate={'review_id':r['id'],'revision':r['revision'],'image_id':r['image_id'],'sha256':r['sha256'],
                 'view':Path(r['name']).name.split('_')[0] if json.loads(r['provenance']).get('preset')=='fintraffic' else None,
-                'annotation_index':i,'class':label,'box':a['box'],'role':r['role'],'prediction_id':a.get('prediction_id')}
+                'annotation_index':i,'class':label,'box':a['box'],'role':r['role'],'prediction_id':a.get('prediction_id'),
+                'base_rule_class':BASE_SUBTYPE_CLASSES.get(a.get('light_subtype'))
+                    if a.get('origin')=='night-light-heuristic' and a.get('kind')=='light' and a.get('prediction_id') else None}
             # Avoid overweighting duplicate overlapping rectangles; latest annotation owns overlap.
             from .detector import iou
             eligible=[old for old in eligible if iou(old['box'],a['box'])<=0]
@@ -249,6 +258,24 @@ def evaluate_test(library,mission,candidate_id,operator):
         candidate_metrics=_classification_metrics(actual,predicted)
         current=governance_status(library,mission)
         baseline_comparison={'status':'unavailable','reason':'No distinct promoted candidate is available for comparison.'}
+        base_context_comparison={'status':'unavailable',
+            'reason':'No held-out reviewed regions retain a linked contextual-light proposal.',
+            'paired_regions':0,'test_regions':len(actual),'coverage':0.0}
+        paired=[index for index,row in enumerate(data['test']) if row.get('base_rule_class') in NIGHT_CLASSES]
+        if paired:
+            paired_actual=[actual[index] for index in paired]
+            base_predictions=[data['test'][index]['base_rule_class'] for index in paired]
+            candidate_paired=[predicted[index] for index in paired]
+            candidate_paired_metrics=_classification_metrics(paired_actual,candidate_paired)
+            base_metrics=_classification_metrics(paired_actual,base_predictions)
+            base_context_comparison={'status':'compared','baseline':'saved_contextual_light_proposals',
+                'regions':len(paired),'paired_regions':len(paired),'test_regions':len(actual),
+                'coverage':len(paired)/len(actual),'candidate':candidate_paired_metrics,
+                'current':base_metrics,
+                'delta':{'accuracy':candidate_paired_metrics['accuracy']-base_metrics['accuracy'],
+                    'macro_f1':candidate_paired_metrics['macro_f1']-base_metrics['macro_f1']},
+                'test_labels_used_for_fit_or_validation':False,
+                'scope':'paired reviewed regions retaining their original production contextual-light proposal; does not rerun detector or background construction'}
         baseline_id=current.get('promoted_candidate_id')
         if baseline_id and baseline_id!=candidate_id:
             try:
@@ -269,6 +296,7 @@ def evaluate_test(library,mission,candidate_id,operator):
                 baseline_comparison={'status':'unavailable','reason':str(exc)}
         report={'regions':len(actual),'images':len({row['image_id'] for row in data['test']}),
             **candidate_metrics,'baseline_comparison':baseline_comparison,
+            'base_context_comparison':base_context_comparison,
             'scope':'held-out labeled light patches for this frozen candidate; not whole-image vehicle or traffic-count accuracy',
             'test_labels_used_for_fit_or_validation':False,'automatic_promotion':False}
         with library.connect(mission) as c:
