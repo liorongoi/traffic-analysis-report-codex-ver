@@ -49,6 +49,17 @@ def schema(conn):
       id INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL REFERENCES video_events(id),
       revision INTEGER NOT NULL,operator TEXT NOT NULL,action TEXT NOT NULL,
       payload TEXT NOT NULL,created TEXT NOT NULL,UNIQUE(event_id,revision));
+    CREATE TABLE IF NOT EXISTS video_clip_exports(
+      id TEXT PRIMARY KEY,mission_id TEXT NOT NULL REFERENCES mission(id),
+      run_id TEXT NOT NULL REFERENCES video_runs(id),event_id TEXT NOT NULL REFERENCES video_events(id),
+      source_id TEXT NOT NULL REFERENCES video_sources(id),operator TEXT NOT NULL,
+      pre_seconds REAL NOT NULL,post_seconds REAL NOT NULL,
+      requested_start_num INTEGER NOT NULL,requested_start_den INTEGER NOT NULL,
+      requested_end_num INTEGER NOT NULL,requested_end_den INTEGER NOT NULL,
+      output_path TEXT NOT NULL,source_sha256 TEXT NOT NULL,sha256 TEXT,
+      frame_count INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL,error TEXT,
+      created TEXT NOT NULL,finished TEXT);
+    CREATE INDEX IF NOT EXISTS video_clip_exports_mission_idx ON video_clip_exports(mission_id,created,id);
     CREATE TRIGGER IF NOT EXISTS immutable_video_sources_u BEFORE UPDATE ON video_sources
       BEGIN SELECT RAISE(ABORT,'video source versions are immutable'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_sources_d BEFORE DELETE ON video_sources

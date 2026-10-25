@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from .store import Library
-from . import video_store
+from . import video_store, video_clips
 
 
 def serve(workspace, web, port=8765, open_browser=False):
@@ -24,6 +24,7 @@ def serve(workspace, web, port=8765, open_browser=False):
     video_inference=VideoInferenceService(library,Path(web).parent/'model-packs'/'yolox-s',inference)
     monitor = SourceMonitor(library,on_batch=inference.start_continuous_batch)
     monitor.start()
+    video_clips.reconcile_exports(library)
     token = secrets.token_urlsafe(32)
     class Handler(BaseHTTPRequestHandler):
         def reply(self, status, data, content='application/json; charset=utf-8'):
@@ -98,6 +99,20 @@ def serve(workspace, web, port=8765, open_browser=False):
                     self.wfile.write(block)
                     remaining -= len(block)
 
+        def download_clip(self, query):
+            path = video_clips.export_file(library, query['mission'][0], query['export'][0])
+            size = path.stat().st_size
+            self.send_response(200)
+            self.send_header('Content-Type', 'video/mp4')
+            self.send_header('Content-Length', str(size))
+            self.send_header('Content-Disposition', f'attachment; filename="{path.name}"')
+            self.send_header('Cache-Control', 'private, no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            with path.open('rb') as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b''):
+                    self.wfile.write(block)
+
         def do_GET(self):
             if not self.valid_host():
                 return self.reply(403, {'error': 'Loopback host required'})
@@ -116,6 +131,10 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200,inference.status(query['mission'][0]))
                 if parsed.path == '/api/video/media':
                     return self.stream_video(query)
+                if parsed.path == '/api/video/clips':
+                    return self.reply(200,video_clips.exports(library,query['mission'][0]))
+                if parsed.path == '/api/video/clips/download':
+                    return self.download_clip(query)
                 if parsed.path == '/api/video/sources':
                     return self.reply(200,video_store.sources(library,query['mission'][0]))
                 if parsed.path == '/api/video/runs':
@@ -268,6 +287,17 @@ def serve(workspace, web, port=8765, open_browser=False):
                 elif self.path == '/api/video/events/review':
                     result=video_store.review_event(library,data['mission'],data['event_id'],
                         data['expected_revision'],data['operator'],data['action'],data.get('payload'))
+                elif self.path == '/api/video/clips':
+                    with inference.lock:
+                        if inference.training_active or inference._has_active_worker():
+                            raise ValueError('Finish local processing before exporting a video clip')
+                        inference.training_active=True
+                    try:
+                        result=video_clips.export_event_clip(library,data['mission'],data['event_id'],
+                            data['pre_seconds'],data['post_seconds'],data['operator'])
+                    finally:
+                        with inference.lock:
+                            inference.training_active=False
                 else:
                     return self.reply(404, {'error':'Not found'})
                 self.reply(200,result)

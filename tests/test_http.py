@@ -66,6 +66,7 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="videoRunForm"',page)
             self.assertIn('id="videoEventList"',page)
             self.assertIn('id="videoPlayer"',page)
+            self.assertIn('id="videoClipExports"',page)
             for key in ('keyboardHelp','helpImport','helpSchedule','helpViews','helpReview','helpScope'):
                 self.assertIn(f'data-t="{key}"',page)
     def test_write_requires_session_token(self):
@@ -111,6 +112,12 @@ class HttpTests(unittest.TestCase):
                 self.assertEqual(json.load(response)[0]['id'],source['id'])
             with self.request('/api/video/runs?mission='+mission) as response:
                 self.assertEqual(json.load(response),[])
+            with self.request('/api/video/clips?mission='+mission) as response:
+                self.assertEqual(json.load(response),[])
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self.request('/api/video/clips',{'mission':mission,'event_id':'missing',
+                    'pre_seconds':1,'post_seconds':1,'operator':'Operator'})
+            self.assertEqual(exc.exception.code,400)
     def test_invalid_body_returns_error(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'x','country':'Israel','zone':'bad/zone'})
         self.assertEqual(exc.exception.code,400)
