@@ -44,7 +44,7 @@ Fintraffic samples supplied by the user are imported locally into `workspace/sam
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-See [verification record](docs/09-verification.md). The 181-test Python suite covers the current API and processing workflows, including operator-confirmed offline search, video workflow, host inventory, source integrity, byte-range checks, and one-time held-out night-light patch evaluation. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
+See [verification record](docs/09-verification.md). The Python suite covers the current API and processing workflows, including operator-confirmed offline search, video workflow, host inventory, source integrity, byte-range checks, one-time held-out night-light patch evaluation, and corrected video track identities. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
 
 ## Not implemented yet
 
@@ -64,4 +64,4 @@ The verbatim request is in `docs/requirements-source.txt`. Design documents 01â€
 
 ## Night separation and correction learning
 
-See [night review and training status](docs/11-night-separation-and-learning.md). The current full suite contains 181 passing tests; see [verification status](docs/09-verification.md) for scope. The main mission has zero saved corrections, so no user-trained candidate exists yet. The separate light head supports explicit-label refits, reports validation metrics, permits one-time held-out patch evaluation per unchanged manifest, and is selected explicitly per run; YOLOX fine-tuning is unsupported.
+See [night review and training status](docs/11-night-separation-and-learning.md). The main mission has zero saved corrections, so no user-trained candidate exists yet. The separate light head supports explicit-label refits, reports validation metrics, permits one-time held-out patch evaluation per unchanged manifest, and is selected explicitly per run; YOLOX fine-tuning is unsupported.

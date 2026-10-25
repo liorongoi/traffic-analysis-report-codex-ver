@@ -27,7 +27,7 @@ Mission library
    → independent evaluation → controlled promotion/rollback
 ```
 
-Video timing correction: a reviewer enters a start and end offset inside the immutable event interval. Each requested boundary snaps to the nearest saved analyzed frame assigned to that same track; ties choose the lower frame index. The correction is appended to review history and is retained through later accept/reject actions. Playback, clip exports, and event-table exports use the corrected interval and preserve the original interval. This supports trimming only; track merge and split behavior remains undecided and unimplemented.
+Video timing correction: a reviewer enters a start and end offset inside the immutable event interval. Each requested boundary snaps to the nearest saved analyzed frame assigned to that same track; ties choose the lower frame index. The correction is appended to review history and is retained through later accept/reject actions. Playback, clip exports, and event-table exports use the corrected interval and preserve the original interval. Reviewers can merge one track event into another event in the same run, or split a track at a saved analyzed frame that has observations on both sides. Merges project one logical event; splits create two logical child events. Original event rows remain immutable, corrections can be cleared by a later audit entry, and exports preserve the source event IDs.
 
 Investigation viewer: original image on the main canvas; machine/added/removed/candidate overlays visually distinct; zoom/pan; rectangle addition; class/light-group edits; visible source UTC and local timestamp; Save/Approve; Previous/Next and position. Native-pixel coordinates survive browser scaling.
 

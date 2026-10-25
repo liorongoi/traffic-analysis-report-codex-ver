@@ -317,6 +317,62 @@ class VideoStoreTests(unittest.TestCase):
         self.assertEqual((accepted['first_pts'],accepted['last_pts']),(1,3))
         self.assertEqual(accepted['timing_payload']['first_frame_index'],1)
 
+    def test_video_track_merge_projects_one_logical_event_and_can_be_cleared(self):
+        source=register_video(self.library,self.mission,'clip.mkv')
+        run=create_run(self.library,self.mission,source['id'],self.config())
+        def add_event(event_id,track,start,end,label):
+            with self.library.connect(self.mission) as conn:
+                conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                    first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,last_time_base_den,
+                    first_offset_num,first_offset_den,last_offset_num,last_offset_den,first_utc,last_utc,labels,
+                    observation_count,association_uncertain,representative_box,uncertainty_reasons,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (event_id,self.mission,run['id'],source['id'],track,start,1,1,end,1,1,start,1,end,1,
+                     None,None,json.dumps([label]),2,0,'[0.1,0.1,0.2,0.2]','[]','2026-10-25T00:00:00Z'))
+        add_event('merge-source','track-a',0,2,'car')
+        add_event('merge-target','track-b',2,4,'bus')
+        corrected=review_event(self.library,self.mission,'merge-source',0,'Operator','merge_tracks',
+            {'target_event_id':'merge-target'})
+        self.assertEqual(corrected['action'],'merge_tracks')
+        projected=events(self.library,self.mission,run['id'])
+        self.assertEqual(len(projected),1)
+        self.assertEqual(projected[0]['id'],'merge-target')
+        self.assertEqual(projected[0]['merged_event_ids'],['merge-source','merge-target'])
+        self.assertEqual(projected[0]['labels'],['bus','car'])
+        self.assertEqual((projected[0]['first_offset_num'],projected[0]['last_offset_num']),(0,4))
+        review_event(self.library,self.mission,'merge-source',1,'Operator','clear_identity_correction')
+        self.assertEqual({item['id'] for item in events(self.library,self.mission,run['id'])},
+            {'merge-source','merge-target'})
+
+    def test_video_track_split_creates_two_corrected_children_with_saved_observations(self):
+        source=register_video(self.library,self.mission,'clip.mkv')
+        run=create_run(self.library,self.mission,source['id'],self.config())
+        event_id='split-parent';track_id='track-split'
+        with self.library.connect(self.mission) as conn:
+            conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,last_time_base_den,
+                first_offset_num,first_offset_den,last_offset_num,last_offset_den,first_utc,last_utc,labels,
+                observation_count,association_uncertain,representative_box,uncertainty_reasons,created)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (event_id,self.mission,run['id'],source['id'],track_id,0,1,1,3,1,1,0,1,3,1,
+                 None,None,'["car"]',4,0,'[0.1,0.1,0.2,0.2]','[]','2026-10-25T00:00:00Z'))
+            for frame_index in range(4):
+                conn.execute('''INSERT INTO video_frame_detections(mission_id,run_id,source_id,frame_index,
+                    pts,time_base_num,time_base_den,offset_seconds,detections,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                    (self.mission,run['id'],source['id'],frame_index,frame_index,1,1,float(frame_index),
+                     json.dumps([{'track_id':track_id,'label':'car','box':[.1,.1,.2,.2]}]),'2026-10-25T00:00:00Z'))
+        with self.assertRaisesRegex(ValueError,'saved observation'):
+            review_event(self.library,self.mission,event_id,0,'Operator','split_track',{'frame_index':8})
+        review_event(self.library,self.mission,event_id,0,'Operator','split_track',{'frame_index':2})
+        children=events(self.library,self.mission,run['id'])
+        self.assertEqual(len(children),2)
+        self.assertEqual([item['first_offset_num'] for item in children],[0,2])
+        self.assertEqual([item['last_offset_num'] for item in children],[1,3])
+        self.assertEqual([item['observation_count'] for item in children],[2,2])
+        self.assertEqual(children[0]['source_event_id'],event_id)
+        self.assertNotEqual(children[0]['id'],children[1]['id'])
+
     def test_source_registration_honors_flat_directory_setting(self):
         flat_mission = self.library.create('Flat video mission', 'Israel', 'Asia/Jerusalem', {
             'input_type': 'videos', 'analysis_mode': 'video_traffic',

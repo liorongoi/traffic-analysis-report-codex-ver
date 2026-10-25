@@ -95,7 +95,7 @@ class VideoEventExportTests(unittest.TestCase):
         self.assertEqual(values[:len(row)], list(row.keys()))
         self.assertIn(self.event_id, values)
         self.assertIn('{"label": "טנדר"}', values)
-        self.assertIn(self.clip_id, values[-1])
+        self.assertIn(self.clip_id, row['clip_exports'])
         self.assertEqual(hashlib.sha256(xlsx_path.read_bytes()).hexdigest(), xlsx_export['snapshot_sha256'])
         self.assertEqual(len(exports(self.library, self.mission, self.run['id'])), 2)
 
@@ -147,6 +147,48 @@ class VideoEventExportTests(unittest.TestCase):
         self.assertEqual(row['original_last_offset_seconds'],'2.0')
         self.assertEqual(row['review_action'],'correct_timing')
         self.assertEqual(json.loads(row['review_payload'])['first_frame_index'],15)
+
+    def test_event_export_uses_corrected_merge_identity_and_preserves_original_event_ids(self):
+        source_id=self.source['id'];run_id=self.run['id'];other_id='merge-source-export'
+        with self.library.connect(self.mission) as conn:
+            conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,last_time_base_den,
+                first_offset_num,first_offset_den,last_offset_num,last_offset_den,first_utc,last_utc,labels,
+                observation_count,association_uncertain,representative_box,uncertainty_reasons,created)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (other_id,self.mission,run_id,source_id,'track-0002',0,1,10,10,1,10,0,1,1,1,
+                 None,None,'["car"]',2,0,'[0.2,0.2,0.2,0.2]','[]','2026-10-25T00:00:00Z'))
+        review_event(self.library,self.mission,other_id,0,'Operator','merge_tracks',{'target_event_id':self.event_id})
+        result=export_run(self.library,self.mission,run_id,'Operator')
+        csv_export=next(item for item in result['files'] if item['format']=='csv')
+        with export_file(self.library,self.mission,csv_export['id']).open(encoding='utf-8-sig',newline='') as stream:
+            rows=list(csv.DictReader(stream))
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['event_id'],self.event_id)
+        self.assertEqual(json.loads(rows[0]['original_event_ids']),sorted([self.event_id,other_id]))
+        self.assertEqual(rows[0]['first_offset_seconds'],'0.0')
+        self.assertEqual(rows[0]['last_offset_seconds'],'2.0')
+        self.assertEqual(json.loads(rows[0]['identity_correction'])['action'],'merge_tracks')
+
+    def test_event_export_materializes_split_children_at_observed_frame(self):
+        with self.library.connect(self.mission) as conn:
+            for frame_index in (10,15,20):
+                conn.execute('''INSERT INTO video_frame_detections(mission_id,run_id,source_id,frame_index,
+                    pts,time_base_num,time_base_den,offset_seconds,detections,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                    (self.mission,self.run['id'],self.source['id'],frame_index,frame_index,1,10,
+                     frame_index/10,json.dumps([{'track_id':'track-0001','label':'car','box':[.1,.2,.3,.4]}]),
+                     '2026-10-25T00:00:02+00:00'))
+        review_event(self.library,self.mission,self.event_id,1,'Operator','split_track',{'frame_index':15})
+        result=export_run(self.library,self.mission,self.run['id'],'Operator')
+        csv_export=next(item for item in result['files'] if item['format']=='csv')
+        with export_file(self.library,self.mission,csv_export['id']).open(encoding='utf-8-sig',newline='') as stream:
+            rows=list(csv.DictReader(stream))
+        self.assertEqual(len(rows),2)
+        self.assertEqual([row['first_offset_seconds'] for row in rows],['1.0','1.5'])
+        self.assertEqual([row['last_offset_seconds'] for row in rows],['1.0','2.0'])
+        self.assertEqual({json.loads(row['identity_correction'])['child'] for row in rows},{1,2})
+        self.assertEqual({tuple(json.loads(row['original_event_ids'])) for row in rows},{(self.event_id,)})
 
     def test_interrupted_publish_recovers_atomically(self):
         result = export_run(self.library, self.mission, self.run['id'], 'Operator')

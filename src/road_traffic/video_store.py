@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import uuid
 from functools import lru_cache
+from contextlib import nullcontext
 
 from .store import now, safe_file
 from .tracking import TrackerPolicy
@@ -703,16 +704,24 @@ def fail_worker(library, mission, run_id, error):
             (now(), now(), reason, mission, run_id))
 
 
-def events(library, mission, run_id, *, limit=100, offset=0):
-    prepare(library, mission)
+def events(library, mission, run_id, *, limit=100, offset=0, prepared=False, connection=None):
+    if not prepared:
+        prepare(library, mission)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
         raise ValueError('event page limit must be between 1 and 100')
     if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
         raise ValueError('event page offset must be a non-negative integer')
-    with library.connect(mission) as conn:
+    with (nullcontext(connection) if connection is not None else library.connect(mission)) as conn:
         if not conn.execute('SELECT 1 FROM video_runs WHERE id=? AND mission_id=?',
                 (run_id, mission)).fetchone():
             raise ValueError('Video run not found')
+        has_active_identity_edits=bool(conn.execute('''SELECT 1 FROM video_event_reviews r JOIN (
+            SELECT event_id,MAX(revision) revision FROM video_event_reviews
+            WHERE action IN ('merge_tracks','split_track','clear_identity_correction') GROUP BY event_id
+          ) x ON x.event_id=r.event_id AND x.revision=r.revision
+          JOIN video_events e ON e.id=r.event_id WHERE e.mission_id=? AND e.run_id=?
+            AND r.action IN ('merge_tracks','split_track') LIMIT 1''',(mission,run_id)).fetchone())
+        already_paged=not has_active_identity_edits
         rows = conn.execute('''SELECT e.*,r.revision,r.operator,r.action,r.payload,r.created reviewed_at,
             s.recording_start_utc,t.payload timing_payload,c.payload class_payload
             FROM video_events e LEFT JOIN video_event_reviews r ON r.event_id=e.id
@@ -722,26 +731,127 @@ def events(library, mission, run_id, *, limit=100, offset=0):
             LEFT JOIN video_event_reviews c ON c.event_id=e.id AND c.revision=(
               SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id AND x.action='correct_class')
             JOIN video_sources s ON s.id=e.source_id AND s.mission_id=e.mission_id
-            WHERE e.mission_id=? AND e.run_id=? ORDER BY (1.0*e.first_offset_num/e.first_offset_den),e.id LIMIT ? OFFSET ?''',
-            (mission, run_id, limit, offset)).fetchall()
-    result = []
+            WHERE e.mission_id=? AND e.run_id=? ORDER BY (1.0*e.first_offset_num/e.first_offset_den),e.id'''+
+            (' LIMIT ? OFFSET ?' if already_paged else ''),
+            (mission,run_id,limit,offset) if already_paged else (mission,run_id)).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            for key in ('labels', 'uncertainty_reasons', 'payload', 'timing_payload', 'class_payload', 'representative_box'):
+                item[key] = json.loads(item[key]) if item[key] is not None else None
+            if item['timing_payload'] is not None:
+                item = apply_event_timing(conn, item)
+            if item['class_payload'] is not None:
+                item['original_labels'] = item['labels']
+                corrected_label = item['class_payload'].get('label')
+                if corrected_label:
+                    item['labels'] = [corrected_label]
+            item['review_status'] = {'accept': 'accepted', 'reject': 'rejected',
+                'reopen': 'pending', 'correct_class': 'corrected', 'correct_timing': 'corrected',
+                'mark_duplicate': 'duplicate', 'merge_tracks': 'corrected',
+                'split_track': 'corrected', 'clear_identity_correction': 'corrected'}.get(item['action'], 'pending')
+            item['source_event_id'] = item['id']
+            result.append(item)
+        latest_identity = conn.execute('''SELECT r.event_id,r.action,r.payload,r.revision,r.operator,r.created
+            FROM video_event_reviews r JOIN (
+              SELECT event_id,MAX(revision) revision FROM video_event_reviews
+              WHERE action IN ('merge_tracks','split_track','clear_identity_correction') GROUP BY event_id
+            ) x ON x.event_id=r.event_id AND x.revision=r.revision
+            JOIN video_events e ON e.id=r.event_id WHERE e.mission_id=? AND e.run_id=?''',
+            (mission, run_id)).fetchall()
+        edits = {row['event_id']: dict(row) for row in latest_identity}
+        for edit in edits.values():
+            edit['payload'] = json.loads(edit['payload']) if edit['payload'] else {}
+        by_id = {item['id']: item for item in result}
+        # Merge source events into their selected target and project one logical event.
+        groups = {}
+        for item in result:
+            event_id = item['id']; seen = set()
+            while event_id in edits and edits[event_id]['action'] == 'merge_tracks':
+                if event_id in seen:
+                    raise ValueError('Saved track merge history contains a cycle')
+                seen.add(event_id); event_id = edits[event_id]['payload']['target_event_id']
+            groups.setdefault(event_id, []).append(item)
+        projected = []
+        for root_id, members in groups.items():
+            root = dict(by_id.get(root_id, members[0]))
+            if len(members) > 1:
+                first_member = min(members,key=lambda item:Fraction(item['first_offset_num'],item['first_offset_den']))
+                last_member = max(members,key=lambda item:Fraction(item['last_offset_num'],item['last_offset_den']))
+                root.update({key:first_member[key] for key in ('first_pts','first_time_base_num','first_time_base_den','first_offset_num','first_offset_den','first_utc')})
+                root.update({key:last_member[key] for key in ('last_pts','last_time_base_num','last_time_base_den','last_offset_num','last_offset_den','last_utc')})
+                root['labels'] = sorted({label for member in members for label in member['labels']})
+                root['original_labels'] = sorted({label for member in members
+                    for label in member.get('original_labels',member['labels'])})
+                root['representative_box'] = last_member['representative_box']
+                root['preview_event_id'] = last_member['id']
+                root['observation_count'] = sum(member['observation_count'] for member in members)
+                root['association_uncertain'] = int(any(member['association_uncertain'] for member in members))
+                root['merged_event_ids'] = sorted(member['id'] for member in members)
+                root['original_track_ids'] = sorted(member['track_id'] for member in members)
+                merged_from=[member['id'] for member in members if member['id']!=root_id]
+                root['identity_correction'] = {'action':'merge_tracks','event_ids':root['merged_event_ids'],
+                    'merged_from_event_ids':sorted(merged_from)}
+                if merged_from:
+                    active_edit=edits[merged_from[0]]
+                    root['identity_action_event_id']=merged_from[0]
+                    root['identity_action_revision']=active_edit['revision']
+                root['review_status'] = 'corrected'
+            edit = edits.get(root_id)
+            if edit and edit['action'] == 'split_track':
+                projected.extend(_split_logical_event(library, mission, root, edit['payload'], connection=conn))
+            else:
+                projected.append(root)
+        result = sorted(projected, key=lambda item: (Fraction(item['first_offset_num'], item['first_offset_den']), item['id']))
+        return result if already_paged else result[offset:offset+limit]
+
+
+def _split_logical_event(library, mission, event, payload, connection=None):
+    split_at = payload.get('frame_index')
+    if isinstance(split_at, bool) or not isinstance(split_at, int):
+        raise ValueError('Saved track split frame is invalid')
+    with (nullcontext(connection) if connection is not None else library.connect(mission)) as conn:
+        rows = conn.execute('''SELECT frame_index,pts,time_base_num,time_base_den,detections
+            FROM video_frame_detections WHERE mission_id=? AND run_id=? ORDER BY frame_index''',
+            (mission,event['run_id'])).fetchall()
+    track = event['track_id']
+    timing=event.get('timing_payload') or {}
+    min_frame=timing.get('first_frame_index',-1);max_frame=timing.get('last_frame_index',2**63-1)
+    observations=[]
     for row in rows:
-        item = dict(row)
-        for key in ('labels', 'uncertainty_reasons', 'payload', 'timing_payload', 'class_payload', 'representative_box'):
-            item[key] = json.loads(item[key]) if item[key] is not None else None
-        if item['timing_payload'] is not None:
-            with library.connect(mission) as correction_conn:
-                item = apply_event_timing(correction_conn, item)
-        if item['class_payload'] is not None:
-            item['original_labels'] = item['labels']
-            corrected_label = item['class_payload'].get('label')
-            if corrected_label:
-                item['labels'] = [corrected_label]
-        item['review_status'] = {'accept': 'accepted', 'reject': 'rejected',
-            'reopen': 'pending', 'correct_class': 'corrected', 'correct_timing': 'corrected',
-            'mark_duplicate': 'duplicate'}.get(item['action'], 'pending')
-        result.append(item)
-    return sorted(result, key=lambda item: (Fraction(item['first_offset_num'], item['first_offset_den']), item['id']))
+        if row['frame_index']<min_frame or row['frame_index']>max_frame:
+            continue
+        try: detections=json.loads(row['detections'])
+        except (TypeError,json.JSONDecodeError) as exc: raise ValueError('Saved frame detections are corrupt') from exc
+        match=next((d for d in detections if isinstance(d,dict) and d.get('track_id')==track),None)
+        if match:
+            stamp=VideoTimestamp(row['pts'],row['time_base_num'],row['time_base_den'])
+            observations.append((row['frame_index'],stamp,match))
+    left=[obs for obs in observations if obs[0]<split_at]
+    right=[obs for obs in observations if obs[0]>=split_at]
+    if not left or not right:
+        raise ValueError('A split must leave at least one saved observation in each child event')
+    origin=datetime.fromisoformat(event['recording_start_utc']) if event.get('recording_start_utc') else None
+    children=[]
+    for ordinal,part in enumerate((left,right),1):
+        first=part[0][1];last=part[-1][1]
+        child=dict(event)
+        child['id']=event['id'] if ordinal==1 else str(uuid.uuid5(uuid.NAMESPACE_URL,f"traffic-event-split:{event['id']}:{split_at}"))
+        child['source_event_id']=event['id'];child['track_id']=f"{track}:child-{ordinal}"
+        child.update(first_pts=first.pts,first_time_base_num=first.time_base_num,first_time_base_den=first.time_base_den,
+            first_offset_num=first.offset_seconds.numerator,first_offset_den=first.offset_seconds.denominator,
+            last_pts=last.pts,last_time_base_num=last.time_base_num,last_time_base_den=last.time_base_den,
+            last_offset_num=last.offset_seconds.numerator,last_offset_den=last.offset_seconds.denominator,
+            first_utc=first.utc_at(origin).isoformat() if origin else None,last_utc=last.utc_at(origin).isoformat() if origin else None,
+            observation_count=len(part),labels=sorted({str(obs[2].get('label')) for obs in part if obs[2].get('label')}),
+            representative_box=part[-1][2].get('box'),review_status='corrected',
+            identity_correction={'action':'split_track','frame_index':split_at,'child':ordinal,'children':2})
+        child['first_frame_index']=part[0][0];child['last_frame_index']=part[-1][0]
+        if (event.get('class_payload') or {}).get('label'):
+            child['labels']=[event['class_payload']['label']]
+        child['timing_payload']=None
+        children.append(child)
+    return children
 
 
 def _frame_timestamp_for_track(conn, event, frame_index):
@@ -793,33 +903,41 @@ def apply_event_timing(conn, event):
     return result
 
 
+def logical_event_by_id(library, mission, event_id):
+    prepare(library,mission)
+    with library.connect(mission) as conn:
+        run_ids=[row['run_id'] for row in conn.execute('SELECT DISTINCT run_id FROM video_events WHERE mission_id=?',(mission,))]
+    for run_id in run_ids:
+        offset=0
+        while True:
+            page=events(library,mission,run_id,limit=100,offset=offset,prepared=True)
+            logical=next((item for item in page if item['id']==event_id),None)
+            if logical:return logical
+            if len(page)<100:break
+            offset+=len(page)
+    raise ValueError('Video event not found in this mission')
+
+
 def event_thumbnail(library, mission, event_id):
     """Render a bounded JPEG preview from the event's verified source frame."""
-    prepare(library, mission)
+    logical=logical_event_by_id(library,mission,event_id)
+    source_event_id=logical.get('preview_event_id',logical.get('source_event_id',event_id))
     with library.connect(mission) as conn:
         event = conn.execute('''SELECT e.*,s.recording_start_utc,t.payload timing_payload
             FROM video_events e JOIN video_sources s ON s.id=e.source_id AND s.mission_id=e.mission_id
             LEFT JOIN video_event_reviews t ON t.event_id=e.id AND t.revision=(
               SELECT MAX(x.revision) FROM video_event_reviews x WHERE x.event_id=e.id AND x.action='correct_timing')
             WHERE e.id=? AND e.mission_id=?''',
-            (event_id, mission)).fetchone()
+            (source_event_id, mission)).fetchone()
     if not event:
         raise ValueError('Video event not found in this mission')
     event = dict(event)
-    if event.get('timing_payload'):
-        event['timing_payload'] = json.loads(event['timing_payload'])
-        with library.connect(mission) as conn:
-            event = apply_event_timing(conn, event)
-            selected = conn.execute('''SELECT detections FROM video_frame_detections
-                WHERE mission_id=? AND run_id=? AND frame_index=?''',
-                (mission,event['run_id'],event['timing_payload']['last_frame_index'])).fetchone()
-        detections = json.loads(selected['detections']) if selected else []
-        matched = next((item for item in detections if isinstance(item,dict)
-            and item.get('track_id')==event['track_id']),None)
-        event['representative_box'] = _json(matched['box']) if matched else None
+    event.update({key:logical[key] for key in ('first_pts','first_time_base_num','first_time_base_den',
+        'last_pts','last_time_base_num','last_time_base_den','representative_box') if key in logical})
+    event['timing_payload']=None
     if not event['representative_box']:
         raise ValueError('This saved event predates frame preview metadata')
-    box = json.loads(event['representative_box'])
+    box = json.loads(event['representative_box']) if isinstance(event['representative_box'],str) else event['representative_box']
     if (not isinstance(box, list) or len(box) != 4 or
             any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
                 for value in box)):
@@ -874,8 +992,9 @@ def review_event(library, mission, event_id, expected_revision, operator, action
     operator = operator.strip() if isinstance(operator, str) else ''
     if not 1 <= len(operator) <= 120:
         raise ValueError('Operator is required for video event review')
-    if action not in ('accept', 'reject', 'reopen', 'correct_class', 'correct_timing', 'mark_duplicate'):
-        raise ValueError('Unsupported video event correction; track merge and split remain to be designed')
+    if action not in ('accept', 'reject', 'reopen', 'correct_class', 'correct_timing', 'mark_duplicate',
+            'merge_tracks', 'split_track', 'clear_identity_correction'):
+        raise ValueError('Unsupported video event correction')
     payload = {} if payload is None else payload
     if not isinstance(payload, dict):
         raise ValueError('Video event review payload must be a mapping')
@@ -902,6 +1021,16 @@ def review_event(library, mission, event_id, expected_revision, operator, action
             requested.append(offset)
         if requested[0] > requested[1]:
             raise ValueError('Timing correction start must not follow its end')
+    elif action == 'merge_tracks':
+        target_id=payload.get('target_event_id')
+        if not isinstance(target_id,str) or not target_id.strip() or target_id==event_id:
+            raise ValueError('Track merge requires a different target event ID')
+        payload={'target_event_id':target_id.strip()}
+    elif action == 'split_track':
+        frame_index=payload.get('frame_index')
+        if isinstance(frame_index,bool) or not isinstance(frame_index,int) or frame_index<0:
+            raise ValueError('Track split requires a non-negative analyzed frame index')
+        payload={'frame_index':frame_index}
     elif payload:
         raise ValueError(f'{action} does not accept a payload')
     with library.connect(mission) as conn:
@@ -914,6 +1043,48 @@ def review_event(library, mission, event_id, expected_revision, operator, action
                 'SELECT 1 FROM video_events WHERE id=? AND run_id=?',
                 (payload['duplicate_of'], event['run_id'])).fetchone():
             raise ValueError('Duplicate target must be another event in the same run')
+        if action in ('merge_tracks','split_track','clear_identity_correction'):
+            latest=conn.execute('''SELECT r.event_id,r.action,r.payload FROM video_event_reviews r JOIN (
+                SELECT event_id,MAX(revision) revision FROM video_event_reviews
+                WHERE action IN ('merge_tracks','split_track','clear_identity_correction') GROUP BY event_id
+              ) x ON x.event_id=r.event_id AND x.revision=r.revision
+              JOIN video_events e ON e.id=r.event_id WHERE e.run_id=?''',(event['run_id'],)).fetchall()
+            active={row['event_id']:row for row in latest if row['action']!='clear_identity_correction'}
+            if action=='clear_identity_correction':
+                if event_id not in active:
+                    raise ValueError('This event has no active identity correction to clear')
+            elif action=='merge_tracks':
+                target=conn.execute('SELECT * FROM video_events WHERE id=? AND run_id=?',(payload['target_event_id'],event['run_id'])).fetchone()
+                if not target: raise ValueError('Merge target must be another event in the same run')
+                if event_id in active:
+                    raise ValueError('Clear the existing identity correction before merging this event')
+                if payload['target_event_id'] in active and active[payload['target_event_id']]['action']=='split_track':
+                    raise ValueError('A split event cannot be a merge target')
+                if payload['target_event_id'] in active and active[payload['target_event_id']]['action']=='merge_tracks':
+                    raise ValueError('Choose the current root event as the merge target')
+                cursor=payload['target_event_id'];seen={event_id}
+                while cursor in active and active[cursor]['action']=='merge_tracks':
+                    if cursor in seen: raise ValueError('This merge would create an identity cycle')
+                    seen.add(cursor);cursor=json.loads(active[cursor]['payload'])['target_event_id']
+                if cursor==event_id: raise ValueError('This merge would create an identity cycle')
+            elif action=='split_track':
+                if event_id in active:
+                    raise ValueError('Clear the existing identity correction before splitting this event')
+                incoming=conn.execute('''SELECT r.event_id,r.payload FROM video_event_reviews r JOIN (
+                    SELECT event_id,MAX(revision) revision FROM video_event_reviews
+                    WHERE action IN ('merge_tracks','split_track','clear_identity_correction') GROUP BY event_id
+                  ) x ON x.event_id=r.event_id AND x.revision=r.revision
+                  WHERE r.action='merge_tracks' AND r.payload LIKE ?''',(f'%"target_event_id":"{event_id}"%',)).fetchone()
+                if incoming: raise ValueError('A merged event must be separated before it can be split')
+                frame=conn.execute('''SELECT frame_index,detections FROM video_frame_detections
+                    WHERE mission_id=? AND run_id=? ORDER BY frame_index''',(mission,event['run_id'])).fetchall()
+                observed=[]
+                for saved in frame:
+                    try:detections=json.loads(saved['detections'])
+                    except (TypeError,json.JSONDecodeError) as exc:raise ValueError('Saved frame detections are corrupt') from exc
+                    if any(isinstance(d,dict) and d.get('track_id')==event['track_id'] for d in detections):observed.append(saved['frame_index'])
+                if payload['frame_index'] not in observed or not any(i<payload['frame_index'] for i in observed) or not any(i>=payload['frame_index'] for i in observed):
+                    raise ValueError('Split frame must be a saved observation with track observations on both sides')
         if action == 'correct_timing':
             first_original = Fraction(event['first_offset_num'], event['first_offset_den'])
             last_original = Fraction(event['last_offset_num'], event['last_offset_den'])
