@@ -68,6 +68,9 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="videoPlayer"',page)
             self.assertIn('id="videoClipExports"',page)
             self.assertIn('id="hardwareReport"',page)
+            self.assertIn('id="plateWorkflow"',page)
+            self.assertIn('id="plateCrops"',page)
+            self.assertIn('id="detectCurrentPlates"',page)
             self.assertIn('id="objectSearchQuery"',page)
             self.assertIn('id="confirmObjectSearch"',page)
             self.assertIn('id="proposeViews"',page)
@@ -129,6 +132,29 @@ class HttpTests(unittest.TestCase):
                 self.request('/api/video/clips',{'mission':mission,'event_id':'missing',
                     'pre_seconds':1,'post_seconds':1,'operator':'Operator'})
             self.assertEqual(exc.exception.code,400)
+    def test_plate_crop_detector_http_flow_uses_local_model_and_output_folder(self):
+        with tempfile.TemporaryDirectory() as external:
+            root=Path(external);source=root/'source';output=root/'output'
+            source.mkdir();output.mkdir();write_test_image(source/'17052026-1604-camera.jpg',(0,0,0))
+            data={'name':'Plate crop API fixture','country':'Israel','zone':'Asia/Jerusalem',
+                'input_type':'images','analysis_mode':'license_plate','source_root':str(source),
+                'output_root':str(output)}
+            with self.request('/api/missions',data) as response:mission=json.load(response)['id']
+            with self.request('/api/import',{'mission':mission,'path':str(source),'preset':'camera'}) as response:
+                json.load(response)
+            with self.request('/api/images?mission='+mission) as response:image=json.load(response)[0]
+            with self.request('/api/plates/detect',{'mission':mission,'image_id':image['id']}) as response:
+                proposals=json.load(response)
+            with self.request('/api/plates?mission='+mission) as response:saved=json.load(response)
+            self.assertEqual(len(proposals),len(saved))
+            self.assertTrue((output/'plate-crops'/mission/'review.sqlite3').is_file())
+            for crop in saved:
+                self.assertEqual(crop['source_name'],image['name'])
+                self.assertNotIn('text',crop);self.assertNotIn('ocr',crop)
+                with self.request(f"/api/plate-crop?mission={mission}&crop={crop['id']}") as response:
+                    self.assertEqual(response.headers['Content-Type'],'image/jpeg')
+                    self.assertTrue(response.read())
+
     def test_invalid_body_returns_error(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'x','country':'Israel','zone':'bad/zone'})
         self.assertEqual(exc.exception.code,400)

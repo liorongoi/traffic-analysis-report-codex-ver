@@ -126,6 +126,13 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200, inventory(library.root))
                 if parsed.path == '/api/images':
                     return self.reply(200, library.images(query['mission'][0],query.get('run',[None])[0]))
+                if parsed.path == '/api/plates':
+                    from .plate_review import list_crops
+                    return self.reply(200, list_crops(library,query['mission'][0],query.get('image',[None])[0]))
+                if parsed.path == '/api/plate-crop':
+                    from .plate_review import crop_file
+                    path=crop_file(library,query['mission'][0],query['crop'][0])
+                    return self.reply(200,path.read_bytes(),'image/jpeg')
                 if parsed.path == '/api/night-learning':
                     from .learning import inventory,candidates
                     m=query['mission'][0]
@@ -262,6 +269,12 @@ def serve(workspace, web, port=8765, open_browser=False):
                         result=library.delete_view_region(data['mission'],data['region_id'],data['operator'])
                     else:
                         raise ValueError('Choose create, update, or delete action')
+                elif self.path == '/api/plates/detect':
+                    from .plate_review import propose
+                    result=propose(library,data['mission'],data['image_id'],Path(web).parent/'model-packs'/'license-plate-yolox',data.get('threshold',.3))
+                elif self.path == '/api/plates/review':
+                    from .plate_review import review
+                    result=review(library,data['mission'],data['crop_id'],data['expected_revision'],data['decision'],data['operator'])
                 elif self.path == '/api/review':
                     result = library.review(data['mission'],data['image'],data['revision'],data['annotations'],data['operator'],data['role'],data['status'],data.get('prediction_run'))
                 elif self.path == '/api/object-search/interpret':

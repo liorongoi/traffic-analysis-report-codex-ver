@@ -1,0 +1,40 @@
+open-lpr models
+Copyright the open-lpr contributors
+
+This product includes software developed by third parties. The artifacts in
+this repository are NOT all ours; per-artifact provenance is recorded in
+manifest.json and summarised below.
+
+--------------------------------------------------------------------------------
+plate_yolox_tiny_640.onnx  and  best_ckpt.pth
+--------------------------------------------------------------------------------
+Produced by this project. Architecture from YOLOX (Megvii-BaseDetection/YOLOX),
+which is licensed Apache-2.0 for both its code and its same-repository release
+weights. Pretrained from COCO (yolox_tiny.pth), then fine-tuned on an annotated
+licence-plate corpus plus community-contributed images pseudo-labelled by a
+teacher model.
+
+The training imagery is not published. It consists of user-contributed
+photographs containing real licence plates, faces and vehicles, uploaded without
+consent obtained. Publishing it would create a searchable index of real vehicle
+registration numbers.
+
+Ultralytics YOLO weights are licensed AGPL-3.0 and are deliberately NOT used,
+redistributed, or derived from anywhere in this project.
+
+--------------------------------------------------------------------------------
+plate_ocr_ppocrv5_mobile.onnx  and  plate_ocr_dict.json
+--------------------------------------------------------------------------------
+NOT produced by this project. These are conversions of an upstream recognition
+model from PaddleOCR (https://github.com/PaddlePaddle/PaddleOCR), which is
+licensed under Apache-2.0.
+
+The specific upstream release was never recorded and cannot be recovered from
+the artifacts: the ONNX graph carries no producer, producer_version or
+doc_string, and no PaddlePaddle installation, wheel or shell history survives on
+the build host. The Apache-2.0 licence is therefore asserted at project level
+and is NOT pinned to a verified release.
+
+These two files are a MATCHED PAIR and must be used together. Decoding assumes
+len(dictionary) + 2 output classes; substituting either without the other
+produces silently incorrect text rather than an error.
