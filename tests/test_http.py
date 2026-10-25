@@ -399,6 +399,53 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(history[0]['status'],'completed')
             self.assertEqual(history[0]['snapshot_sha256'],first['snapshot_sha256'])
 
+    def test_bulk_signoff_confirms_fixed_scope_and_exports_without_individual_review(self):
+        with tempfile.TemporaryDirectory() as external:
+            source=Path(external)/'source';source.mkdir()
+            output=Path(external)/'output';output.mkdir()
+            image=source/'17052026-1604-first.jpg';write_test_image(image)
+            data={'name':'Bulk scope','country':'Israel','zone':'Asia/Jerusalem',
+                'input_type':'images','analysis_mode':'general_traffic','source_root':str(source),
+                'output_root':str(output),'export_formats':['csv','xlsx']}
+            with self.request('/api/missions',data) as response:mission=json.load(response)['id']
+            with self.request('/api/import',{'mission':mission,'path':str(source),'preset':'camera'}):pass
+            from road_traffic.store import Library
+            from road_traffic.inference_store import create_run
+            library=Library(Path(self.tmp.name));run=create_run(library,mission,{'adapter':'test-fixture'})
+            with library.connect(mission) as conn:
+                conn.execute("UPDATE inference_runs SET status='completed',stage='completed',done=total,finished=? WHERE id=?",
+                    ('2026-10-25T00:00:00+00:00',run))
+            with self.request(f'/api/bulk-approval/preview?mission={mission}&run={run}') as response:
+                scope=json.load(response)
+            self.assertEqual(scope['image_count'],1)
+            self.assertFalse(scope['independent_ground_truth'])
+            image2=source/'17052026-1605-later.jpg';write_test_image(image2)
+            with self.request('/api/import',{'mission':mission,'path':str(source),'preset':'camera'}):pass
+            request={'mission':mission,'preview_id':scope['preview_id'],'operator':'Operator A'}
+            with self.request('/api/bulk-approval',request) as response:approved=json.load(response)
+            self.assertEqual(approved['status'],'completed')
+            self.assertEqual(approved['image_count'],1)
+            self.assertFalse(approved['independent_ground_truth'])
+            self.assertEqual(approved['individual_reviews_created'],0)
+            self.assertEqual(len(approved['files']),2)
+            self.assertEqual(approved['files'][0]['row_count'],1)
+            self.assertEqual(approved['files'][1]['row_count'],1)
+            with Path(approved['files'][0]['path']).open(encoding='utf-8-sig',newline='') as stream:
+                rows=list(csv.DictReader(stream))
+            self.assertEqual(len(rows),1)
+            self.assertEqual(rows[0]['bulk_approval_id'],approved['id'])
+            self.assertEqual(rows[0]['bulk_approval_type'],'bulk_unreviewed')
+            self.assertEqual(rows[0]['review_status'],'unreviewed')
+            with zipfile.ZipFile(approved['files'][1]['path']) as archive:
+                sheet=archive.read('xl/worksheets/sheet1.xml').decode()
+            self.assertIn('bulk_approval_id',sheet)
+            self.assertIn(approved['id'],sheet)
+            self.assertIn('bulk_unreviewed',sheet)
+            with self.request(f'/api/bulk-approvals?mission={mission}') as response:history=json.load(response)
+            self.assertEqual(history[0]['image_count'],1)
+            self.assertEqual(history[0]['status'],'completed')
+            self.assertTrue(all(row['review_status']=='unreviewed' for row in library.images(mission)))
+
     def test_configured_xlsx_and_csv_exports_preserve_unicode_without_formula_cells(self):
         with tempfile.TemporaryDirectory() as external:
             source=Path(external)/'source';source.mkdir()

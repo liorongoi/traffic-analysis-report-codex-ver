@@ -12,7 +12,7 @@ Implemented:
 - Explicit camera filename parser (`DDMMYYYY-HHmm-suffix`, UTC minute precision) and explicit Fintraffic manifest importer (UTC second precision).
 - Recursively import camera images. Fintraffic imports verify every image against its provided SHA-256 manifest. Originals stay untouched; independent mission snapshots are verified again when viewed.
 - Image table and previous/next review; draw/remove normalized image rectangles; distinguish confirmed vehicles, candidates, lights and background lights.
-- Append-only review revisions, operator, evidence role and completeness. Optimistic revision checks prevent overwriting concurrent edits; held-out image roles cannot become training roles.
+- Append-only review revisions, operator, evidence role and completeness. Optimistic revision checks prevent overwriting concurrent edits; held-out image roles cannot become training roles. An explicit bulk sign-off path previews the saved run, exact image count, and fixed row boundary, requires operator confirmation, exports only that snapshot, and labels it `bulk_unreviewed` rather than independent ground truth.
 - Traceable CSV snapshots written to the configured output folder with unique filenames, source IDs/checksums, revision state, and a snapshot hash. Machine proposals remain explicitly unconfirmed until a human reviews them.
 - Loopback development host with a session token for writes, host/origin checks and self-only browser asset policy.
 - Real local YOLOX-S vehicle inference, separately labelled experimental night-light proposals, durable progress/cancellation, immutable original predictions and saved correction lineage. See [vehicle detection and testing](docs/10-vehicle-detection.md).
@@ -42,7 +42,7 @@ Fintraffic samples supplied by the user are imported locally into `workspace/sam
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-See [verification record](docs/09-verification.md). The 153-test Python suite covers the current API and processing workflows, including operator-confirmed offline search, video workflow, host inventory, source integrity, and byte-range checks. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
+See [verification record](docs/09-verification.md). The 156-test Python suite covers the current API and processing workflows, including operator-confirmed offline search, video workflow, host inventory, source integrity, and byte-range checks. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
 
 ## Not implemented yet
 

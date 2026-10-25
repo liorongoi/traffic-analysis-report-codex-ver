@@ -159,6 +159,12 @@ def serve(workspace, web, port=8765, open_browser=False):
                         limit=int(query.get('limit',['100'])[0]),offset=int(query.get('offset',['0'])[0])))
                 if parsed.path == '/api/exports':
                     return self.reply(200,library.exports(query['mission'][0]))
+                if parsed.path == '/api/bulk-approval/preview':
+                    from .bulk_approval import preview
+                    return self.reply(200,preview(library,query['mission'][0],query.get('run',[None])[0]))
+                if parsed.path == '/api/bulk-approvals':
+                    from .bulk_approval import history
+                    return self.reply(200,history(library,query['mission'][0]))
                 if parsed.path == '/api/monitoring':
                     return self.reply(200,monitor.status(query['mission'][0]))
                 if parsed.path == '/api/scan-windows':
@@ -233,6 +239,13 @@ def serve(workspace, web, port=8765, open_browser=False):
                     if any(job['status'] in ('queued', 'running') for job in inference.status(mission)):
                         raise ValueError('Wait for processing to finish before exporting a stable review snapshot')
                     result = library.export_configured(mission, data.get('run'))
+                elif self.path == '/api/bulk-approval':
+                    from .bulk_approval import approve_and_export
+                    mission=data['mission']
+                    if any(job['status'] in ('queued','running') for job in inference.status(mission)):
+                        raise ValueError('Wait for image processing to finish before bulk sign-off')
+                    result=approve_and_export(library,mission,preview_id=data['preview_id'],
+                        operator=data['operator'])
                 elif self.path == '/api/import':
                     result = library.import_folder(data['mission'],data['path'],data['preset'])
                 elif self.path == '/api/scan-windows':

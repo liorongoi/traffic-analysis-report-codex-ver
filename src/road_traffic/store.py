@@ -100,8 +100,12 @@ class Library:
             id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
             inference_run TEXT, format TEXT NOT NULL, output_path TEXT NOT NULL,
             snapshot_sha256 TEXT, row_count INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL, created TEXT NOT NULL, finished TEXT, error TEXT
+            status TEXT NOT NULL, created TEXT NOT NULL, finished TEXT, error TEXT,
+            bulk_approval_id TEXT
         )''')
+        export_columns={row['name'] for row in conn.execute('PRAGMA table_info(exports)')}
+        if 'bulk_approval_id' not in export_columns:
+            conn.execute('ALTER TABLE exports ADD COLUMN bulk_approval_id TEXT')
         conn.execute('''CREATE TABLE IF NOT EXISTS monitored_files(
             relative_path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
             stable_since TEXT NOT NULL, last_seen TEXT NOT NULL, imported_sha256 TEXT,
@@ -563,7 +567,7 @@ class Library:
                     reconciled += 1
         return reconciled
 
-    def export_csv(self, mission, inference_run=None, snapshot_rowid=None):
+    def export_csv(self, mission, inference_run=None, snapshot_rowid=None, bulk_approval_id=None):
         settings = self.settings(mission)
         if 'csv' not in settings['export_formats']:
             raise ValueError('CSV is not configured for this mission')
@@ -580,8 +584,8 @@ class Library:
         target = Path(output_root) / f'traffic-analysis-{mission[:8]}-{export_id}.csv'
         created = now()
         with self.connect(mission) as conn:
-            conn.execute('INSERT INTO exports(id,mission_id,inference_run,format,output_path,row_count,status,created) VALUES (?,?,?,?,?,?,?,?)',
-                (export_id, mission, inference_run, 'csv', str(target), 0, 'writing', created))
+            conn.execute('INSERT INTO exports(id,mission_id,inference_run,format,output_path,row_count,status,created,bulk_approval_id) VALUES (?,?,?,?,?,?,?,?,?)',
+                (export_id, mission, inference_run, 'csv', str(target), 0, 'writing', created,bulk_approval_id))
         row_count = 0
         try:
             with target.open('x', encoding='utf-8-sig', newline='') as stream:
@@ -590,7 +594,7 @@ class Library:
                     'filename','capture_utc','timestamp_precision','review_status','revision',
                     'confirmed_vehicle_count','candidate_count','light_count','annotations',
                     'prediction_run','inference_status','original_predictions','review_prediction_run',
-                    'evidence_role','operator'])
+                    'evidence_role','operator','bulk_approval_id','bulk_approval_type'])
                 for row in rows:
                     annotations = json.loads(row['annotations'])
                     active = [annotation for annotation in annotations if not annotation.get('rejected')]
@@ -607,7 +611,8 @@ class Library:
                         sum(annotation['kind']=='light' for annotation in active),
                         json.dumps(annotations, ensure_ascii=False), row.get('prediction_run'),
                         row.get('inference_status'), json.dumps(row.get('predictions', []), ensure_ascii=False),
-                        row.get('review_prediction_run'), row.get('evidence_role'), operator])
+                        row.get('review_prediction_run'), row.get('evidence_role'), operator,
+                        bulk_approval_id or '', 'bulk_unreviewed' if bulk_approval_id else ''])
                     row_count += 1
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -625,7 +630,7 @@ class Library:
                     (row_count, status, now(), error, export_id))
             raise ValueError(f'Export {export_id} {status}: {error}') from exc
 
-    def export_xlsx(self, mission, inference_run=None, snapshot_rowid=None):
+    def export_xlsx(self, mission, inference_run=None, snapshot_rowid=None, bulk_approval_id=None):
         """Write a dependency-free, Unicode-safe XLSX snapshot without formula cells."""
         settings=self.settings(mission)
         if 'xlsx' not in settings['export_formats']:
@@ -645,14 +650,15 @@ class Library:
         rows=self.iter_images(mission,inference_run,snapshot_rowid=snapshot_rowid)
         headers=['mission_id','inference_run','source_id','source_run_id','source_sha256','filename','capture_utc',
             'timestamp_precision','review_status','revision','confirmed_vehicle_count','candidate_count','light_count',
-            'annotations','prediction_run','inference_status','original_predictions','review_prediction_run','evidence_role','operator']
+            'annotations','prediction_run','inference_status','original_predictions','review_prediction_run','evidence_role','operator',
+            'bulk_approval_id','bulk_approval_type']
         max_data_rows=1_048_575
         sheet_count=max(1,(count+max_data_rows-1)//max_data_rows)
         sheet_names=['Traffic' if sheet_count==1 else f'Traffic {number+1}' for number in range(sheet_count)]
         export_id=str(uuid.uuid4());target=Path(output_root)/f'traffic-analysis-{mission[:8]}-{export_id}.xlsx';created=now()
         with self.connect(mission) as conn:
-            conn.execute('INSERT INTO exports(id,mission_id,inference_run,format,output_path,row_count,status,created) VALUES (?,?,?,?,?,?,?,?)',
-                (export_id,mission,inference_run,'xlsx',str(target),0,'writing',created))
+            conn.execute('INSERT INTO exports(id,mission_id,inference_run,format,output_path,row_count,status,created,bulk_approval_id) VALUES (?,?,?,?,?,?,?,?,?)',
+                (export_id,mission,inference_run,'xlsx',str(target),0,'writing',created,bulk_approval_id))
         row_count=0
         try:
             with zipfile.ZipFile(target,'x',compression=zipfile.ZIP_DEFLATED,allowZip64=True) as archive:
@@ -697,7 +703,8 @@ class Library:
                                 sum(item['kind']=='candidate' for item in active),sum(item['kind']=='light' for item in active),
                                 json.dumps(annotations,ensure_ascii=False),row.get('prediction_run'),row.get('inference_status'),
                                 json.dumps(row.get('predictions',[]),ensure_ascii=False),row.get('review_prediction_run'),
-                                row.get('evidence_role'),row.get('operator')]
+                                row.get('evidence_role'),row.get('operator'),bulk_approval_id or '',
+                                'bulk_unreviewed' if bulk_approval_id else '']
                             content=''.join(cell_xml(column_name(i+1),row_number,value) for i,value in enumerate(values))
                             sheet.write(f'<row r="{row_number}">{content}</row>'.encode('utf-8'));row_count+=1
                         sheet.write(b'</sheetData></worksheet>')
@@ -715,12 +722,13 @@ class Library:
                     (row_count,status,now(),error,export_id))
             raise ValueError(f'Export {export_id} {status}: {error}') from exc
 
-    def export_configured(self,mission,inference_run=None):
+    def export_configured(self,mission,inference_run=None,snapshot_rowid=None,bulk_approval_id=None):
         formats=self.settings(mission)['export_formats'];files=[];errors=[]
-        with self.connect(mission) as conn:
-            snapshot_rowid=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM images').fetchone()[0]
+        if snapshot_rowid is None:
+            with self.connect(mission) as conn:
+                snapshot_rowid=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM images').fetchone()[0]
         for format_name in formats:
-            try:files.append(self.export_csv(mission,inference_run,snapshot_rowid) if format_name=='csv' else self.export_xlsx(mission,inference_run,snapshot_rowid))
+            try:files.append(self.export_csv(mission,inference_run,snapshot_rowid,bulk_approval_id) if format_name=='csv' else self.export_xlsx(mission,inference_run,snapshot_rowid,bulk_approval_id))
             except ValueError as exc:errors.append(str(exc))
         if errors:raise ValueError('Some configured exports failed: '+'; '.join(errors))
         result={'files':files,'status':'completed'}
