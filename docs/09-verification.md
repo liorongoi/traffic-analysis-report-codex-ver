@@ -161,3 +161,7 @@ The night-light learning panel now records append-only promotion and rollback de
 ## Mission capability text and saved video policy
 
 Corrected the bilingual wizard and Help text to describe implemented continuous Video Traffic folder monitoring accurately: the operator must save an explicit detector/tracker policy first. Kept video object search and production Windows/LAN acceptance identified as unavailable/open. HTTP page/script checks assert the current policy-gated wording and reject the stale claim that video monitoring is not implemented. Full suite: 197 tests passed; `node --check web/app.js` and `git diff --check` passed.
+
+## Advisory 16 GB and 48 GB host profiles
+
+The on-demand host report now presents a conservative memory budget for a 16 GB class workstation and an expanded budget for a 48 GB class workstation, each calculated from detected total and currently available RAM while reserving OS headroom. It recommends one worker and CPU until a model execution probe succeeds, and selects a profile recommendation based on detected memory. Tests use mocked 16/48 GB capacities to verify headroom, budget, and recommendation arithmetic; the API/UI integration checks verify both profiles are returned and shown. These are advisory budgets: there is no profile enforcement or operator override yet. The full suite passed 198 tests; `node --check web/app.js` and `git diff --check` passed. Real target-workstation, sustained performance, and GPU execution acceptance remain open.

@@ -75,6 +75,7 @@ class HttpTests(unittest.TestCase):
         self.assertIn('target_labels',script)
         self.assertIn('Notification.requestPermission()',script)
         self.assertIn('notifyDesktopAlerts(alerts)',script)
+        self.assertIn("tr('resourceProfiles')",script)
         with self.request('/timezone-countries.json') as response:
             self.assertEqual(response.status,200)
             self.assertIn('application/json',response.headers['Content-Type'])
@@ -118,6 +119,9 @@ class HttpTests(unittest.TestCase):
                 hardware=json.load(response)
             self.assertIn('cpu',hardware)
             self.assertEqual(hardware['gpu_execution'],'not verified by provider listing')
+            self.assertIn('conservative',hardware['resource_profiles'])
+            self.assertIn('expanded',hardware['resource_profiles'])
+            self.assertEqual(hardware['resource_profiles']['conservative']['workers'],1)
             self.assertEqual(hardware['storage_performance']['state'],'measured')
             self.assertGreater(hardware['storage_performance']['write_mib_s'],0)
             with self.request('/api/learning/capabilities') as response:

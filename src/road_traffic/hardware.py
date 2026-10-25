@@ -198,6 +198,30 @@ def _storage_performance(storage_path, sample_bytes=8 * 1024 * 1024):
                 pass
 
 
+def _resource_profiles(total_bytes, available_bytes):
+    """Return advisory host-memory budgets for the specified 16/48 GiB classes."""
+    if not total_bytes or available_bytes is None:
+        return None, None
+    gib = 1024 ** 3
+    total = total_bytes / gib
+    available = available_bytes / gib
+    profiles = {}
+    for name, fraction, reserve_fraction, minimum_reserve in (
+        ('conservative', .50, .25, 2.0),
+        ('expanded', .75, .15, 4.0),
+    ):
+        reserve = max(minimum_reserve, total * reserve_fraction)
+        profiles[name] = {
+            'target_memory_class_gib': 16 if name == 'conservative' else 48,
+            'analysis_memory_gib': round(max(0.0, min(total * fraction, available - reserve)), 2),
+            'reserved_headroom_gib': round(reserve, 2),
+            'workers': 1,
+            'device_recommendation': 'cpu until a model execution probe succeeds',
+            'guidance': 'advisory budget; target hardware measurements are still required',
+        }
+    return profiles, ('expanded' if total >= 32 else 'conservative')
+
+
 def inventory(storage_path):
     """Inspect host capacity and measure small on-demand app-storage I/O; provider listing does not claim a successful GPU run."""
     total, available = _memory()
@@ -222,14 +246,8 @@ def inventory(storage_path):
         'storage_performance': _storage_performance(storage_path),
         'gpu_execution': 'not verified by provider listing',
     }
-    if total and available is not None:
-        reserve = max(2, total / gib * .25)
-        report['conservative_profile'] = {
-            'analysis_memory_gib': round(max(0, min(total / gib * .60,
-                available / gib - reserve)), 2),
-            'workers': 1 if total / gib < 32 else 2,
-            'device_recommendation': 'cpu until a model execution probe succeeds',
-        }
-    else:
-        report['conservative_profile'] = None
+    profiles, recommended = _resource_profiles(total, available)
+    report['resource_profiles'] = profiles
+    report['recommended_profile'] = recommended
+    report['conservative_profile'] = profiles['conservative'] if profiles else None
     return report
