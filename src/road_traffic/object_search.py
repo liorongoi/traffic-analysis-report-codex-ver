@@ -34,7 +34,7 @@ _COLOR_ALIASES = {
 _SUBTYPE_ALIASES = {'pickup': 'pickup', 'pickups': 'pickup', 'טנדר': 'pickup', 'טנדרים': 'pickup',
                     'semi-trailer': 'semi_trailer', 'semi-trailers': 'semi_trailer',
                     'semitrailer': 'semi_trailer', 'semitrailers': 'semi_trailer',
-                    'sedan': 'sedan', 'sedans': 'sedan', 'suv': 'suv', 'suvs': 'suv', 'van': 'van', 'vans': 'van'}
+                    'sedan': 'sedan', 'sedans': 'sedan', 'suv': 'suv', 'suvs': 'suv', 'van': 'van', 'vans': 'van', 'other': 'other'}
 _FILLER = {'find', 'show', 'locate', 'search', 'for', 'of', 'the', 'a', 'an', 'some', 'any', 'all', 'every',
            'each', 'occurrence', 'occurrences', 'vehicle', 'vehicles',
            'object', 'objects', 'that', 'are', 'is', 'with', 'having', 'in', 'at', 'from', 'during', 'captured',
@@ -273,6 +273,7 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
         'requested_view': view_id or 'all views in selected run',
         'requested_local_schedule': schedule_filter or 'all captures in selected run',
         'execution': 'saved evidence search only; never an object-presence proof',
+        'attribute_source_note': ('Color and fine subtype are not inferred by the detector. Search filters operator-recorded values; missing values remain uncertain.'),
     }
     return spec
 
@@ -305,7 +306,8 @@ def execute(library, mission: str, spec: dict, *, confirmed: bool, run: str | No
             filtered_images += 1
             continue
         # A review only replaces predictions when it is explicitly bound to this exact run.
-        if row.get('revision') and selected_run and row.get('review_prediction_run') == selected_run:
+        if row.get('revision') and ((selected_run and row.get('review_prediction_run') == selected_run) or
+                                     (not selected_run and not row.get('prediction_run') and not row.get('review_prediction_run'))):
             items = json.loads(row['annotations'])
             source = 'review'
         else:
@@ -321,12 +323,27 @@ def execute(library, mission: str, spec: dict, *, confirmed: bool, run: str | No
                 continue
             if category and category in spec['excluded_categories']:
                 continue
-            # A generic hand-drawn vehicle label cannot establish a requested fine class.
+            # Detector proposals never establish color/subtype. Only attributes saved in a
+            # run-bound human review can filter known values; absent observations stay uncertain.
             uncertain = []
             if not category:
                 uncertain.append('vehicle category')
-            for attribute in spec['required_attributes'] + spec['excluded_attributes']:
-                uncertain.append(attribute['attribute'])
+            known_attributes = item.get('vehicle_attributes', {}) if source == 'review' else {}
+            attribute_conflict = False
+            for attribute in spec['required_attributes']:
+                observed = known_attributes.get(attribute['attribute'])
+                if observed is None:
+                    uncertain.append(attribute['attribute'])
+                elif observed != attribute['value']:
+                    attribute_conflict = True
+            for attribute in spec['excluded_attributes']:
+                observed = known_attributes.get(attribute['attribute'])
+                if observed is None:
+                    uncertain.append(attribute['attribute'])
+                elif observed == attribute['value']:
+                    attribute_conflict = True
+            if attribute_conflict:
+                continue
             uncertain = list(dict.fromkeys(uncertain))
             if uncertain:
                 uncertain_count += 1

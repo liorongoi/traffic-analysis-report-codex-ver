@@ -33,6 +33,8 @@ class ObjectSearchTests(unittest.TestCase):
         self.assertEqual(spec['required_attributes'], [{'attribute': 'subtype', 'value': 'semi_trailer'}])
         self.assertIn('fine vehicle subtype', spec['interpretation']['unsupported_or_unobservable'])
         self.assertTrue(spec['operator_confirmation_required'])
+        other_subtype=interpret('Find other trucks',mission_id='mission')
+        self.assertEqual(other_subtype['required_attributes'],[{'attribute':'subtype','value':'other'}])
 
     def test_interpretation_binds_the_exact_saved_run_schedule_views_and_regions(self):
         with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as source:
@@ -157,6 +159,39 @@ class ObjectSearchTests(unittest.TestCase):
         self.assertEqual(result['uncertain_objects'], 1)
         self.assertEqual(result['results'][0]['objects'][0]['uncertain_attributes'], ['color', 'subtype'])
         self.assertIn('not proof', result['evidence_note'])
+
+    def test_search_filters_known_operator_attributes_and_keeps_unknowns_uncertain(self):
+        annotations=[
+            {'kind':'vehicle','label':'truck','box':[.1,.1,.2,.2],'vehicle_attributes':{'color':'red','subtype':'pickup'}},
+            {'kind':'vehicle','label':'truck','box':[.35,.1,.2,.2],'vehicle_attributes':{'color':'blue','subtype':'pickup'}},
+            {'kind':'candidate','label':'truck','box':[.6,.1,.2,.2]},
+        ]
+        row={'id':'image-1','name':'01.jpg','capture_utc':'2026-01-01T00:00:00Z','view_id':None,'view_name':None,
+            'revision':1,'review_prediction_run':'run-1','prediction_run':'run-1','predictions':[],
+            'annotations':json.dumps(annotations)}
+        spec=interpret('Find red pickup trucks',mission_id='mission',run_id='run-1')
+        result=execute(SearchLibrary([row]),'mission',spec,confirmed=True,run='run-1')
+        objects=result['results'][0]['objects']
+        self.assertEqual(len(objects),2)
+        self.assertEqual(objects[0]['uncertain_attributes'],[])
+        self.assertEqual(objects[1]['uncertain_attributes'],['color','subtype'])
+        self.assertEqual(result['uncertain_objects'],1)
+        exclude_blue=interpret('Find trucks except blue',mission_id='mission',run_id='run-1')
+        filtered=execute(SearchLibrary([row]),'mission',exclude_blue,confirmed=True,run='run-1')
+        filtered_objects=filtered['results'][0]['objects']
+        self.assertEqual(len(filtered_objects),2)
+        self.assertEqual([item['uncertain_attributes'] for item in filtered_objects],[[],['color']])
+
+    def test_manual_review_without_inference_run_is_searchable(self):
+        row={'id':'image-1','name':'manual.jpg','capture_utc':None,'view_id':None,'view_name':None,
+            'revision':1,'review_prediction_run':None,'prediction_run':None,'predictions':[],
+            'annotations':json.dumps([{'kind':'vehicle','label':'truck','box':[.1,.1,.2,.2],
+                'vehicle_attributes':{'color':'red','subtype':'pickup'}}])}
+        spec=interpret('Find red pickup trucks',mission_id='mission')
+        result=execute(SearchLibrary([row]),'mission',spec,confirmed=True)
+        self.assertEqual(result['matched_objects'],1)
+        self.assertEqual(result['results'][0]['objects'][0]['source'],'human-reviewed')
+        self.assertEqual(result['results'][0]['objects'][0]['uncertain_attributes'],[])
 
     def test_exact_run_review_overrides_unrelated_predictions(self):
         row = {'id': 'image-1', 'name': '01.jpg', 'capture_utc': None, 'view_id': None, 'view_name': None,

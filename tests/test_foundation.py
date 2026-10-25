@@ -90,6 +90,19 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM reviews').fetchone()[0],2)
             with self.assertRaises(sqlite3.IntegrityError):conn.execute("UPDATE reviews SET operator='changed'")
 
+    def test_operator_vehicle_attributes_are_validated_and_preserved_in_review(self):
+        annotation={'kind':'vehicle','label':'truck','box':[.1,.2,.3,.4],
+            'vehicle_attributes':{'color':'red','subtype':'pickup'}}
+        self.lib.review(self.mission,self.image['id'],0,[annotation],'Test operator')
+        saved=json.loads(self.lib.images(self.mission)[0]['annotations'])[0]
+        self.assertEqual(saved['vehicle_attributes'],{'color':'red','subtype':'pickup'})
+        bad=[dict(annotation,vehicle_attributes={'color':'infrared'}),
+             dict(annotation,vehicle_attributes={'make':'Ford'}),
+             dict(annotation,kind='light')]
+        for item in bad:
+            with self.subTest(item=item),self.assertRaisesRegex(ValueError,'[Vv]ehicle attributes'):
+                self.lib.review(self.mission,self.image['id'],1,[item],'Test operator')
+
     def test_holdout_is_protected(self):
         self.save(role='test')
         with self.assertRaises(ValueError):self.save(1,'training')

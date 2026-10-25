@@ -969,6 +969,9 @@ class Library:
                 raise ValueError('Annotation label required')
             if item.get('night_class') is not None and item['night_class'] not in ('headlight','streetlight','reflection','other'):
                 raise ValueError('Invalid explicit night class')
+            if 'vehicle_attributes' in item:
+                from .vehicle_attributes import validate_vehicle_attributes
+                validate_vehicle_attributes(item['vehicle_attributes'],item['kind'])
             if 'review_confidence' in item and (type(item['review_confidence']) is not int or not 1<=item['review_confidence']<=5):
                 raise ValueError('Review confidence must be an integer from 1 to 5')
             box = item.get('box')
