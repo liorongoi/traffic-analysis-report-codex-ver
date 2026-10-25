@@ -119,6 +119,13 @@ class LanSecurityTests(unittest.TestCase):
             self.client.open(request, timeout=3)
         self.assertEqual(rejected.exception.code, 403)
 
+    def test_hebrew_browser_gets_rtl_sign_in_page(self):
+        request = urllib.request.Request(self.base + '/', headers={'Accept-Language': 'he-IL,he;q=0.9,en;q=0.8'})
+        with self.client.open(request, timeout=3) as response:
+            page = response.read().decode('utf-8')
+        self.assertIn('<html lang="he" dir="rtl">', page)
+        self.assertIn('קוד גישה', page)
+
 
 if __name__ == '__main__':
     unittest.main()

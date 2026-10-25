@@ -85,7 +85,20 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
             return candidate
 
         def login_page(self):
-            body=b'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Traffic Analysis Sign In</title><body><main><h1>Traffic Analysis</h1><p>Enter the access code provided by the workstation operator.</p><form method="post" action="/api/login"><label for="code">Access code</label><input id="code" name="code" type="password" minlength="16" autocomplete="current-password" required><button type="submit">Sign in</button></form><p id="error" role="alert"></p><script src="/login.js"></script></main></body></html>'''
+            preferences=[]
+            for index,item in enumerate(self.headers.get('Accept-Language','').split(',')):
+                language,*parameters=item.strip().lower().split(';')
+                quality=1.0
+                for parameter in parameters:
+                    if parameter.strip().startswith('q='):
+                        try:quality=float(parameter.strip()[2:])
+                        except ValueError:quality=0.0
+                preferences.append((-quality,index,language))
+            hebrew=bool(preferences and sorted(preferences)[0][2].startswith('he'))
+            if hebrew:
+                body='''<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ניתוח תנועה · כניסה</title><body><main><h1>ניתוח תנועה</h1><p>הזינו את קוד הגישה שקיבלתם ממפעיל העמדה.</p><form method="post" action="/api/login"><label for="code">קוד גישה</label><input id="code" name="code" type="password" minlength="16" autocomplete="current-password" required><button type="submit">כניסה</button></form><p id="error" role="alert"></p><script src="/login.js"></script></main></body></html>'''.encode('utf-8')
+            else:
+                body=b'''<!doctype html><html lang="en" dir="ltr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Traffic Analysis Sign In</title><body><main><h1>Traffic Analysis</h1><p>Enter the access code provided by the workstation operator.</p><form method="post" action="/api/login"><label for="code">Access code</label><input id="code" name="code" type="password" minlength="16" autocomplete="current-password" required><button type="submit">Sign in</button></form><p id="error" role="alert"></p><script src="/login.js"></script></main></body></html>'''
             self.reply(200,body,'text/html; charset=utf-8')
 
         def login(self):
