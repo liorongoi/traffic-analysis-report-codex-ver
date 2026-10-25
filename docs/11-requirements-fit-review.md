@@ -40,4 +40,4 @@ Video event timing trims and track identity edits are implemented as append-only
 
 ## Review method and limits
 
-This is a documentation/source-state review using repository instructions, the README, requirements and design documents, and current implementation evidence. The full suite passed 207 tests on 2026-10-25, including the local HTTP integration tests; this is not an independent accuracy benchmark or native Windows acceptance. Existing test and functional evidence is listed in `docs/10-vehicle-detection.md` and `docs/09-verification.md`; consult those records for their exact scope and limitations.
+This is a documentation/source-state review using repository instructions, the README, requirements and design documents, and current implementation evidence. The full suite passed 208 tests on 2026-10-25, including the local HTTP integration tests; this is not an independent accuracy benchmark or native Windows acceptance. Existing test and functional evidence is listed in `docs/10-vehicle-detection.md` and `docs/09-verification.md`; consult those records for their exact scope and limitations.
