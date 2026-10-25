@@ -20,7 +20,7 @@ Implemented:
 - Policy-configured, same-recording track assembly with JSON-compatible chunk checkpoints. Ambiguous associations remain uncertain; thresholds must be supplied explicitly and are not production-validated.
 - Incremental video analysis connects the spawned decoder to the detector and tracker, reports per-frame position/progress, supports cancellation, and leaves absolute UTC unset without an explicit origin. The spawned decoder process isolates bundled FFmpeg libraries from OpenCV.
 - Per-mission video evidence copies, immutable run snapshots, atomic track checkpoints/event writes, idempotent events, and append-only event-review records. Video Traffic runs now use a supervised child worker, persist model/tracker settings, share the single local processing slot with image inference, and expose source/run/event-review APIs. The browser supports source registration with UTC-origin provenance, run settings and lifecycle controls, paginated event review with verified source-frame previews, integrity-checked byte-range playback, and event seeking, and event clip exports. Exports use explicit operator-entered pre/post context, encode video-only H.264 MP4, and record event/run/source lineage plus a SHA-256 output hash in the mission ledger.
-- Windows **preview installer source**, current-user directory, `PrivilegesRequired=lowest`, app-local runtime, current-user shortcuts, offline checksums and no download fallback.
+- Windows **preview installer source** with current-user privileges, app-local runtime, offline payload manifest, both detector packs, install-time integrity/model checks and receipt-gated launch. It is not a finished installer until built and accepted on Windows.
 
 ## Run the preview
 
@@ -42,7 +42,7 @@ Fintraffic samples supplied by the user are imported locally into `workspace/sam
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-See [verification record](docs/09-verification.md). The 157-test Python suite covers the current API and processing workflows, including operator-confirmed offline search, video workflow, host inventory, source integrity, and byte-range checks. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
+See [verification record](docs/09-verification.md). The 163-test Python suite covers the current API and processing workflows, including operator-confirmed offline search, video workflow, host inventory, source integrity, and byte-range checks. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
 
 ## Not implemented yet
 
