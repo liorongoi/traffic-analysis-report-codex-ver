@@ -47,6 +47,14 @@ def schema(conn):
       representative_box TEXT,
       uncertainty_reasons TEXT NOT NULL,created TEXT NOT NULL,UNIQUE(run_id,track_id));
     CREATE INDEX IF NOT EXISTS video_events_run_time_idx ON video_events(run_id,first_offset_num,first_offset_den,id);
+    CREATE TABLE IF NOT EXISTS video_frame_detections(
+      mission_id TEXT NOT NULL REFERENCES mission(id),run_id TEXT NOT NULL REFERENCES video_runs(id),
+      source_id TEXT NOT NULL REFERENCES video_sources(id),frame_index INTEGER NOT NULL,
+      pts INTEGER NOT NULL,time_base_num INTEGER NOT NULL,time_base_den INTEGER NOT NULL,
+      offset_seconds REAL NOT NULL,detections TEXT NOT NULL,created TEXT NOT NULL,
+      PRIMARY KEY(run_id,frame_index));
+    CREATE INDEX IF NOT EXISTS video_frame_detections_time_idx
+      ON video_frame_detections(run_id,offset_seconds,frame_index);
     CREATE TABLE IF NOT EXISTS video_event_reviews(
       id INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL REFERENCES video_events(id),
       revision INTEGER NOT NULL,operator TEXT NOT NULL,action TEXT NOT NULL,
@@ -70,6 +78,10 @@ def schema(conn):
       BEGIN SELECT RAISE(ABORT,'video events are immutable'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_events_d BEFORE DELETE ON video_events
       BEGIN SELECT RAISE(ABORT,'video events are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_video_frame_detections_u BEFORE UPDATE ON video_frame_detections
+      BEGIN SELECT RAISE(ABORT,'video frame detections are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_video_frame_detections_d BEFORE DELETE ON video_frame_detections
+      BEGIN SELECT RAISE(ABORT,'video frame detections are immutable'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_reviews_u BEFORE UPDATE ON video_event_reviews
       BEGIN SELECT RAISE(ABORT,'video event reviews are append-only'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_reviews_d BEFORE DELETE ON video_event_reviews
@@ -359,16 +371,61 @@ def _insert_closed_tracks(conn, mission, run_id, source, tracks, created):
     return inserted
 
 
-def checkpoint(library, mission, run_id, *, frame_index, timestamp, tracker_state, closed_tracks=()):
+def _frame_detections(detections, assignments):
+    if not isinstance(detections, (list, tuple)) or not isinstance(assignments, (list, tuple)):
+        raise ValueError('Frame detections and assignments must be sequences')
+    tracks = {}
+    for assignment in assignments:
+        index = getattr(assignment, 'detection_index', None)
+        track = getattr(assignment, 'track', None)
+        track_id = getattr(track, 'track_id', None)
+        if (isinstance(index, bool) or not isinstance(index, int) or index < 0
+                or index >= len(detections) or not isinstance(track_id, str) or not track_id):
+            raise ValueError('Frame assignment does not match its detection')
+        if index in tracks:
+            raise ValueError('A frame detection cannot have multiple track assignments')
+        tracks[index] = track_id
+    result = []
+    for index, detection in enumerate(detections):
+        if not isinstance(detection, dict):
+            raise ValueError('Frame detection must be a mapping')
+        box = detection.get('box')
+        if not isinstance(box, (list, tuple)) or len(box) != 4:
+            raise ValueError('Frame detection box must contain normalized x, y, width, height')
+        if any(isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) for value in box):
+            raise ValueError('Frame detection box must contain finite numbers')
+        x, y, width, height = map(float, box)
+        if width <= 0 or height <= 0 or x < 0 or y < 0 or x + width > 1 or y + height > 1:
+            raise ValueError('Frame detection box must be inside normalized image bounds')
+        label = detection.get('label')
+        if not isinstance(label, str) or not label:
+            raise ValueError('Frame detection label is required')
+        item = {'box': [x, y, width, height], 'label': label,
+            'track_id': tracks.get(index)}
+        score = detection.get('score', detection.get('confidence'))
+        if score is not None:
+            if (isinstance(score, bool) or not isinstance(score, (int, float))
+                    or not math.isfinite(score) or not 0 <= score <= 1):
+                raise ValueError('Frame detection score must be between zero and one')
+            item['score'] = float(score)
+        result.append(item)
+    return result
+
+
+def checkpoint(library, mission, run_id, *, frame_index, timestamp, tracker_state, closed_tracks=(),
+               detections=(), assignments=()):
     prepare(library, mission)
     if isinstance(frame_index, bool) or not isinstance(frame_index, int) or frame_index < 0:
         raise ValueError('frame_index must be a non-negative integer')
     if not isinstance(timestamp, VideoTimestamp):
         raise TypeError('timestamp must be a VideoTimestamp')
     state_json = _json(tracker_state)
+    frame_detections = _frame_detections(detections, assignments)
     fingerprint_payload = {'frame_index': frame_index, 'timestamp': [timestamp.pts,
         timestamp.time_base_num, timestamp.time_base_den], 'tracker_state': tracker_state,
-        'closed_tracks': [_track_payload(track) for track in closed_tracks]}
+        'closed_tracks': [_track_payload(track) for track in closed_tracks],
+        'detections': frame_detections}
     fingerprint = hashlib.sha256(_json(fingerprint_payload).encode('utf-8')).hexdigest()
     with library.connect(mission) as conn:
         conn.execute('BEGIN IMMEDIATE')
@@ -405,12 +462,51 @@ def checkpoint(library, mission, run_id, *, frame_index, timestamp, tracker_stat
             if offset < previous:
                 raise ValueError('Video frame checkpoint timestamp moved backwards')
         events_inserted = _insert_closed_tracks(conn, mission, run_id, source, closed_tracks, now())
+        offset = timestamp.offset_seconds
+        conn.execute('''INSERT INTO video_frame_detections(mission_id,run_id,source_id,frame_index,
+            pts,time_base_num,time_base_den,offset_seconds,detections,created) VALUES (?,?,?,?,?,?,?,?,?,?)''',
+            (mission,run_id,source['id'],frame_index,timestamp.pts,timestamp.time_base_num,
+             timestamp.time_base_den,float(offset),_json(frame_detections),now()))
         conn.execute('''UPDATE video_runs SET stage='analyzing',frames_done=?,current_pts=?,
             current_time_base_num=?,current_time_base_den=?,tracker_checkpoint=?,
             last_frame_fingerprint=?,updated=? WHERE id=?''',
             (frame_index + 1, timestamp.pts, timestamp.time_base_num, timestamp.time_base_den,
              state_json, fingerprint, now(), run_id))
     return {'duplicate': False, 'frames_done': frame_index + 1, 'events_inserted': events_inserted}
+
+
+def frame_overlay(library, mission, run_id, seconds):
+    """Return saved detections from the nearest analyzed frame covering a playback time."""
+    if (isinstance(seconds, bool) or not isinstance(seconds, (int, float))
+            or not math.isfinite(seconds) or seconds < 0):
+        raise ValueError('Playback time must be a finite non-negative number')
+    prepare(library, mission)
+    with library.connect(mission) as conn:
+        run = conn.execute('''SELECT r.id,r.source_id,r.config,r.frames_done
+            FROM video_runs r WHERE r.mission_id=? AND r.id=?''', (mission,run_id)).fetchone()
+        if not run:
+            raise ValueError('Video run not found in this mission')
+        config = json.loads(run['config'])
+        if config.get('task', 'video_traffic') != 'video_traffic':
+            return {'run_id': run_id, 'source_id': run['source_id'], 'frame': None, 'detections': []}
+        before = conn.execute('''SELECT * FROM video_frame_detections WHERE mission_id=? AND run_id=?
+            AND offset_seconds<=? ORDER BY offset_seconds DESC,frame_index DESC LIMIT 1''',
+            (mission,run_id,float(seconds))).fetchone()
+        after = conn.execute('''SELECT * FROM video_frame_detections WHERE mission_id=? AND run_id=?
+            AND offset_seconds>=? ORDER BY offset_seconds,frame_index LIMIT 1''',
+            (mission,run_id,float(seconds))).fetchone()
+    # Don't extrapolate before the first or after the last analyzed frame.
+    if before is None or after is None:
+        return {'run_id':run_id,'source_id':run['source_id'],'frame':None,'detections':[]}
+    nearest = before if seconds - before['offset_seconds'] <= after['offset_seconds'] - seconds else after
+    try:
+        boxes = json.loads(nearest['detections'])
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError('Saved video frame detections are corrupt') from exc
+    return {'run_id':run_id,'source_id':run['source_id'],
+        'frame':{'index':nearest['frame_index'],'pts':nearest['pts'],
+            'time_base_num':nearest['time_base_num'],'time_base_den':nearest['time_base_den'],
+            'offset_seconds':nearest['offset_seconds']},'detections':boxes}
 
 
 def set_total_frames(library, mission, run_id, total_frames):
@@ -474,7 +570,8 @@ def execute_video_run(library, mission, run_id, detector, *, should_cancel=None,
             if isinstance(record, VideoFrameAnalysis):
                 checkpoint(library, mission, run_id, frame_index=record.frame_index,
                     timestamp=record.timestamp, tracker_state=tracker.state(),
-                    closed_tracks=record.closed_tracks)
+                    closed_tracks=record.closed_tracks, detections=record.detections,
+                    assignments=record.assignments)
             elif isinstance(record, VideoTrackClosure):
                 transition(library, mission, run_id, 'completed', final_tracks=record.tracks)
         return run_detail(library, mission, run_id)

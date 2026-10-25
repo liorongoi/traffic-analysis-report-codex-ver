@@ -155,7 +155,8 @@ class VehicleProposalAdapter:
 
     def infer(self, rgb_frame):
         return [{'label': item.get('label') or item.get('suggested_kind') or item.get('kind'),
-            'box': item['box']} for item in self.detector.infer(rgb_frame)]
+            'box': item['box'], 'score': item.get('score',item.get('confidence'))}
+            for item in self.detector.infer(rgb_frame)]
 
 
 def execute_worker(library, mission, run_id, pack):

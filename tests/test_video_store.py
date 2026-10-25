@@ -16,7 +16,7 @@ from PIL import Image
 from road_traffic.store import Library
 from road_traffic.tracking import TrackerPolicy, VideoTrackManager
 from road_traffic.video_store import (checkpoint, create_run, events, register_video,
-    execute_video_run, event_thumbnail, review_event, run_detail, source_path, transition)
+    execute_video_run, event_thumbnail, frame_overlay, review_event, run_detail, source_path, transition)
 from road_traffic.video_timeline import VideoTimestamp
 
 
@@ -187,6 +187,35 @@ class VideoStoreTests(unittest.TestCase):
         saved = events(self.library, self.mission, run['id'])[0]
         self.assertIsNone(saved['first_utc'])
         self.assertEqual((saved['first_offset_num'], saved['first_offset_den']), (1, 50))
+
+    def test_frame_overlay_returns_nearest_saved_detection_without_extrapolating(self):
+        source = register_video(self.library, self.mission, 'clip.mkv')
+        run = create_run(self.library, self.mission, source['id'], self.config(), total_frames=2)
+        transition(self.library, self.mission, run['id'], 'running')
+        tracker = VideoTrackManager(TrackerPolicy(max_gap_seconds=Fraction(1, 2),
+            minimum_iou=.2, max_center_distance=.15, association_margin=.05), run_id=run['id'])
+        first_time = VideoTimestamp(0, 1, 1000)
+        first_detection = {'label':'car','box':[.2,.2,.1,.1],'score':.83}
+        first = tracker.update(first_time, [first_detection])
+        checkpoint(self.library,self.mission,run['id'],frame_index=0,timestamp=first_time,
+            tracker_state=tracker.state(),detections=[first_detection],assignments=first.assignments)
+        second_time = VideoTimestamp(1000, 1, 1000)
+        tracker.update(second_time, [])
+        checkpoint(self.library,self.mission,run['id'],frame_index=1,timestamp=second_time,
+            tracker_state=tracker.state(),detections=[])
+        near_first=frame_overlay(self.library,self.mission,run['id'],.4)
+        self.assertEqual(near_first['frame']['pts'],0)
+        self.assertEqual(near_first['detections'][0]['label'],'car')
+        self.assertEqual(near_first['detections'][0]['score'],.83)
+        self.assertEqual(near_first['detections'][0]['track_id'],first.assignments[0].track.track_id)
+        empty_frame=frame_overlay(self.library,self.mission,run['id'],1)
+        self.assertEqual(empty_frame['frame']['index'],1)
+        self.assertEqual(empty_frame['detections'],[])
+        outside=frame_overlay(self.library,self.mission,run['id'],1.1)
+        self.assertIsNone(outside['frame'])
+        self.assertEqual(outside['detections'],[])
+        with self.assertRaisesRegex(ValueError,'non-negative'):
+            frame_overlay(self.library,self.mission,run['id'],-.1)
 
     def test_mission_isolation_and_run_state_transitions(self):
         other_root = self.root / 'other-videos'

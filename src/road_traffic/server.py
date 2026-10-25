@@ -163,6 +163,9 @@ def serve(workspace, web, port=8765, open_browser=False):
                     return self.reply(200,inference.status(query['mission'][0]))
                 if parsed.path == '/api/video/media':
                     return self.stream_video(query)
+                if parsed.path == '/api/video/frame-overlay':
+                    return self.reply(200,video_store.frame_overlay(library,
+                        query['mission'][0],query['run'][0],float(query['seconds'][0])))
                 if parsed.path == '/api/video/clips':
                     return self.reply(200,video_clips.exports(library,query['mission'][0]))
                 if parsed.path == '/api/video/event-exports':
