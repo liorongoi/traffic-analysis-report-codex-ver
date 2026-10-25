@@ -68,6 +68,8 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="videoPlayer"',page)
             self.assertIn('id="videoClipExports"',page)
             self.assertIn('id="hardwareReport"',page)
+            self.assertIn('id="objectSearchQuery"',page)
+            self.assertIn('id="confirmObjectSearch"',page)
             with self.request('/api/hardware') as response:
                 hardware=json.load(response)
             self.assertIn('cpu',hardware)
@@ -126,6 +128,21 @@ class HttpTests(unittest.TestCase):
     def test_invalid_body_returns_error(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'x','country':'Israel','zone':'bad/zone'})
         self.assertEqual(exc.exception.code,400)
+
+    def test_offline_object_search_interpret_confirm_and_execute(self):
+        with self.request('/api/missions',{'name':'Search fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        with self.request('/api/object-search/interpret',{'mission':mission,'query':'Find red pickup trucks'}) as response:
+            spec=json.load(response)['spec']
+        self.assertEqual(spec['categories'],['truck'])
+        self.assertTrue(spec['operator_confirmation_required'])
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            self.request('/api/object-search/execute',{'mission':mission,'spec':spec,'confirmed':False})
+        self.assertEqual(exc.exception.code,400)
+        with self.request('/api/object-search/execute',{'mission':mission,'spec':spec,'confirmed':True}) as response:
+            result=json.load(response)
+        self.assertEqual(result['matched_images'],0)
+        self.assertEqual(result['matched_objects'],0)
 
     def test_scan_window_api_round_trip_and_validation(self):
         with self.request('/api/missions',{'name':'Schedule fixture','country':'Latvia','zone':'Europe/Riga'}) as response:

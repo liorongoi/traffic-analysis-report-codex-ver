@@ -259,6 +259,18 @@ def serve(workspace, web, port=8765, open_browser=False):
                         raise ValueError('Choose create, update, or delete action')
                 elif self.path == '/api/review':
                     result = library.review(data['mission'],data['image'],data['revision'],data['annotations'],data['operator'],data['role'],data['status'],data.get('prediction_run'))
+                elif self.path == '/api/object-search/interpret':
+                    from .object_search import interpret
+                    library.settings(data['mission'])
+                    run = data.get('run') or None
+                    rows = library.images(data['mission'], run)
+                    run = run or next((row.get('prediction_run') for row in rows if row.get('prediction_run')), None)
+                    result = {'spec': interpret(data['query'], mission_id=data['mission'],
+                        view_id=data.get('view_id') or None, run_id=run)}
+                elif self.path == '/api/object-search/execute':
+                    from .object_search import execute
+                    result = execute(library, data['mission'], data.get('spec'),
+                        confirmed=data.get('confirmed'), run=data.get('run') or None)
                 elif self.path == '/api/inference/start':
                     result=inference.start(data['mission'],data.get('threshold',.18),data.get('tiled',True),data.get('night_lights',True),data.get('night_head_id'))
                 elif self.path == '/api/inference/roi-rerun':

@@ -8,9 +8,9 @@ Original image → exposure/quality assessment → native-coordinate ROI → veh
 
 A vehicle can appear as one unresolved bright region, two nearby headlights, then a visible body. Save light-component hypotheses and grouping evidence separately from whole-vehicle predictions. Still counts remain independent. Only continuous video evidence can support a track through those transitions. A pair becoming visible must not double the vehicle/event count. Distance/type/color remain unknown without supporting evidence/calibration.
 
-## Offline chat
+## Offline object search
 
-Interpret a request such as red pickup truck as a typed query with explicit class/attributes/exclusions/ROI/time/uncertainty rules. Show the interpretation before queueing. No generated-code execution, online API, or invented color from headlight-only/monochrome input.
+The current still-image search uses a constrained local English/Hebrew grammar instead of a language model. It supports the saved detector's broad vehicle categories, exclusions, and explicit color/fine-subtype requests. Before execution the UI displays the typed interpretation and exact immutable inference run; that run already freezes local schedule, view assignment and ROI decisions. Execution requires a separate operator confirmation and searches only saved proposals or human annotations bound to that run. It executes no generated code and treats no model explanation as evidence. Current predictions do not encode color or pickup/SUV/van subtype, so such matches remain explicitly uncertain. Natural-language schedule/region parsing and broader target attributes remain future work.
 
 ## Correction lifecycle
 
