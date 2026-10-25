@@ -91,11 +91,15 @@ class Library:
                     include_subdirectories INTEGER NOT NULL DEFAULT 1,
                     processing_mode TEXT NOT NULL DEFAULT 'once',
                     output_root TEXT NOT NULL DEFAULT '',
-                    export_formats TEXT NOT NULL DEFAULT '["csv"]'
+                    export_formats TEXT NOT NULL DEFAULT '["csv"]',
+                    continuous_video_policy TEXT NOT NULL DEFAULT ''
                 );
                 INSERT OR IGNORE INTO mission_settings(mission_id)
                 SELECT id FROM mission;
             ''')
+        settings_columns={row['name'] for row in conn.execute('PRAGMA table_info(mission_settings)')}
+        if 'continuous_video_policy' not in settings_columns:
+            conn.execute("ALTER TABLE mission_settings ADD COLUMN continuous_video_policy TEXT NOT NULL DEFAULT ''")
         conn.execute('''CREATE TABLE IF NOT EXISTS exports(
             id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
             inference_run TEXT, format TEXT NOT NULL, output_path TEXT NOT NULL,
@@ -115,6 +119,13 @@ class Library:
             source_run_id TEXT PRIMARY KEY REFERENCES runs(id), status TEXT NOT NULL,
             inference_run_id TEXT, created TEXT NOT NULL, error TEXT
         )''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS video_monitor_batches(
+            source_id TEXT PRIMARY KEY, status TEXT NOT NULL, video_run_id TEXT,
+            created TEXT NOT NULL, error TEXT, policy_json TEXT NOT NULL DEFAULT ''
+        )''')
+        video_batch_columns={row['name'] for row in conn.execute('PRAGMA table_info(video_monitor_batches)')}
+        if 'policy_json' not in video_batch_columns:
+            conn.execute("ALTER TABLE video_monitor_batches ADD COLUMN policy_json TEXT NOT NULL DEFAULT ''")
         conn.execute('''CREATE TABLE IF NOT EXISTS monitor_control(
             id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1))
         )''')
@@ -235,7 +246,8 @@ class Library:
                     include_subdirectories INTEGER NOT NULL,
                     processing_mode TEXT NOT NULL,
                     output_root TEXT NOT NULL,
-                    export_formats TEXT NOT NULL
+                    export_formats TEXT NOT NULL,
+                    continuous_video_policy TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE exports(
                     id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
@@ -301,10 +313,10 @@ class Library:
                 CREATE TRIGGER immutable_reviews_delete BEFORE DELETE ON reviews BEGIN SELECT RAISE(ABORT,'append-only review'); END;
                 ''')
                 conn.execute('INSERT INTO mission VALUES (?,?,?,?,?)', (mission, name.strip(), country, zone, now()))
-                conn.execute('INSERT INTO mission_settings VALUES (?,?,?,?,?,?,?,?,?)',
+                conn.execute('INSERT INTO mission_settings(mission_id,input_type,analysis_mode,location,source_root,include_subdirectories,processing_mode,output_root,export_formats,continuous_video_policy) VALUES (?,?,?,?,?,?,?,?,?,?)',
                     (mission, input_type, analysis_mode, location.strip(), source_root,
                      int(settings.get('include_subdirectories', True)), processing_mode,
-                     output_root, json.dumps(export_formats)))
+                     output_root, json.dumps(export_formats), ''))
         finally:
             conn.close()
         return mission
@@ -336,7 +348,17 @@ class Library:
         result = dict(row)
         result['include_subdirectories'] = bool(result['include_subdirectories'])
         result['export_formats'] = json.loads(result['export_formats'])
+        result['continuous_video_policy'] = json.loads(result['continuous_video_policy']) if result.get('continuous_video_policy') else None
         return result
+
+    def set_continuous_video_policy(self, mission, policy):
+        settings=self.settings(mission)
+        if settings['processing_mode']!='continuous' or settings['input_type']!='videos' or settings['analysis_mode']!='video_traffic':
+            raise ValueError('A saved automatic-run policy requires a continuous Video Traffic mission')
+        encoded=json.dumps(policy,ensure_ascii=False,sort_keys=True,separators=(',',':'))
+        with self.connect(mission) as conn:
+            conn.execute('UPDATE mission_settings SET continuous_video_policy=? WHERE mission_id=?',(encoded,mission))
+        return {'saved':True,'policy':policy}
 
     def monitoring_enabled(self, mission):
         with self.connect(mission) as conn:
@@ -347,8 +369,8 @@ class Library:
         if type(enabled) is not bool:
             raise ValueError('Monitoring state must be enabled or paused')
         settings=self.settings(mission)
-        if settings['processing_mode']!='continuous' or settings['input_type']!='images':
-            raise ValueError('Continuous monitoring controls require a continuous still-image mission')
+        if settings['processing_mode']!='continuous' or settings['input_type'] not in ('images','videos'):
+            raise ValueError('Continuous monitoring controls require a continuous image or video mission')
         with self.connect(mission) as conn:
             conn.execute('UPDATE monitor_control SET enabled=? WHERE id=1',(int(enabled),))
             conn.execute('''INSERT INTO monitor_state(id,status,last_scan,last_import,error) VALUES (1,?,?,NULL,NULL)
@@ -795,6 +817,7 @@ class Library:
                 settings = dict(conn.execute('SELECT * FROM mission_settings WHERE mission_id=?', (row['id'],)).fetchone())
                 settings['include_subdirectories'] = bool(settings['include_subdirectories'])
                 settings['export_formats'] = json.loads(settings['export_formats'])
+                settings['continuous_video_policy'] = json.loads(settings['continuous_video_policy']) if settings.get('continuous_video_policy') else None
                 result.append({**row, **settings})
         return sorted(result, key=lambda row: row['created'], reverse=True)
 

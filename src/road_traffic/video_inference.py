@@ -7,6 +7,10 @@ from . import video_store
 from .store import now
 
 
+class VideoInferenceBusy(ValueError):
+    retryable = True
+
+
 class VideoInferenceService:
     def __init__(self, library, pack, inference_service, *, worker_script=None, plate_pack=None):
         self.library = library
@@ -82,13 +86,44 @@ class VideoInferenceService:
             'device': 'CPUExecutionProvider', 'human_confirmation': True}}
         with self.inference.lock:
             if self.inference.training_active:
-                raise ValueError('Finish correction-head training before starting analysis')
+                raise VideoInferenceBusy('Finish correction-head training before starting analysis')
             if self.inference._has_active_worker():
-                raise ValueError('Another local processing worker is active')
+                raise VideoInferenceBusy('Another local processing worker is active')
             run = video_store.create_run(self.library, mission, source_id,
                 {**config, 'tracker_policy': tracker_policy})
             self._spawn(mission, run['id'])
         return {'run': run['id'], 'status': 'queued', 'config': run['config']}
+
+    def save_continuous_policy(self, mission, *, tracker_policy, threshold, tiled, target_labels):
+        from .detector import VEHICLES
+        settings=self.library.settings(mission)
+        if settings['processing_mode']!='continuous' or settings['input_type']!='videos' or settings['analysis_mode']!='video_traffic':
+            raise ValueError('A saved automatic-run policy requires a continuous Video Traffic mission')
+        if type(threshold) not in (int,float) or not .01<=threshold<=.9:
+            raise ValueError('Detector threshold must be between 0.01 and 0.90')
+        if type(tiled) is not bool:
+            raise ValueError('tiled must be a boolean')
+        supported_labels=tuple(VEHICLES.values())
+        if (not isinstance(target_labels,list) or not target_labels
+                or any(not isinstance(label,str) for label in target_labels)
+                or len(set(target_labels))!=len(target_labels)
+                or not set(target_labels).issubset(supported_labels)):
+            raise ValueError('Choose one or more supported video vehicle classes')
+        canonical_labels=[label for label in supported_labels if label in target_labels]
+        canonical_tracker=video_store._canonical_tracker_policy(tracker_policy)
+        policy={'threshold':float(threshold),'tiled':tiled,'target_labels':canonical_labels,
+            'tracker_policy':canonical_tracker}
+        return self.library.set_continuous_video_policy(mission,policy)
+
+    def start_continuous_source(self,mission,source_id,policy=None):
+        policy=policy or self.library.settings(mission).get('continuous_video_policy')
+        if not policy:
+            raise ValueError('Save the explicit detector and tracker policy before enabling automatic video analysis')
+        for job in video_store.runs(self.library,mission):
+            if job['source_id']==source_id:
+                return {'run':job['id'],'status':job['status'],'existing':True}
+        return self.start(mission,source_id,policy['tracker_policy'],threshold=policy['threshold'],
+            tiled=policy['tiled'],target_labels=policy['target_labels'])
 
     def start_plate_review(self,mission,source_id,*,threshold=.3):
         from .plate_review import _model_pack, _paths

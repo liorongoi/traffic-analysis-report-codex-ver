@@ -38,7 +38,8 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
     from .video_inference import VideoInferenceService
     video_inference=VideoInferenceService(library,Path(web).parent/'model-packs'/'yolox-s',inference,
         plate_pack=Path(web).parent/'model-packs'/'license-plate-yolox')
-    monitor = SourceMonitor(library,on_batch=inference.start_continuous_batch)
+    monitor = SourceMonitor(library,on_batch=inference.start_continuous_batch,
+        on_video=video_inference.start_continuous_source)
     monitor.start()
     video_clips.reconcile_exports(library)
     video_event_exports.reconcile_exports(library)
@@ -506,6 +507,11 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     result=video_inference.start(data['mission'],data['source_id'],data['tracker_policy'],
                         threshold=data['threshold'],tiled=data['tiled'],
                         target_labels=data.get('target_labels'))
+                elif self.path == '/api/video/monitor-policy':
+                    result=video_inference.save_continuous_policy(data['mission'],
+                        tracker_policy=data['tracker_policy'],threshold=data['threshold'],
+                        tiled=data['tiled'],target_labels=data.get('target_labels'))
+                    monitor.wake_event.set()
                 elif self.path == '/api/video/runs/resume':
                     result=video_inference.resume(data['mission'],data['run'])
                 elif self.path == '/api/video/runs/cancel':

@@ -177,6 +177,30 @@ class HttpTests(unittest.TestCase):
                     'pre_seconds':1,'post_seconds':1,'operator':'Operator'})
             self.assertEqual(exc.exception.code,400)
 
+    def test_continuous_video_requires_and_persists_explicit_policy(self):
+        with tempfile.TemporaryDirectory() as external:
+            source_root=Path(external)/'continuous-video-source';source_root.mkdir()
+            with self.request('/api/missions',{'name':'Continuous video policy','country':'Israel',
+                    'zone':'Asia/Jerusalem','input_type':'videos','analysis_mode':'video_traffic',
+                    'processing_mode':'continuous','source_root':str(source_root)}) as response:
+                mission=json.load(response)['id']
+            state={}
+            for _ in range(40):
+                with self.request('/api/monitoring?mission='+mission) as response:state=json.load(response)
+                if state['status']=='policy_required':break
+                time.sleep(.05)
+            self.assertEqual(state['status'],'policy_required')
+            policy={'mission':mission,'threshold':.2,'tiled':False,'target_labels':['car'],
+                'tracker_policy':{'max_gap_seconds':'1/2','minimum_iou':.2,
+                    'max_center_distance':.15,'association_margin':.05,
+                    'compatible_label_groups':[]}}
+            with self.request('/api/video/monitor-policy',policy) as response:
+                self.assertTrue(json.load(response)['saved'])
+            from road_traffic.store import Library
+            saved=Library(Path(self.tmp.name)).settings(mission)['continuous_video_policy']
+            self.assertEqual(saved['target_labels'],['car'])
+            self.assertEqual(saved['tracker_policy']['max_gap_seconds'],[1,2])
+
     def test_video_event_table_export_api_writes_and_downloads_configured_formats(self):
         from road_traffic.store import Library
         from road_traffic.video_store import create_run, register_video

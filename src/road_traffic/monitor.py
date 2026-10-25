@@ -1,5 +1,6 @@
-"""Persistent, backend-owned still-image source monitoring."""
+"""Persistent, backend-owned source monitoring for still images and video."""
 from datetime import datetime, timezone
+import json
 import os
 import threading
 from pathlib import Path
@@ -13,6 +14,7 @@ except ImportError:  # Periodic reconciliation remains available in minimal dev 
     Observer = None
 
 IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png'}
+VIDEO_SUFFIXES = {'.avi','.m4v','.mkv','.mov','.mp4','.mpeg','.mpg','.ts','.webm'}
 
 
 class _WakeOnFileChange(FileSystemEventHandler):
@@ -25,11 +27,12 @@ class _WakeOnFileChange(FileSystemEventHandler):
 
 
 class SourceMonitor:
-    def __init__(self, library, interval=2.0, stability_seconds=5.0,on_batch=None,observer_factory=None):
+    def __init__(self, library, interval=2.0, stability_seconds=5.0,on_batch=None,on_video=None,observer_factory=None):
         self.library = library
         self.interval = interval
         self.stability_seconds = stability_seconds
         self.on_batch=on_batch
+        self.on_video=on_video
         self.observer_factory=observer_factory if observer_factory is not None else Observer
         self.observers={}
         self.notification_status={}
@@ -79,7 +82,7 @@ class SourceMonitor:
         desired={}
         for mission in missions:
             mission_id=mission['id']
-            if (mission['processing_mode']!='continuous' or mission['input_type']!='images'
+            if (mission['processing_mode']!='continuous' or mission['input_type'] not in ('images','videos')
                     or not self.library.monitoring_enabled(mission_id)):
                 self.notification_status[mission_id]={'status':'paused','error':None}
                 continue
@@ -129,7 +132,7 @@ class SourceMonitor:
                 for mission in missions:
                     if self.stop_event.is_set():
                         break
-                    if mission['processing_mode'] == 'continuous' and mission['input_type'] == 'images':
+                    if mission['processing_mode'] == 'continuous' and mission['input_type'] in ('images','videos'):
                         try:
                             self.scan(mission['id'])
                         except Exception as exc:
@@ -149,6 +152,11 @@ class SourceMonitor:
 
     def status(self, mission):
         self._sync_batches(mission)
+        settings=self.library.settings(mission)
+        if settings['input_type']=='videos':
+            from . import video_store
+            video_store.prepare(self.library,mission)
+            self._sync_video_batches(mission)
         enabled=self.library.monitoring_enabled(mission)
         with self.library.connect(mission) as conn:
             row = conn.execute('SELECT * FROM monitor_state WHERE id=1').fetchone()
@@ -166,11 +174,29 @@ class SourceMonitor:
                 "SELECT relative_path,error FROM monitored_files WHERE error IS NOT NULL ORDER BY last_seen DESC LIMIT 20")]
             state['batches']={row['status']:row['count'] for row in conn.execute(
                 'SELECT status,COUNT(*) count FROM monitor_batches GROUP BY status')}
+            state['video_batches']={row['status']:row['count'] for row in conn.execute(
+                'SELECT status,COUNT(*) count FROM video_monitor_batches GROUP BY status')}
             state['recent_errors'].extend({'relative_path':'source batch '+row['source_run_id'],'error':row['error']}
                 for row in conn.execute("SELECT source_run_id,error FROM monitor_batches WHERE status IN ('failed','completed_with_errors') AND error IS NOT NULL ORDER BY created DESC LIMIT 20"))
+            state['recent_errors'].extend({'relative_path':'video source '+row['source_id'],'error':row['error']}
+                for row in conn.execute("SELECT source_id,error FROM video_monitor_batches WHERE status IN ('failed','completed_with_errors') AND error IS NOT NULL ORDER BY created DESC LIMIT 20"))
             state['alerts']=[dict(row) for row in conn.execute(
                 'SELECT id,source_run_id,kind,details,created FROM monitor_events WHERE acknowledged=0 ORDER BY id LIMIT 100')]
             return state
+
+    def _sync_video_batches(self,mission):
+        with self.library.connect(mission) as conn:
+            pending=conn.execute('''SELECT b.source_id,b.video_run_id,r.status,r.error FROM video_monitor_batches b
+                LEFT JOIN video_runs r ON r.id=b.video_run_id
+                WHERE b.status='queued' AND b.video_run_id IS NOT NULL''').fetchall()
+            for row in pending:
+                if row['status'] in ('completed','completed_with_errors','failed','cancelled'):
+                    error=(row['error'] or row['status']) if row['status']!='completed' else None
+                    state='completed' if row['status']=='completed' else row['status']
+                    conn.execute('UPDATE video_monitor_batches SET status=?,error=? WHERE source_id=?',(state,error,row['source_id']))
+                    kind='completed' if state=='completed' else ('completed_with_errors' if state=='completed_with_errors' else 'failed')
+                    conn.execute('INSERT OR IGNORE INTO monitor_events(source_run_id,kind,details,created) VALUES (?,?,?,?)',
+                        (row['source_id'],kind,error or 'Automatic video analysis finished successfully',now()))
 
     def _sync_batches(self,mission):
         with self.library.connect(mission) as conn:
@@ -221,8 +247,10 @@ class SourceMonitor:
             if not self.library.monitoring_enabled(mission):
                 self._state(mission, 'paused')
                 return self.status(mission)
+            if settings['input_type'] == 'videos':
+                return self._scan_videos(mission,settings)
             if settings['input_type'] != 'images':
-                self._state(mission, 'unsupported', 'Continuous monitoring currently supports still images only')
+                self._state(mission, 'unsupported', 'Continuous monitoring requires image or video input')
                 return self.status(mission)
             if not settings['source_root']:
                 self._state(mission, 'unconfigured', 'Set a source directory in the mission settings')
@@ -318,6 +346,107 @@ class SourceMonitor:
             self._dispatch_batches(mission)
             self._state(mission, 'active')
             return self.status(mission)
+
+    def _scan_videos(self,mission,settings):
+        from . import video_store
+        video_store.prepare(self.library,mission)
+        if settings['analysis_mode']!='video_traffic':
+            self._state(mission,'unsupported','Continuous video analysis requires Video Traffic mode')
+            return self.status(mission)
+        if not settings['source_root']:
+            self._state(mission,'unconfigured','Set a source directory in the mission settings')
+            return self.status(mission)
+        if not settings.get('continuous_video_policy'):
+            self._state(mission,'policy_required','Save an explicit detector and tracker policy before automatic video analysis')
+            return self.status(mission)
+        root=Path(settings['source_root'])
+        try:
+            root=root.resolve(strict=True)
+            if not root.is_dir() or str(root)!=settings['source_root']:
+                raise OSError('Configured source directory is unavailable')
+        except OSError as exc:
+            self._state(mission,'unavailable',str(exc))
+            return self.status(mission)
+        scan_time=datetime.now(timezone.utc);scan_text=scan_time.isoformat();discovered=[]
+        if settings['include_subdirectories']:
+            for base,directories,files in os.walk(root,followlinks=False):
+                directories[:]=sorted(name for name in directories if not (Path(base)/name).is_symlink())
+                discovered.extend(path for name in files if (path:=Path(base)/name).suffix.lower() in VIDEO_SUFFIXES and not path.is_symlink())
+        else:
+            discovered=[path for path in root.iterdir() if path.is_file() and not path.is_symlink() and path.suffix.lower() in VIDEO_SUFFIXES]
+        ready=[]
+        with self.library.connect(mission) as conn:
+            conn.execute("UPDATE monitor_state SET status='scanning',last_scan=?,error=NULL WHERE id=1",(scan_text,))
+            for path in sorted(discovered):
+                relative=path.relative_to(root).as_posix()
+                try:
+                    safe_file(root,relative);stat=path.stat()
+                except (OSError,ValueError):continue
+                row=conn.execute('SELECT * FROM monitored_files WHERE relative_path=?',(relative,)).fetchone()
+                unchanged=row and row['size']==stat.st_size and row['mtime_ns']==stat.st_mtime_ns
+                stable_since=row['stable_since'] if unchanged else scan_text
+                status=row['status'] if unchanged else 'stabilizing'
+                conn.execute('''INSERT INTO monitored_files(relative_path,size,mtime_ns,stable_since,last_seen,status,error)
+                    VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(relative_path) DO UPDATE SET size=excluded.size,
+                    mtime_ns=excluded.mtime_ns,stable_since=excluded.stable_since,last_seen=excluded.last_seen,
+                    status=excluded.status,error=NULL''',(relative,stat.st_size,stat.st_mtime_ns,stable_since,scan_text,status))
+                if (scan_time-datetime.fromisoformat(stable_since)).total_seconds()<self.stability_seconds or status=='imported':continue
+                try:
+                    source_file=safe_file(root,relative);checksum=digest(source_file)
+                    existing=conn.execute('SELECT id FROM video_sources WHERE source_relative_path=? AND sha256=? LIMIT 1',(relative,checksum)).fetchone()
+                    if existing:
+                        conn.execute("UPDATE monitored_files SET imported_sha256=?,status='imported' WHERE relative_path=?",(checksum,relative))
+                        completed_run=conn.execute("SELECT id FROM video_runs WHERE source_id=? LIMIT 1",(existing['id'],)).fetchone()
+                        if not completed_run:
+                            conn.execute("INSERT OR IGNORE INTO video_monitor_batches(source_id,status,created,policy_json) VALUES (?,'pending',?,?)",
+                                (existing['id'],now(),json.dumps(settings['continuous_video_policy'],sort_keys=True,separators=(',',':'))))
+                            conn.execute("INSERT OR IGNORE INTO monitor_events(source_run_id,kind,details,created) VALUES (?,'new_data',?,?)",
+                                (existing['id'],f'Video source {relative} is queued for automatic analysis.',now()))
+                    else:
+                        conn.execute("UPDATE monitored_files SET status='ready' WHERE relative_path=?",(relative,))
+                        ready.append((relative,checksum))
+                except (OSError,ValueError) as exc:
+                    conn.execute("UPDATE monitored_files SET status='error',error=? WHERE relative_path=?",(str(exc)[:1000],relative))
+        found={path.relative_to(root).as_posix() for path in discovered}
+        with self.library.connect(mission) as conn:
+            for row in conn.execute("SELECT relative_path FROM monitored_files WHERE status!='missing'").fetchall():
+                if row['relative_path'] not in found:
+                    conn.execute("UPDATE monitored_files SET status='missing',error=NULL WHERE relative_path=?",(row['relative_path'],))
+        imported=[]
+        for relative,checksum in ready:
+            try:
+                source=video_store.register_video(self.library,mission,relative,metadata={'continuous_monitor':True})
+                if source['sha256']!=checksum:raise ValueError('Video changed after it was checked for stability; retry on the next scan')
+                with self.library.connect(mission) as conn:
+                    conn.execute("UPDATE monitored_files SET imported_sha256=?,status='imported',error=NULL WHERE relative_path=?",(checksum,relative))
+                    conn.execute("INSERT OR IGNORE INTO video_monitor_batches(source_id,status,created,policy_json) VALUES (?,'pending',?,?)",
+                        (source['id'],now(),json.dumps(settings['continuous_video_policy'],sort_keys=True,separators=(',',':'))))
+                    conn.execute("INSERT OR IGNORE INTO monitor_events(source_run_id,kind,details,created) VALUES (?,'new_data',?,?)",
+                        (source['id'],f'Video source {relative} imported and awaiting analysis.',now()))
+                imported.append(source['id'])
+            except Exception as exc:
+                with self.library.connect(mission) as conn:
+                    conn.execute("UPDATE monitored_files SET status='error',error=? WHERE relative_path=?",(str(exc)[:1000],relative))
+        self._dispatch_video_batches(mission)
+        self._state(mission,'active',imported=bool(imported))
+        state=self.status(mission)
+        if imported:state['last_video_sources']=imported
+        return state
+
+    def _dispatch_video_batches(self,mission):
+        if not self.on_video:return
+        with self.library.connect(mission) as conn:
+            pending=conn.execute("SELECT source_id,policy_json FROM video_monitor_batches WHERE status='pending' ORDER BY created,source_id").fetchall()
+        for row in pending:
+            try:result=self.on_video(mission,row['source_id'],json.loads(row['policy_json']))
+            except Exception as exc:
+                if getattr(exc,'retryable',False):return
+                with self.library.connect(mission) as conn:
+                    conn.execute("UPDATE video_monitor_batches SET status='failed',error=? WHERE source_id=? AND status='pending'",(str(exc)[:1000],row['source_id']))
+                    conn.execute("INSERT OR IGNORE INTO monitor_events(source_run_id,kind,details,created) VALUES (?,'failed',?,?)",(row['source_id'],str(exc)[:1000],now()))
+                continue
+            with self.library.connect(mission) as conn:
+                conn.execute("UPDATE video_monitor_batches SET status='queued',video_run_id=?,error=NULL WHERE source_id=? AND status='pending'",(result['run'],row['source_id']))
 
     def acknowledge(self,mission,identifiers):
         if not isinstance(identifiers,list) or len(identifiers)>100 or any(type(value) is not int or value<1 for value in identifiers):
