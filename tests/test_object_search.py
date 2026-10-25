@@ -87,6 +87,56 @@ class ObjectSearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'changed'):
             execute(library, 'another-mission', spec, confirmed=True)
 
+    def test_search_applies_named_view_weekday_and_local_time_filters(self):
+        def row(image_id, captured, view_id='north'):
+            return {'id': image_id, 'name': image_id + '.jpg', 'capture_utc': captured,
+                'view_id': view_id, 'view_name': 'North gate' if view_id == 'north' else 'South gate',
+                'revision': 0, 'review_prediction_run': None, 'prediction_run': 'run-1',
+                'predictions': [{'kind': 'candidate', 'label': 'truck', 'box': [.1, .1, .2, .2]}],
+                'annotations': '[]'}
+        scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
+            'view_assignments': [{'view_id': 'north', 'view_name': 'North gate'},
+                                 {'view_id': 'south', 'view_name': 'South gate'}],
+            'regions_by_view': {}}
+        query = 'Find trucks on Sunday between 17:00 and 20:00 at North gate'
+        spec = interpret(query, mission_id='mission', run_id='run-1', scope_snapshot=scope)
+        self.assertEqual(spec['view_id'], 'north')
+        self.assertEqual(spec['schedule_filter'], {'start_time': '17:00', 'end_time': '20:00', 'weekdays': [6]})
+        result = execute(SearchLibrary([
+            row('inside', '2026-05-17T16:04:00Z'),
+            row('late', '2026-05-17T18:30:00Z'),
+            row('other-view', '2026-05-17T16:04:00Z', 'south'),
+        ]), 'mission', spec, confirmed=True, scope_snapshot=scope)
+        self.assertEqual([item['image_id'] for item in result['results']], ['inside'])
+        self.assertEqual(result['scope_filtered_images'], 2)
+
+    def test_overnight_weekday_filter_uses_start_day_and_hebrew_query(self):
+        scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
+            'view_assignments': [], 'regions_by_view': {}}
+        query = 'מצא משאיות ביום ראשון בין 17:00 ל 05:00'
+        spec = interpret(query, mission_id='mission', run_id='run-1', scope_snapshot=scope)
+        self.assertEqual(spec['schedule_filter']['weekdays'], [6])
+        self.assertEqual(spec['schedule_filter']['start_time'], '17:00')
+        self.assertEqual(spec['schedule_filter']['end_time'], '05:00')
+        row = {'id': 'after-midnight', 'name': 'monday.jpg', 'capture_utc': '2026-05-17T23:00:00Z',
+            'view_id': None, 'view_name': None, 'revision': 0, 'review_prediction_run': None,
+            'prediction_run': 'run-1', 'predictions': [{'kind': 'candidate', 'label': 'truck'}],
+            'annotations': '[]'}
+        result = execute(SearchLibrary([row]), 'mission', spec, confirmed=True, scope_snapshot=scope)
+        self.assertEqual(result['matched_objects'], 1)
+
+    def test_search_interprets_an_explicit_inclusive_iso_date_range(self):
+        scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Europe/Riga'},
+            'view_assignments': [], 'regions_by_view': {}}
+        spec = interpret('Find cars between 2026-05-17 and 2026-05-19',
+            mission_id='mission', run_id='run-1', scope_snapshot=scope)
+        self.assertEqual(spec['schedule_filter']['start_date'], '2026-05-17')
+        self.assertEqual(spec['schedule_filter']['end_date'], '2026-05-19')
+
+    def test_temporal_search_requires_saved_iana_timezone(self):
+        with self.assertRaisesRegex(ValueError, 'recorded IANA time zone'):
+            interpret('Find cars on Monday', mission_id='mission')
+
     def test_search_matches_saved_category_without_guessing_color_or_subtype(self):
         row = {'id': 'image-1', 'name': '01.jpg', 'capture_utc': '2026-01-01T00:00:00Z',
                'view_id': None, 'view_name': None, 'revision': 0, 'review_prediction_run': None,
