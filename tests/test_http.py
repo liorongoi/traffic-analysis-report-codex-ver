@@ -129,6 +129,7 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="detectCurrentPlates"',page)
             self.assertIn('id="objectSearchQuery"',page)
             self.assertIn('id="confirmObjectSearch"',page)
+            self.assertIn('data-t="searchRegionHelp"',page)
             self.assertIn('id="proposeViews"',page)
             self.assertIn('id="viewProposals"',page)
             self.assertIn('id="imageSearch"',page)
