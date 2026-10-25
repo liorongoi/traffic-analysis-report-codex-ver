@@ -40,7 +40,7 @@ The Fintraffic sample set has no human ground-truth labels. No precision/recall/
 
 Manual browser smoke on 2026-10-25 used a disposable local mission and two generated JPEGs: the mission imported both images, a camera group was created and refreshed in the list, and the selected-image batch assignment updated its image count to two. The browser console showed no errors after fixing the form refresh. This checks the local browser workflow only; it does not establish native Windows or packaged deployment acceptance.
 
-No actual Windows runtime was staged, setup EXE compiled/extracted, target installed, native runtime checked or no-admin policy exercised. Installer scripts are source only. Network-share behavior and production LAN authentication remain unverified/unimplemented.
+No actual Windows runtime was staged, setup EXE compiled/extracted, target installed, native runtime checked or no-admin policy exercised. Installer scripts are source only. Network-share behavior and two-computer LAN acceptance remain unverified.
 
 The initial failed sample import was followed by a corrected successful 143-image import; failure evidence was retained. Initial test failures identified an INSERT placeholder mismatch, which was fixed before the successful suite.
 
@@ -143,3 +143,7 @@ Still-image runs now build a separate bounded light-reference artifact for each 
 ## Corrected video track identities
 
 Reviewers can merge an event into a same-run target or split a track at a saved analyzed frame with observations on both sides. Merge projection emits one logical event with the combined interval, labels, observation count, and original event IDs. A split emits two child rows with frame-derived timing and preserved parent identity. Review actions are append-only; a later clear action restores the original event projection. Event browsing and representative previews resolve corrected rows, clip exports use corrected bounds, and CSV/XLSX snapshots emit corrected logical rows with original event IDs and linked clip lineage. Tests cover merge, split, undo, event exports and the corrected child clip path. Full suite: 186 tests passed; `node --check web/app.js` and `git diff --check` passed. This does not validate tracker association accuracy or event quality on representative traffic footage.
+
+## Opt-in authenticated LAN host
+
+The loopback development server remains the default. LAN binding requires a non-loopback bind address, exact public hostname/IP, existing TLS certificate and private key, and a `TRAFFIC_ACCESS_CODE` environment value of at least 16 characters. It requires TLS 1.2+, exact Host/Origin matches, URL-encoded sign-in, per-IP failure throttling, one active 12-hour session using an HttpOnly/Secure/SameSite=Strict cookie, and the existing session token for writes. The secret is not a CLI argument or URL value. A local HTTPS smoke check passed for unauthenticated denial, wrong-code denial, valid sign-in, session retrieval and logout. Full suite: 186 tests passed; `node --check web/app.js` and `git diff --check` passed. A browser-trusted certificate, restrictive host firewall, Windows runtime, and two-computer LAN session still require native acceptance.
