@@ -168,8 +168,10 @@ def _extract_region_filter(text, scope_snapshot, selected_view):
     lowered=text.casefold()
     for view_id,region,name in candidates:
         name_pattern=r'\s+'.join(re.escape(part) for part in name.casefold().split())
-        pattern=re.compile(r'(?<!\w)(?:(?:in|inside|within|at|near|by)\s+'
-            r'(?:(?:the|region|area)\s+)?|(?:בתוך|באזור)\s+|ב)'+name_pattern+r'(?!\w)',re.I)
+        pattern=re.compile(r'(?<!\w)(?:(?:in|inside|within|at|on)\s+'
+            r'(?:(?:the\s+)?(?:(?:saved\s+|analysis\s+)?region|ROI|polygon|area)\s+(?:named\s+)?)?'
+            r'|(?:בתוך|באזור|בתחום|על)\s+(?:(?:אזור|שטח|מצולע)\s+(?:בשם\s+)?)?|ב)'
+            +name_pattern+r'(?!\w)',re.I)
         for match in pattern.finditer(lowered):
             matches.append((view_id,region,name,match.span()))
     # Prefer the longest full region name where names share a prefix. If the

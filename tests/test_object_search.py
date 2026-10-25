@@ -155,6 +155,19 @@ class ObjectSearchTests(unittest.TestCase):
         self.assertEqual(spec['region_filter']['region_id'],'north-roi')
         self.assertEqual(spec['view_id'],'north')
 
+    def test_plain_language_roi_references_resolve_only_exact_saved_region_names(self):
+        scope={'view_assignments':[], 'regions_by_view':{'north':[
+            {'id':'north-roi','name':'Northbound lane','kind':'include',
+             'polygon':[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]}]}}
+        for query in ('Find trucks in ROI Northbound lane',
+                      'Find trucks in the saved region named Northbound lane',
+                      'Find trucks on Northbound lane'):
+            with self.subTest(query=query):
+                spec=interpret(query,scope_snapshot=scope)
+                self.assertEqual(spec['region_filter']['region_id'],'north-roi')
+        with self.assertRaisesRegex(ValueError,'Unsupported search terms'):
+            interpret('Find trucks near Northbound lane',scope_snapshot=scope)
+
     def test_overnight_weekday_filter_uses_start_day_and_hebrew_query(self):
         scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
             'view_assignments': [], 'regions_by_view': {}}
