@@ -258,8 +258,13 @@ def create_run(library, mission, source_id, config, *, total_frames=None):
             (mission,)).fetchone()
         if not settings or settings['input_type'] != 'videos':
             raise ValueError('Video runs require a video mission')
-        if settings['analysis_mode'] != 'video_traffic':
-            raise ValueError('Automatic analysis currently supports Video Traffic missions only')
+        task = config.get('task', 'video_traffic')
+        if settings['analysis_mode'] != task:
+            raise ValueError('Video run task must match the mission analysis mode')
+        if task not in ('video_traffic', 'license_plate'):
+            raise ValueError('Unsupported video analysis task')
+        if task == 'license_plate' and not isinstance(config.get('plate_detector'), dict):
+            raise ValueError('Plate crop review runs must snapshot plate_detector settings')
         source = conn.execute('SELECT * FROM video_sources WHERE mission_id=? AND id=?',
             (mission, source_id)).fetchone()
         if not source:
@@ -420,7 +425,7 @@ def set_total_frames(library, mission, run_id, total_frames):
 
 
 def execute_video_run(library, mission, run_id, detector, *, should_cancel=None,
-                      progress_callback=None):
+                      progress_callback=None, frame_callback=None):
     """Execute or resume one persisted run synchronously in a worker process."""
     from .tracking import TrackerPolicy, VideoTrackManager
     from .video_pipeline import (VideoAnalysisCancelled, VideoAnalysisPipeline,
@@ -457,6 +462,7 @@ def execute_video_run(library, mission, run_id, detector, *, should_cancel=None,
                 recording_start_utc=(datetime.fromisoformat(source['recording_start_utc'])
                     if source['recording_start_utc'] else None),
                 should_cancel=should_cancel, progress_callback=progress,
+                frame_callback=frame_callback,
                 start_frame_index=run['frames_done'], expected_previous_timestamp=previous):
             if isinstance(record, VideoFrameAnalysis):
                 checkpoint(library, mission, run_id, frame_index=record.frame_index,

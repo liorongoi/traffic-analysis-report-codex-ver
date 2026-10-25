@@ -21,7 +21,8 @@ def serve(workspace, web, port=8765, open_browser=False):
     from .inference import InferenceService
     inference=InferenceService(library,Path(web).parent/'model-packs'/'yolox-s')
     from .video_inference import VideoInferenceService
-    video_inference=VideoInferenceService(library,Path(web).parent/'model-packs'/'yolox-s',inference)
+    video_inference=VideoInferenceService(library,Path(web).parent/'model-packs'/'yolox-s',inference,
+        plate_pack=Path(web).parent/'model-packs'/'license-plate-yolox')
     monitor = SourceMonitor(library,on_batch=inference.start_continuous_batch)
     monitor.start()
     video_clips.reconcile_exports(library)
@@ -132,6 +133,10 @@ def serve(workspace, web, port=8765, open_browser=False):
                 if parsed.path == '/api/plate-crop':
                     from .plate_review import crop_file
                     path=crop_file(library,query['mission'][0],query['crop'][0])
+                    return self.reply(200,path.read_bytes(),'image/jpeg')
+                if parsed.path == '/api/plate-context':
+                    from .plate_review import context_file
+                    path=context_file(library,query['mission'][0],query['crop'][0])
                     return self.reply(200,path.read_bytes(),'image/jpeg')
                 if parsed.path == '/api/night-learning':
                     from .learning import inventory,candidates
@@ -272,6 +277,8 @@ def serve(workspace, web, port=8765, open_browser=False):
                 elif self.path == '/api/plates/detect':
                     from .plate_review import propose
                     result=propose(library,data['mission'],data['image_id'],Path(web).parent/'model-packs'/'license-plate-yolox',data.get('threshold',.3))
+                elif self.path == '/api/plates/detect-video':
+                    result=video_inference.start_plate_review(data['mission'],data['source_id'],threshold=data.get('threshold',.3))
                 elif self.path == '/api/plates/review':
                     from .plate_review import review
                     result=review(library,data['mission'],data['crop_id'],data['expected_revision'],data['decision'],data['operator'])

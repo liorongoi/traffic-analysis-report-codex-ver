@@ -73,6 +73,19 @@ class VideoInferenceServiceTests(unittest.TestCase):
                 threshold=.001, tiled=False)
         self.assertEqual(self.service.status(self.mission), [])
 
+    def test_plate_video_run_uses_only_the_plate_pack_and_existing_worker_slot(self):
+        (self.root/'plate-output').mkdir()
+        mission=self.library.create('Video plate mission','Israel','Asia/Jerusalem',{
+            'input_type':'videos','analysis_mode':'license_plate','source_root':str(self.source_root),
+            'output_root':str(self.root/'plate-output')})
+        source=register_video(self.library,mission,'clip.mp4')
+        result=self.service.start_plate_review(mission,source['id'])
+        self.assertEqual(result['status'],'queued')
+        self.assertEqual(result['config']['task'],'license_plate')
+        self.assertEqual(result['config']['plate_detector']['device'],'CPUExecutionProvider')
+        self.assertNotIn('recognition',result['config'])
+        self.assertIn((mission,result['run']),self.inference.processes)
+
     def test_startup_marks_orphaned_runs_failed_with_checkpoint_preserved(self):
         source = self.source()
         run = create_run(self.library, self.mission, source['id'], {

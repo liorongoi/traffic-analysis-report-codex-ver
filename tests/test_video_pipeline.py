@@ -44,12 +44,15 @@ class VideoAnalysisPipelineTests(unittest.TestCase):
             processor, detector = pipeline()
             origin = datetime(2026, 5, 17, 16, 4, tzinfo=timezone.utc)
             progress = []
+            decoded_frames=[]
             records = list(processor.analyze(path, recording_start_utc=origin,
-                progress_callback=progress.append))
+                progress_callback=progress.append,frame_callback=decoded_frames.append))
             frames = [record for record in records if isinstance(record, VideoFrameAnalysis)]
             closure = records[-1]
             self.assertIsInstance(closure, VideoTrackClosure)
             self.assertEqual(detector.calls, 4)
+            self.assertEqual([frame.index for frame in decoded_frames],[0,1,2,3])
+            self.assertTrue(all(frame.image.shape==(48,64,3) for frame in decoded_frames))
             self.assertEqual([item.timestamp.pts for item in frames], [0, 40, 160, 200])
             self.assertEqual([item.utc_time for item in frames], [
                 origin, datetime(2026, 5, 17, 16, 4, 0, 40000, tzinfo=timezone.utc),

@@ -59,7 +59,8 @@ class VideoAnalysisPipeline:
         self.metadata = None
 
     def analyze(self, path, *, recording_start_utc=None, should_cancel=None,
-                progress_callback=None, start_frame_index=0, expected_previous_timestamp=None):
+                progress_callback=None, frame_callback=None, start_frame_index=0,
+                expected_previous_timestamp=None):
         """Yield per-frame analyses and a final track-closure record.
 
         `recording_start_utc` must be a timezone-aware origin confirmed from
@@ -76,6 +77,8 @@ class VideoAnalysisPipeline:
             raise TypeError('should_cancel must be callable')
         if progress_callback is not None and not callable(progress_callback):
             raise TypeError('progress_callback must be callable')
+        if frame_callback is not None and not callable(frame_callback):
+            raise TypeError('frame_callback must be callable')
         if (isinstance(start_frame_index, bool) or not isinstance(start_frame_index, int)
                 or start_frame_index < 0):
             raise ValueError('start_frame_index must be a non-negative integer')
@@ -99,6 +102,8 @@ class VideoAnalysisPipeline:
                     continue
                 if should_cancel is not None and should_cancel():
                     raise VideoAnalysisCancelled('Video analysis cancelled between frames')
+                if frame_callback is not None:
+                    frame_callback(decoded)
                 detections = self.detector.infer(decoded.image)
                 if not isinstance(detections, (list, tuple)):
                     raise ValueError('Detector must return a list of detection mappings')

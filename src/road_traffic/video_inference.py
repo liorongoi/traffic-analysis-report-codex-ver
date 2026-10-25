@@ -8,10 +8,11 @@ from .store import now
 
 
 class VideoInferenceService:
-    def __init__(self, library, pack, inference_service, *, worker_script=None):
+    def __init__(self, library, pack, inference_service, *, worker_script=None, plate_pack=None):
         self.library = library
         self.pack = Path(pack).resolve()
         self.inference = inference_service
+        self.plate_pack=Path(plate_pack or self.pack.parent/'license-plate-yolox').resolve()
         self.worker_script = Path(worker_script or
             Path(__file__).resolve().parents[2] / 'scripts' / 'run-video-analysis.py')
         self.recover_after_restart()
@@ -79,6 +80,27 @@ class VideoInferenceService:
             self._spawn(mission, run['id'])
         return {'run': run['id'], 'status': 'queued', 'config': run['config']}
 
+    def start_plate_review(self,mission,source_id,*,threshold=.3):
+        from .plate_review import _model_pack, _paths
+        settings=self.library.settings(mission)
+        if settings['input_type']!='videos' or settings['analysis_mode']!='license_plate':
+            raise ValueError('Plate crop processing requires a video plate-crop mission')
+        if type(threshold) not in (int,float) or not .01<=threshold<=.9:
+            raise ValueError('Plate detector threshold must be between 0.01 and 0.90')
+        _paths(self.library,mission)
+        _,sha=_model_pack(self.plate_pack)
+        config={'task':'license_plate','plate_detector':{'version':'plate-yolox-tiny-v1',
+            'sha256':sha,'threshold':float(threshold),'device':'CPUExecutionProvider',
+            'human_confirmation':True},'tracker_policy':{'max_gap_seconds':[1,1],
+            'minimum_iou':0,'max_center_distance':1,'association_margin':0,
+            'compatible_label_groups':[]}}
+        with self.inference.lock:
+            if self.inference.training_active:raise ValueError('Finish correction-head training before starting analysis')
+            if self.inference._has_active_worker():raise ValueError('Another local processing worker is active')
+            run=video_store.create_run(self.library,mission,source_id,config)
+            self._spawn(mission,run['id'])
+        return {'run':run['id'],'status':'queued','config':run['config']}
+
     def resume(self, mission, run_id):
         with self.inference.lock:
             if self.inference.training_active:
@@ -91,11 +113,17 @@ class VideoInferenceService:
             if self.inference._pid_alive(job['worker_pid']):
                 raise ValueError('The previous video worker is still stopping; retry in a moment')
             # Revalidate the stored source and frozen detector identity before resuming.
-            from .detector import model_pack, VERSION
-            _, sha = model_pack(self.pack)
-            detector = job['config'].get('detector', {})
-            if detector.get('version') != VERSION or detector.get('sha256') != sha:
-                raise ValueError('Detector changed since this run; create a new video run')
+            if job['config'].get('task')=='license_plate':
+                from .plate_review import _model_pack
+                _,sha=_model_pack(self.plate_pack)
+                detector=job['config'].get('plate_detector',{})
+                if detector.get('sha256')!=sha:raise ValueError('Plate detector changed since this run; create a new video run')
+            else:
+                from .detector import model_pack, VERSION
+                _, sha = model_pack(self.pack)
+                detector = job['config'].get('detector', {})
+                if detector.get('version') != VERSION or detector.get('sha256') != sha:
+                    raise ValueError('Detector changed since this run; create a new video run')
             video_store.transition(self.library, mission, run_id, 'queued')
             self._spawn(mission, run_id)
         return {'run': run_id, 'status': 'queued', 'frames_done': job['frames_done']}
@@ -132,6 +160,26 @@ class VehicleProposalAdapter:
 
 def execute_worker(library, mission, run_id, pack):
     run = video_store.run_detail(library, mission, run_id)
+    if run['config'].get('task')=='license_plate':
+        from .plate_review import PlateDetector, _model_pack, propose_video_frame
+        detector_config=run['config'].get('plate_detector',{})
+        plate_pack=Path(pack).parent/'license-plate-yolox'
+        _,sha=_model_pack(plate_pack)
+        if detector_config.get('sha256')!=sha:raise ValueError('Plate detector model hash changed; create a new run')
+        plate_detector=PlateDetector(plate_pack,detector_config['threshold'])
+        class EmptyDetector:
+            def infer(self,rgb_frame):return []
+        def save_frame(decoded):
+            propose_video_frame(library,mission,run['source_id'],decoded,plate_detector)
+        try:
+            return video_store.execute_video_run(library,mission,run_id,EmptyDetector(),
+                should_cancel=lambda:_video_cancel_requested(library,mission,run_id),frame_callback=save_frame)
+        except Exception as exc:
+            with library.connect(mission) as conn:
+                row=conn.execute('SELECT status FROM video_runs WHERE mission_id=? AND id=?',(mission,run_id)).fetchone()
+            if row and row['status'] in ('queued','running'):
+                video_store.fail_worker(library,mission,run_id,f'{type(exc).__name__}: {exc}')
+            raise
     detector_config = run['config'].get('detector', {})
     from .detector import VehicleDetector, VERSION
     if detector_config.get('version') != VERSION:
@@ -141,14 +189,7 @@ def execute_worker(library, mission, run_id, pack):
     if detector.sha != detector_config.get('sha256'):
         raise ValueError('Video detector model hash changed; create a new run')
 
-    def should_cancel():
-        video_store.prepare(library, mission)
-        with library.connect(mission) as conn:
-            row = conn.execute('SELECT cancel_requested FROM video_runs WHERE mission_id=? AND id=?',
-                (mission, run_id)).fetchone()
-        if row is None:
-            raise ValueError('Video run disappeared while its worker was active')
-        return bool(row['cancel_requested'])
+    def should_cancel():return _video_cancel_requested(library,mission,run_id)
 
     try:
         return video_store.execute_video_run(library, mission, run_id,
@@ -161,4 +202,13 @@ def execute_worker(library, mission, run_id, pack):
             video_store.fail_worker(library, mission, run_id,
                 f'{type(exc).__name__}: {exc}')
         raise
+
+
+def _video_cancel_requested(library,mission,run_id):
+    video_store.prepare(library,mission)
+    with library.connect(mission) as conn:
+        row=conn.execute('SELECT cancel_requested FROM video_runs WHERE mission_id=? AND id=?',
+            (mission,run_id)).fetchone()
+    if row is None:raise ValueError('Video run disappeared while its worker was active')
+    return bool(row['cancel_requested'])
 

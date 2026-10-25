@@ -24,8 +24,8 @@ def _sha(path):
 
 def _paths(library, mission):
     settings=library.settings(mission)
-    if settings['input_type']!='images' or settings['analysis_mode']!='license_plate':
-        raise ValueError('Plate crop detection requires a still-image plate-crop mission')
+    if settings['input_type'] not in ('images','videos') or settings['analysis_mode']!='license_plate':
+        raise ValueError('Plate crop review requires a plate-crop mission')
     if not settings['output_root']:
         raise ValueError('Set the mission output folder before saving plate crops')
     root=Path(library._configured_directory(settings['output_root'],'output',writable=True))
@@ -65,6 +65,12 @@ def _connect(db):
         CREATE TRIGGER IF NOT EXISTS immutable_plate_reviews_delete BEFORE DELETE ON reviews
             BEGIN SELECT RAISE(ABORT,'plate crop reviews are append-only'); END;
     ''')
+    columns={row['name'] for row in conn.execute('PRAGMA table_info(crops)')}
+    for name, declaration in (
+        ('source_kind', "TEXT NOT NULL DEFAULT 'image'"), ('video_source_id','TEXT'),
+        ('frame_index','INTEGER'), ('pts','INTEGER'), ('time_base_num','INTEGER'),
+        ('time_base_den','INTEGER'), ('capture_utc','TEXT'), ('context_file','TEXT')):
+        if name not in columns:conn.execute(f'ALTER TABLE crops ADD COLUMN {name} {declaration}')
     return conn
 
 
@@ -169,7 +175,8 @@ def propose(library,mission,image_id,pack,threshold=.3):
                 return list_crops(library,mission,image_id)
             for crop_id,filename,path,item,coords in crops:
                 box=item['box']
-                conn.execute('INSERT INTO crops VALUES (?,?,?,?,?,?,?,?,?,?)',(
+                conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
+                    crop_sha256,bbox,confidence,model_sha256,created) VALUES (?,?,?,?,?,?,?,?,?,?)''',(
                     crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],'height':coords[3]-coords[1]}),
                     item['confidence'],detector.sha,created))
@@ -178,6 +185,55 @@ def propose(library,mission,image_id,pack,threshold=.3):
         for crop_id,filename,path,item,coords in crops:path.unlink(missing_ok=True)
         raise
     return list_crops(library,mission,image_id)
+
+
+def propose_video_frame(library,mission,source_id,decoded,detector):
+    """Save plate-region crops from one decoded frame, without reading plate text."""
+    from PIL import Image
+    from . import video_store
+    import numpy as np
+    _,folder,db=_paths(library,mission)
+    source=video_store.source_detail(library,mission,source_id)
+    image_id=f"video:{source_id}:{decoded.index}"
+    with _connect(db) as conn:
+        existing=conn.execute('''SELECT id FROM crops WHERE source_kind='video'
+            AND video_source_id=? AND frame_index=? AND model_sha256=?''',
+            (source_id,decoded.index,detector.sha)).fetchone()
+        if existing:return []
+    frame=np.asarray(decoded.image)
+    boxes=detector.detect(frame)
+    origin=datetime.fromisoformat(source['recording_start_utc']) if source['recording_start_utc'] else None
+    utc=decoded.utc_at(origin)
+    created=datetime.now(timezone.utc).isoformat()
+    saved=[]
+    try:
+        with Image.fromarray(frame).convert('RGB') as image:
+            for item in boxes:
+                x,y,bw,bh=item['box'];crop_id=str(uuid.uuid4())
+                coords=(max(0,int(x*image.width)),max(0,int(y*image.height)),
+                    min(image.width,int((x+bw)*image.width)),min(image.height,int((y+bh)*image.height)))
+                if coords[2]<=coords[0] or coords[3]<=coords[1]:continue
+                crop_name=f'{crop_id}.jpg';context_name=f'{crop_id}-context.jpg'
+                crop_path=folder/crop_name;context_path=folder/context_name
+                image.crop(coords).save(crop_path,format='JPEG',quality=95)
+                image.save(context_path,format='JPEG',quality=88)
+                saved.append((crop_id,crop_name,context_name,crop_path,context_path,item,coords))
+        with _connect(db) as conn:
+            for crop_id,crop_name,context_name,crop_path,context_path,item,coords in saved:
+                conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
+                    crop_sha256,bbox,confidence,model_sha256,created,source_kind,video_source_id,
+                    frame_index,pts,time_base_num,time_base_den,capture_utc,context_file)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+                    crop_id,image_id,source['original_name'],source['sha256'],crop_name,_sha(crop_path),
+                    json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],
+                        'height':coords[3]-coords[1]}),item['confidence'],detector.sha,created,'video',
+                    source_id,decoded.index,decoded.timestamp.pts,decoded.timestamp.time_base_num,
+                    decoded.timestamp.time_base_den,utc.isoformat() if utc else None,context_name))
+    except Exception:
+        for _,_,_,crop_path,context_path,_,_ in saved:
+            crop_path.unlink(missing_ok=True);context_path.unlink(missing_ok=True)
+        raise
+    return [crop_id for crop_id,*_ in saved]
 
 
 def list_crops(library,mission,image_id=None):
@@ -202,6 +258,20 @@ def crop_file(library,mission,crop_id):
     path=candidate.resolve(strict=True)
     if not path.is_relative_to(folder.resolve(strict=True)):raise ValueError('Plate crop path escapes its folder')
     if _sha(path)!=row['crop_sha256']:raise ValueError('Saved plate crop checksum mismatch')
+    return path
+
+
+def context_file(library,mission,crop_id):
+    _,folder,db=_paths(library,mission)
+    with _connect(db) as conn:row=conn.execute('SELECT context_file FROM crops WHERE id=?',(crop_id,)).fetchone()
+    if not row or not row['context_file']:raise ValueError('Plate crop context frame not found in mission')
+    name=Path(row['context_file'])
+    if name.name!=row['context_file'] or name.suffix.lower()!='.jpg':raise ValueError('Invalid plate context path')
+    candidate=folder/name
+    if candidate.is_symlink() or (hasattr(candidate,'is_junction') and candidate.is_junction()):
+        raise ValueError('Plate context path cannot use linked files')
+    path=candidate.resolve(strict=True)
+    if not path.is_relative_to(folder.resolve(strict=True)):raise ValueError('Plate context path escapes its folder')
     return path
 
 

@@ -7,6 +7,10 @@ from PIL import Image
 from road_traffic.plate_review import _connect, _paths, crop_file, list_crops, review, _sha, propose
 from unittest.mock import patch
 from road_traffic.store import Library
+from datetime import datetime, timezone
+from road_traffic.video_store import register_video
+from road_traffic.video_timeline import VideoTimestamp
+from road_traffic.video_decoder import DecodedVideoFrame
 
 
 class PlateCropReviewTests(unittest.TestCase):
@@ -24,7 +28,8 @@ class PlateCropReviewTests(unittest.TestCase):
         self.crop_id='00000000-0000-4000-8000-000000000001'
         crop=folder/(self.crop_id+'.jpg');Image.new('RGB',(12,5),(255,255,255)).save(crop,'JPEG')
         with _connect(db) as conn:
-            conn.execute('INSERT INTO crops VALUES (?,?,?,?,?,?,?,?,?,?)',(
+            conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
+                crop_sha256,bbox,confidence,model_sha256,created) VALUES (?,?,?,?,?,?,?,?,?,?)''',(
                 self.crop_id,self.image['id'],self.image['name'],self.image['sha256'],crop.name,_sha(crop),
                 json.dumps({'x':2,'y':3,'width':12,'height':5}),.8,'a'*64,'2026-10-25T00:00:00+00:00'))
     def tearDown(self):self.tmp.cleanup()
@@ -69,6 +74,38 @@ class PlateCropReviewTests(unittest.TestCase):
             review(self.lib,self.mission,self.crop_id,0,'approved',' ')
         with self.assertRaisesRegex(ValueError,'Choose approved or rejected'):
             review(self.lib,self.mission,self.crop_id,0,'read-text','Operator')
+
+    def test_video_frame_crops_keep_pts_utc_and_context_without_text_recognition(self):
+        import numpy as np
+        from road_traffic.plate_review import propose_video_frame, context_file
+        root=Path(self.tmp.name);source_root=root/'videos';source_root.mkdir()
+        video=source_root/'camera.mp4';video.write_bytes(b'fixture video bytes')
+        output=root/'video-output';output.mkdir()
+        video_mission=self.lib.create('Video plate crops','Israel','Asia/Jerusalem',{
+            'input_type':'videos','analysis_mode':'license_plate','source_root':str(source_root),
+            'output_root':str(output)})
+        origin=datetime(2026,5,17,16,4,tzinfo=timezone.utc)
+        source=register_video(self.lib,video_mission,'camera.mp4',recording_start_utc=origin,
+            origin_provenance='verified recorder metadata')
+        class Detector:
+            sha='c'*64
+            calls=0
+            def detect(self,image):
+                self.calls+=1
+                return [{'box':[.25,.25,.5,.25],'confidence':.9,'model_sha256':self.sha}]
+        detector=Detector()
+        decoded=DecodedVideoFrame(index=7,timestamp=VideoTimestamp(150,1,30),
+            image=np.zeros((24,32,3),dtype=np.uint8))
+        ids=propose_video_frame(self.lib,video_mission,source['id'],decoded,detector)
+        self.assertEqual(len(ids),1)
+        row=list_crops(self.lib,video_mission)[0]
+        self.assertEqual((row['source_kind'],row['frame_index'],row['pts']),('video',7,150))
+        self.assertEqual((row['time_base_num'],row['time_base_den']),(1,30))
+        self.assertTrue(row['capture_utc'].startswith('2026-05-17T16:04:05'))
+        self.assertTrue(context_file(self.lib,video_mission,row['id']).is_file())
+        self.assertEqual(propose_video_frame(self.lib,video_mission,source['id'],decoded,detector),[])
+        self.assertEqual(detector.calls,1)
+        self.assertNotIn('text',row);self.assertNotIn('ocr',row)
 
 
 if __name__=='__main__':unittest.main()
