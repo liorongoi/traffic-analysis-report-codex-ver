@@ -76,6 +76,8 @@ class HttpTests(unittest.TestCase):
         self.assertIn('Notification.requestPermission()',script)
         self.assertIn('notifyDesktopAlerts(alerts)',script)
         self.assertIn("tr('resourceProfiles')",script)
+        self.assertIn("resource_profile:$('imageResourceProfile').value",script)
+        self.assertIn("resource_profile:$('videoResourceProfile').value",script)
         with self.request('/timezone-countries.json') as response:
             self.assertEqual(response.status,200)
             self.assertIn('application/json',response.headers['Content-Type'])
@@ -93,6 +95,8 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="videoMediaMetadata"',page)
             self.assertIn('id="timezoneSearch"',page)
             self.assertIn('id="applyTimezoneSearch"',page)
+            self.assertIn('id="imageResourceProfile"',page)
+            self.assertIn('id="videoResourceProfile"',page)
             self.assertIn('Video monitoring requires an explicit saved detector and tracker policy.',page)
             self.assertIn('id="videoTargetLabels"',page)
             self.assertIn('id="mergeViewButton"',page)
@@ -209,7 +213,7 @@ class HttpTests(unittest.TestCase):
                 if state['status']=='policy_required':break
                 time.sleep(.05)
             self.assertEqual(state['status'],'policy_required')
-            policy={'mission':mission,'threshold':.2,'tiled':False,'target_labels':['car'],
+            policy={'mission':mission,'threshold':.2,'tiled':False,'target_labels':['car'],'resource_profile':'expanded',
                 'tracker_policy':{'max_gap_seconds':'1/2','minimum_iou':.2,
                     'max_center_distance':.15,'association_margin':.05,
                     'compatible_label_groups':[]}}
@@ -218,6 +222,7 @@ class HttpTests(unittest.TestCase):
             from road_traffic.store import Library
             saved=Library(Path(self.tmp.name)).settings(mission)['continuous_video_policy']
             self.assertEqual(saved['target_labels'],['car'])
+            self.assertEqual(saved['resource_profile'],'expanded')
             self.assertEqual(saved['tracker_policy']['max_gap_seconds'],[1,2])
 
     def test_video_event_table_export_api_writes_and_downloads_configured_formats(self):

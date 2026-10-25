@@ -45,8 +45,10 @@ class VideoInferenceServiceTests(unittest.TestCase):
     def test_supervisor_starts_cancels_recovers_and_resumes_same_run(self):
         source = self.source()
         result = self.service.start(self.mission, source['id'], self.tracker_policy(),
-            threshold=.18, tiled=False,target_labels=['truck','bus'])
+            threshold=.18, tiled=False,target_labels=['truck','bus'],resource_profile='conservative')
         self.assertEqual(result['config']['detector']['target_labels'],['bus','truck'])
+        self.assertEqual(result['config']['detector']['resource_profile']['requested'],'conservative')
+        self.assertEqual(result['config']['detector']['cpu_threads'],1)
         run_id = result['run']
         process = self.inference.processes[(self.mission, run_id)]
         self.assertIsNone(process.poll())

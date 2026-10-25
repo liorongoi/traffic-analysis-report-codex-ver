@@ -28,7 +28,7 @@ def execute(library,mission,run,pack):
         if config.get('night_head_id'):
             from .learning import load_head
             head,_=load_head(library,mission,config['night_head_id'],config['night_head_hash'])
-        detector=VehicleDetector(pack,config['threshold'],config['tiled'])
+        detector=VehicleDetector(pack,config['threshold'],config['tiled'],config.get('cpu_threads',2))
         if config['adapter']!=VERSION:raise ValueError('Adapter version changed; start a new run')
         if detector.sha!=config['model_sha256']:raise ValueError('Model changed after run approval')
         with library.connect(mission) as conn:
@@ -99,7 +99,8 @@ def execute(library,mission,run,pack):
                     conn.execute("UPDATE inference_runs SET status='cancelled',stage='cancelled',finished=? WHERE id=?",(now(),run));return
                 conn.execute("UPDATE inference_runs SET stage='detecting' WHERE id=?",(run,))
             start=time.perf_counter()
-            details={'adapter':VERSION,'model_sha256':detector.sha,'device':'CPUExecutionProvider','input_sha256':row['sha256'],
+            details={'adapter':VERSION,'model_sha256':detector.sha,'device':'CPUExecutionProvider','cpu_threads':detector.cpu_threads,
+                'resource_profile':config.get('resource_profile'),'input_sha256':row['sha256'],
                 'threshold':config['threshold'],'tiled':config['tiled'],'light_background':background,
                 'view_id':row.get('view_id') or None,'view_assignment_revision':row.get('view_revision',0),
                 'human_confirmation':False,'confidence_note':'Detector scores are not calibrated accuracy.'}

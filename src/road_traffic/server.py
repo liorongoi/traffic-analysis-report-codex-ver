@@ -477,7 +477,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         confirmed=data.get('confirmed'), run=data.get('run') or None,
                         scope_snapshot=snapshot)
                 elif self.path == '/api/inference/start':
-                    result=inference.start(data['mission'],data.get('threshold',.18),data.get('tiled',True),data.get('night_lights',True),data.get('night_head_id'))
+                    result=inference.start(data['mission'],data.get('threshold',.18),data.get('tiled',True),data.get('night_lights',True),data.get('night_head_id'),resource_profile=data.get('resource_profile','auto'))
                 elif self.path == '/api/inference/roi-rerun':
                     result=inference.rerun_roi(data['mission'],data['run'],data['operator'])
                 elif self.path == '/api/inference/resume':
@@ -514,11 +514,12 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 elif self.path == '/api/video/runs':
                     result=video_inference.start(data['mission'],data['source_id'],data['tracker_policy'],
                         threshold=data['threshold'],tiled=data['tiled'],
-                        target_labels=data.get('target_labels'))
+                        target_labels=data.get('target_labels'),resource_profile=data.get('resource_profile','auto'))
                 elif self.path == '/api/video/monitor-policy':
                     result=video_inference.save_continuous_policy(data['mission'],
                         tracker_policy=data['tracker_policy'],threshold=data['threshold'],
-                        tiled=data['tiled'],target_labels=data.get('target_labels'))
+                        tiled=data['tiled'],target_labels=data.get('target_labels'),
+                        resource_profile=data.get('resource_profile','auto'))
                     monitor.wake_event.set()
                 elif self.path == '/api/video/runs/resume':
                     result=video_inference.resume(data['mission'],data['run'])

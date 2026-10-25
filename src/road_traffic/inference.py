@@ -94,16 +94,19 @@ class InferenceService:
                     f'Video worker is no longer available; {job["frames_done"]} frames are saved. Resume this run.')
         return False
 
-    def start(self,mission,threshold=.18,tiled=True,night_lights=True,night_head_id=None,source_run=None):
+    def start(self,mission,threshold=.18,tiled=True,night_lights=True,night_head_id=None,source_run=None,resource_profile='auto'):
         from .detector import model_pack,VERSION
+        from .hardware import resolve_resource_profile
         settings = self.library.settings(mission)
         if settings['input_type'] != 'images' or settings['analysis_mode'] != 'general_traffic':
             raise ValueError('Automatic detection currently supports still-image General Traffic missions only')
         if type(threshold) not in (float,int) or not .01<=threshold<=.9:raise ValueError('Threshold must be 0.01–0.90')
         if type(tiled) is not bool or type(night_lights) is not bool:raise ValueError('Expected boolean settings')
+        resources=resolve_resource_profile(resource_profile)
         _,sha=model_pack(self.pack)
         config={'adapter':VERSION,'model_sha256':sha,'threshold':threshold,'tiled':tiled,'night_lights':night_lights,
-            'device':'CPUExecutionProvider','training_supported':False,'training_capabilities':{'yolox_s':'unsupported','night_light_head':'refit from explicit labels'},'policy':'All automatic results require human confirmation'}
+            'device':resources['device'],'cpu_threads':resources['cpu_threads'],'resource_profile':resources,
+            'training_supported':False,'training_capabilities':{'yolox_s':'unsupported','night_light_head':'refit from explicit labels'},'policy':'All automatic results require human confirmation'}
         if night_head_id:
             from .learning import load_head
             _,head_hash=load_head(self.library,mission,night_head_id)

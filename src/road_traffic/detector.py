@@ -35,18 +35,19 @@ def suppress(items,threshold=.45):
 
 
 class VehicleDetector:
-    def __init__(self,pack,threshold=.18,tiled=True):
+    def __init__(self,pack,threshold=.18,tiled=True,cpu_threads=2):
         import cv2
         import numpy as np
         import onnxruntime as ort
         if not .01<=threshold<=.9:raise ValueError('Invalid confidence threshold')
+        if type(cpu_threads) is not int or not 1<=cpu_threads<=64:raise ValueError('CPU thread limit must be between 1 and 64')
         self.cv,self.np=cv2,np
         self.path,self.sha=model_pack(pack)
-        options=ort.SessionOptions();options.intra_op_num_threads=2;options.inter_op_num_threads=1
+        options=ort.SessionOptions();options.intra_op_num_threads=cpu_threads;options.inter_op_num_threads=1
         self.session=ort.InferenceSession(str(self.path),sess_options=options,providers=['CPUExecutionProvider'])
         if self.session.get_providers()!=['CPUExecutionProvider']:raise RuntimeError('Unexpected inference device')
         self.input=self.session.get_inputs()[0].name
-        self.threshold,self.tiled=threshold,tiled
+        self.threshold,self.tiled,self.cpu_threads=threshold,tiled,cpu_threads
         grids=[];strides=[]
         for stride in (8,16,32):
             y,x=np.meshgrid(np.arange(640//stride),np.arange(640//stride),indexing='ij')

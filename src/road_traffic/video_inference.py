@@ -61,9 +61,10 @@ class VideoInferenceService:
                 f'Unable to start video worker: {type(exc).__name__}: {exc}')
             raise
 
-    def start(self, mission, source_id, tracker_policy, *, threshold, tiled, target_labels=None):
+    def start(self, mission, source_id, tracker_policy, *, threshold, tiled, target_labels=None, resource_profile='auto'):
         from .detector import VERSION, model_pack
         from .detector import VEHICLES
+        from .hardware import resolve_resource_profile
         settings = self.library.settings(mission)
         if settings['input_type'] != 'videos' or settings['analysis_mode'] != 'video_traffic':
             raise ValueError('Automatic video analysis supports Video Traffic missions only')
@@ -79,11 +80,13 @@ class VideoInferenceService:
                 or not set(target_labels).issubset(supported_labels)):
             raise ValueError('Choose one or more supported video vehicle classes')
         target_labels=[label for label in supported_labels if label in target_labels]
+        resources=resolve_resource_profile(resource_profile)
         _, sha = model_pack(self.pack)
         config = {'detector': {'version': VERSION, 'sha256': sha,
             'threshold': float(threshold), 'tiled': tiled,
             'target_labels':target_labels,
-            'device': 'CPUExecutionProvider', 'human_confirmation': True}}
+            'device': resources['device'], 'cpu_threads':resources['cpu_threads'],
+            'resource_profile':resources, 'human_confirmation': True}}
         with self.inference.lock:
             if self.inference.training_active:
                 raise VideoInferenceBusy('Finish correction-head training before starting analysis')
@@ -94,8 +97,9 @@ class VideoInferenceService:
             self._spawn(mission, run['id'])
         return {'run': run['id'], 'status': 'queued', 'config': run['config']}
 
-    def save_continuous_policy(self, mission, *, tracker_policy, threshold, tiled, target_labels):
+    def save_continuous_policy(self, mission, *, tracker_policy, threshold, tiled, target_labels, resource_profile='auto'):
         from .detector import VEHICLES
+        from .hardware import resolve_resource_profile
         settings=self.library.settings(mission)
         if settings['processing_mode']!='continuous' or settings['input_type']!='videos' or settings['analysis_mode']!='video_traffic':
             raise ValueError('A saved automatic-run policy requires a continuous Video Traffic mission')
@@ -111,8 +115,9 @@ class VideoInferenceService:
             raise ValueError('Choose one or more supported video vehicle classes')
         canonical_labels=[label for label in supported_labels if label in target_labels]
         canonical_tracker=video_store._canonical_tracker_policy(tracker_policy)
+        resources=resolve_resource_profile(resource_profile)
         policy={'threshold':float(threshold),'tiled':tiled,'target_labels':canonical_labels,
-            'tracker_policy':canonical_tracker}
+            'tracker_policy':canonical_tracker,'resource_profile':resource_profile}
         return self.library.set_continuous_video_policy(mission,policy)
 
     def start_continuous_source(self,mission,source_id,policy=None):
@@ -123,7 +128,8 @@ class VideoInferenceService:
             if job['source_id']==source_id:
                 return {'run':job['id'],'status':job['status'],'existing':True}
         return self.start(mission,source_id,policy['tracker_policy'],threshold=policy['threshold'],
-            tiled=policy['tiled'],target_labels=policy['target_labels'])
+            tiled=policy['tiled'],target_labels=policy['target_labels'],
+            resource_profile=policy.get('resource_profile','auto'))
 
     def start_plate_review(self,mission,source_id,*,threshold=.3):
         from .plate_review import _model_pack, _paths
@@ -233,7 +239,7 @@ def execute_worker(library, mission, run_id, pack):
     if detector_config.get('version') != VERSION:
         raise ValueError('Video detector version changed; create a new run')
     detector = VehicleDetector(pack, threshold=detector_config['threshold'],
-        tiled=detector_config['tiled'])
+        tiled=detector_config['tiled'],cpu_threads=detector_config.get('cpu_threads',2))
     if detector.sha != detector_config.get('sha256'):
         raise ValueError('Video detector model hash changed; create a new run')
 

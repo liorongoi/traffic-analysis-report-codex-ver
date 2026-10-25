@@ -198,7 +198,7 @@ def _storage_performance(storage_path, sample_bytes=8 * 1024 * 1024):
                 pass
 
 
-def _resource_profiles(total_bytes, available_bytes):
+def _resource_profiles(total_bytes, available_bytes, logical_cores=None):
     """Return advisory host-memory budgets for the specified 16/48 GiB classes."""
     if not total_bytes or available_bytes is None:
         return None, None
@@ -215,11 +215,33 @@ def _resource_profiles(total_bytes, available_bytes):
             'target_memory_class_gib': 16 if name == 'conservative' else 48,
             'analysis_memory_gib': round(max(0.0, min(total * fraction, available - reserve)), 2),
             'reserved_headroom_gib': round(reserve, 2),
+            'cpu_threads': min(1 if name == 'conservative' else 4, max(1, logical_cores or 1)),
             'workers': 1,
             'device_recommendation': 'cpu until a model execution probe succeeds',
-            'guidance': 'advisory budget; target hardware measurements are still required',
+            'guidance': 'advisory RAM budget; selected profile applies the listed ONNX CPU thread limit',
         }
-    return profiles, ('expanded' if total >= 32 else 'conservative')
+    return profiles, ('expanded' if total >= 40 else 'conservative')
+
+
+def resolve_resource_profile(requested='auto'):
+    """Resolve a profile to an ONNX CPU thread limit and current RAM estimate."""
+    if requested not in ('auto', 'conservative', 'expanded'):
+        raise ValueError('Resource profile must be auto, conservative, or expanded')
+    total, available = _memory()
+    cores = os.cpu_count() or 1
+    profiles, recommended = _resource_profiles(total, available, cores)
+    selected = recommended if requested == 'auto' else requested
+    profile = profiles[selected] if profiles else None
+    if profile:
+        return {'requested': requested, 'selected': selected,
+            'cpu_threads': profile['cpu_threads'],
+            'analysis_memory_gib': profile['analysis_memory_gib'],
+            'reserved_headroom_gib': profile['reserved_headroom_gib'],
+            'workers': 1, 'device': 'CPUExecutionProvider'}
+    return {'requested': requested, 'selected': selected,
+        'cpu_threads': min(1 if selected == 'conservative' else 4, cores),
+        'analysis_memory_gib': None, 'reserved_headroom_gib': None,
+        'workers': 1, 'device': 'CPUExecutionProvider'}
 
 
 def inventory(storage_path):
@@ -246,7 +268,7 @@ def inventory(storage_path):
         'storage_performance': _storage_performance(storage_path),
         'gpu_execution': 'not verified by provider listing',
     }
-    profiles, recommended = _resource_profiles(total, available)
+    profiles, recommended = _resource_profiles(total, available, os.cpu_count())
     report['resource_profiles'] = profiles
     report['recommended_profile'] = recommended
     report['conservative_profile'] = profiles['conservative'] if profiles else None

@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -12,6 +13,23 @@ from road_traffic.inference import InferenceService
 
 
 class DetectorMathTests(unittest.TestCase):
+    def test_cpu_profile_thread_limit_is_applied_to_onnx_session(self):
+        class FakeInput:
+            name='images'
+        class FakeSession:
+            def __init__(self,path,*,sess_options,providers):
+                self.options=sess_options;self.providers=providers
+            def get_providers(self):return self.providers
+            def get_inputs(self):return [FakeInput()]
+        with (patch('road_traffic.detector.model_pack',return_value=('fixture','fixture-sha')),
+                patch('onnxruntime.InferenceSession',FakeSession)):
+            from road_traffic.detector import VehicleDetector
+            detector=VehicleDetector('unused',cpu_threads=3)
+        self.assertEqual(detector.session.options.intra_op_num_threads,3)
+        self.assertEqual(detector.session.options.inter_op_num_threads,1)
+        with self.assertRaisesRegex(ValueError,'CPU thread limit'):
+            VehicleDetector('unused',cpu_threads=0)
+
     def test_duplicate_vehicle_classes_do_not_double_count(self):
         a={'box':[.1,.1,.2,.2],'label':'car','score':.8}
         b={'box':[.11,.11,.2,.2],'label':'truck','score':.6}
@@ -124,6 +142,25 @@ class InferenceRecoveryTests(unittest.TestCase):
         self.lib.import_folder(self.mission,source,'camera')
 
     def tearDown(self):self.temp.cleanup()
+
+    def test_start_snapshots_operator_resource_profile_and_applies_cpu_thread_limit(self):
+        from road_traffic.detector import VERSION
+        gib=1024**3
+        service=InferenceService(self.lib,self.root/'model-pack')
+        with (patch('road_traffic.detector.model_pack',return_value=('fixture','fixture-sha')),
+                patch('road_traffic.hardware._memory',return_value=(16*gib,12*gib)),
+                patch.object(service,'_has_active_worker',return_value=False),
+                patch.object(service,'_spawn') as spawn):
+            result=service.start(self.mission,night_lights=False,resource_profile='expanded')
+        self.assertEqual(result['config']['adapter'],VERSION)
+        self.assertEqual(result['config']['resource_profile']['requested'],'expanded')
+        self.assertEqual(result['config']['resource_profile']['selected'],'expanded')
+        self.assertEqual(result['config']['cpu_threads'],min(4,os.cpu_count() or 1))
+        self.assertEqual(result['config']['resource_profile']['workers'],1)
+        spawn.assert_called_once_with(self.mission,result['run'])
+        with self.lib.connect(self.mission) as conn:
+            saved=json.loads(conn.execute('SELECT config FROM inference_runs WHERE id=?',(result['run'],)).fetchone()['config'])
+        self.assertEqual(saved['resource_profile'],result['config']['resource_profile'])
 
     def test_service_restart_marks_missing_worker_failed_with_progress_preserved(self):
         run=create_run(self.lib,self.mission,{'adapter':'fixture'})
