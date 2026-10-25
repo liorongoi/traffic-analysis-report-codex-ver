@@ -8,6 +8,8 @@ import platform
 import re
 import shutil
 import subprocess
+import tempfile
+import time
 
 
 def _linux_memory():
@@ -144,8 +146,60 @@ def _runtime_providers():
             'error': f'{type(exc).__name__}: {exc}'[:240]}
 
 
+def _storage_performance(storage_path, sample_bytes=8 * 1024 * 1024):
+    """Measure a small write+fsync and immediate read on the app-data volume."""
+    fd = None
+    filename = None
+    try:
+        fd, filename = tempfile.mkstemp(prefix='.traffic-analysis-storage-probe-', dir=storage_path)
+        block = b'\xa5' * min(1024 * 1024, sample_bytes)
+        remaining = sample_bytes
+        started = time.perf_counter()
+        while remaining:
+            view = memoryview(block)[:min(len(block), remaining)]
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OSError('Storage probe stopped before the sample was written')
+                view = view[written:]
+            remaining -= min(len(block), remaining)
+        os.fsync(fd)
+        write_seconds = max(time.perf_counter() - started, 1e-9)
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        started = time.perf_counter()
+        remaining = sample_bytes
+        while remaining:
+            chunk = os.read(fd, min(1024 * 1024, remaining))
+            if not chunk:
+                raise OSError('Storage probe read back a truncated sample')
+            remaining -= len(chunk)
+        read_seconds = max(time.perf_counter() - started, 1e-9)
+        mib = sample_bytes / (1024 ** 2)
+        return {
+            'state': 'measured',
+            'sample_mib': round(mib, 2),
+            'write_mib_s': round(mib / write_seconds, 2),
+            'read_mib_s': round(mib / read_seconds, 2),
+            'method': 'temporary app-data file; write includes fsync; immediate read may be served from OS cache',
+        }
+    except (OSError, ValueError) as exc:
+        return {'state': 'unavailable', 'reason': f'{type(exc).__name__}: {exc}'[:240]}
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if filename:
+            try:
+                os.unlink(filename)
+            except OSError:
+                pass
+
+
 def inventory(storage_path):
-    """Inspect host capacity; provider listing does not claim a successful GPU run."""
+    """Inspect host capacity and measure small on-demand app-storage I/O; provider listing does not claim a successful GPU run."""
     total, available = _memory()
     disk = None
     try:
@@ -165,7 +219,7 @@ def inventory(storage_path):
         'gpus': _gpu_inventory(),
         'onnx_runtime': _runtime_providers(),
         'storage': disk,
-        'storage_performance': 'not measured',
+        'storage_performance': _storage_performance(storage_path),
         'gpu_execution': 'not verified by provider listing',
     }
     if total and available is not None:

@@ -76,6 +76,8 @@ class HttpTests(unittest.TestCase):
                 hardware=json.load(response)
             self.assertIn('cpu',hardware)
             self.assertEqual(hardware['gpu_execution'],'not verified by provider listing')
+            self.assertEqual(hardware['storage_performance']['state'],'measured')
+            self.assertGreater(hardware['storage_performance']['write_mib_s'],0)
             for key in ('keyboardHelp','helpImport','helpSchedule','helpViews','helpReview','helpScope'):
                 self.assertIn(f'data-t="{key}"',page)
     def test_write_requires_session_token(self):

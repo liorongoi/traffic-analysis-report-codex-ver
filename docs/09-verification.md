@@ -45,7 +45,7 @@ The current suite contains 131 Python checks. Recent increments add deterministi
 
 ## Host inventory update — 2026-10-25
 
-Added an on-demand `/api/hardware` report and a sidebar panel. It reads CPU model/logical cores, OS memory, visible GPU/driver inventory, ONNX Runtime provider names, and free disk capacity, then shows a conservative CPU memory profile. On this development Mac, a direct report returned CPU/RAM/disk values and advertised CoreML/Azure/CPU providers. Provider listing is explicitly not an execution test; GPU execution, Windows inventory, target 16/48 GB profiles, and storage throughput remain unverified. The new panel was covered by HTTP markup/API tests and JavaScript syntax checks, but not visually smoke-tested in the browser.
+Added an on-demand `/api/hardware` report and a sidebar panel. It reads CPU model/logical cores, OS memory, visible GPU/driver inventory, ONNX Runtime provider names, and free disk capacity, then shows a conservative CPU memory profile. The report now writes and fsyncs an 8 MiB temporary file on the application-data volume, reads it back immediately, and removes it; write/read rates are displayed with an explicit warning that the read may be served from the OS cache. Focused hardware and HTTP API tests verify positive rates and cleanup; the full 141-test Python suite passed after this increment. Provider listing is explicitly not an execution test; GPU execution, Windows inventory, target 16/48 GB profiles, and sustained storage performance remain unverified.
 
 ## Video timestamp-decoder update — 2026-10-25
 

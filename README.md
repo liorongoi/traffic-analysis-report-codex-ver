@@ -52,7 +52,7 @@ Video source/run/event storage is connected to a supervised child worker and aut
 
 The current development inference runtime is the independently staged `.venv`. `requirements-inference-macos.lock.txt` records its packages; installed runtime code never invokes pip.
 
-The on-demand host report reads CPU, RAM, GPU/driver inventory, runtime provider names, and free disk capacity, then proposes a conservative CPU memory profile. It does not measure storage throughput or prove provider compatibility. Windows target hardware and GPU execution remain unverified.
+The on-demand host report reads CPU, RAM, GPU/driver inventory, runtime provider names, and free disk capacity, then measures a small temporary write+fsync and immediate read on the application-data volume. The read may be served from the OS cache, so this is a local comparison aid rather than a sustained-storage benchmark. Provider listing does not prove GPU execution. Windows target hardware and GPU execution remain unverified.
 
 The Windows setup EXE has **not** been built or tested. It requires a complete Windows x64 runtime and timezone pack staged independently, Inno Setup compilation, extracted-payload inspection and a native no-admin/offline Windows test. The preview uses an existing browser; the final application/browser-engine packaging is still outstanding. Do not use the setup source as proof that the finished offline application exists.
 

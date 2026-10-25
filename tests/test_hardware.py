@@ -15,6 +15,9 @@ class HardwareInventoryTests(unittest.TestCase):
         self.assertIn('total_gib', report['memory'])
         self.assertIn('free_bytes', report['storage'])
         self.assertEqual(report['gpu_execution'], 'not verified by provider listing')
-        self.assertEqual(report['storage_performance'], 'not measured')
+        self.assertEqual(report['storage_performance']['state'], 'measured')
+        self.assertGreater(report['storage_performance']['write_mib_s'], 0)
+        self.assertGreater(report['storage_performance']['read_mib_s'], 0)
+        self.assertFalse(list(Path(folder).glob('.traffic-analysis-storage-probe-*')))
         self.assertIn(report['onnx_runtime']['state'],
             ('not_installed', 'advertised_not_exercised', 'import_failed'))
