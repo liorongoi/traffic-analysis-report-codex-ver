@@ -55,6 +55,11 @@ class HttpTests(unittest.TestCase):
             with self.request(path) as response:
                 self.assertEqual(response.status,200)
                 self.assertIn("default-src 'self'",response.headers['Content-Security-Policy'])
+        with self.request('/app.js') as response:
+            script=response.read().decode('utf-8')
+        self.assertIn('function openVideoEvent',script)
+        self.assertIn('video-event-preview-button',script)
+        self.assertIn('source_relative_path',script)
         with self.request('/timezone-countries.json') as response:
             self.assertEqual(response.status,200)
             self.assertIn('application/json',response.headers['Content-Type'])

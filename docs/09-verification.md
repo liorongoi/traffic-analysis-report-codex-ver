@@ -30,6 +30,10 @@ Saved video runs can export one row per event to each configured CSV/XLSX format
 
 The image table supports case-insensitive search over filename, UTC/local capture time, camera view, processing state, and review state. Sort controls cover filename, capture time, view, detector/light/confirmed/candidate counts, and both status columns; the selected image stays selected while sorting. The table separately displays camera view, processing status, and review status. HTTP page assertions verify the search and sortable columns, and the images API test verifies assigned view plus independent `not_run` and `unreviewed` states. `node --check web/app.js` passed; this is source/API coverage, not a complete browser interaction acceptance test.
 
+## Video event playback preview — 2026-10-25
+
+Each event card now identifies its source recording and event ID. Clicking its verified representative-frame thumbnail selects that recording and seeks playback to five seconds before the event; the thumbnail displays the saved representative detection box. The separate “seek to event” action seeks to the first event time. HTTP asset tests check the UI handler is served, but interactive playback on actual codecs/browser hardware remains unverified.
+
 ## Deliberate limitations
 
 The Fintraffic sample set has no human ground-truth labels. No precision/recall/F1, night detection accuracy, throughput, GPU compatibility or video performance has been measured. Annotation geometry is stored as normalized original-image coordinates. Manual camera-view groups and individual/selected-image assignments, versioned view-specific inclusion/exclusion polygons, append-only history, proposal filtering, immutable run snapshots of mission/source/model/schedule/view/ROI configuration, and warnings when an affected view's current ROI geometry differs from a saved run are implemented. An operator can acknowledge a changed ROI and create an audited rerun using the same saved input images and model settings; model drift blocks this shortcut. Automatic view discovery/grouping remains future work.
