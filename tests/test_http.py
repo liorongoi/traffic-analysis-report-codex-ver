@@ -74,6 +74,7 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(len(json.load(response)['features']),5)
         with self.request('/') as response:
             page=response.read().decode('utf-8')
+            self.assertIn('id="lanLogout"',page)
             self.assertIn('id="helpPanel"',page)
             self.assertIn('id="videoWorkflow"',page)
             self.assertIn('id="videoRunForm"',page)
