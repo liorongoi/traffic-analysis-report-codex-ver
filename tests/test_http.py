@@ -65,6 +65,8 @@ class HttpTests(unittest.TestCase):
         self.assertIn('candidateValidation',script)
         self.assertIn("new Option(tr('promotedLearningModel'),'@promoted')",script)
         self.assertIn("night_head_id=choice==='@promoted'?learningInfo?.governance?.promoted_candidate_id",script)
+        self.assertIn('function resolveTimezoneSearch()',script)
+        self.assertIn("fetch('/api/timezones')",script)
         self.assertIn('correct_timing',script)
         self.assertIn('videoMetadataUnavailable',script)
         self.assertIn("action:'merge'",script)
@@ -86,6 +88,8 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="videoEventTableExports"',page)
             self.assertIn('id="videoPlayer"',page)
             self.assertIn('id="videoMediaMetadata"',page)
+            self.assertIn('id="timezoneSearch"',page)
+            self.assertIn('id="applyTimezoneSearch"',page)
             self.assertIn('id="videoTargetLabels"',page)
             self.assertIn('id="mergeViewButton"',page)
             self.assertIn('id="desktopAlerts"',page)
@@ -116,6 +120,10 @@ class HttpTests(unittest.TestCase):
             with self.request('/api/learning/capabilities') as response:
                 capabilities=json.load(response)
             self.assertIn('camera-view.geometry-proposer',{item['id'] for item in capabilities})
+            with self.request('/api/timezones') as response:
+                zones=json.load(response)
+            self.assertIn('Asia/Tehran',zones)
+            self.assertIn('Europe/Riga',zones)
             for key in ('keyboardHelp','helpImport','helpSchedule','helpViews','helpReview','helpScope'):
                 self.assertIn(f'data-t="{key}"',page)
     def test_write_requires_session_token(self):

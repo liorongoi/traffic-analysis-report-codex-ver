@@ -246,6 +246,9 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 if parsed.path == '/api/learning/capabilities':
                     from .learning_capabilities import inventory
                     return self.reply(200, inventory())
+                if parsed.path == '/api/timezones':
+                    from zoneinfo import available_timezones
+                    return self.reply(200, sorted(available_timezones()))
                 if parsed.path == '/api/images':
                     return self.reply(200, library.images(query['mission'][0],query.get('run',[None])[0]))
                 if parsed.path == '/api/plates':
