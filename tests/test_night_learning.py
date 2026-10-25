@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 from road_traffic.night import propose,patch_features
 from road_traffic.learning import (inventory,train,load_head,candidates,evaluate_test,
-    evaluation_status,record_model_decision,governance_status)
+    evaluation_status,record_model_decision,governance_status,_test_fingerprint,_legacy_test_fingerprint)
 from road_traffic.store import Library
 
 
@@ -85,6 +85,49 @@ class LightLearningTests(unittest.TestCase):
         self.assertEqual(evaluation_status(self.lib,self.m)['already_evaluated'],True)
         with self.assertRaisesRegex(ValueError,'already been used'):
             evaluate_test(self.lib,self.m,candidate['id'],'Second reviewer')
+
+    def test_test_fingerprint_includes_human_class_labels(self):
+        base=[{'sha256':'a'*64,'box':[.1,.1,.2,.2],'class':'headlight'}]
+        relabeled=[{**base[0],'class':'streetlight'}]
+        self.assertNotEqual(_test_fingerprint(base),_test_fingerprint(relabeled))
+
+    def test_legacy_fingerprint_still_prevents_reusing_an_already_scored_test_set(self):
+        for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Reviewer',role='training')
+        self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Reviewer',role='test')
+        candidate=train(self.lib,self.m)
+        candidate_row=next(row for row in candidates(self.lib,self.m) if row['id']==candidate['id'])
+        fingerprint=_legacy_test_fingerprint(inventory(self.lib,self.m)['test'])
+        with self.lib.connect(self.m) as conn:
+            conn.execute('''INSERT INTO night_evaluations(id,mission_id,candidate_id,candidate_hash,
+                test_fingerprint,operator,status,report,created,finished)
+                VALUES (?,?,?,?,?,?,'completed','{}','2026-01-01T00:00:00+00:00','2026-01-01T00:00:01+00:00')''',
+                ('legacy-evaluation',self.m,candidate['id'],candidate_row['artifact_hash'],fingerprint,'Reviewer'))
+        self.assertTrue(evaluation_status(self.lib,self.m)['already_evaluated'])
+        with self.assertRaisesRegex(ValueError,'already been used'):
+            evaluate_test(self.lib,self.m,candidate['id'],'Another reviewer')
+
+    def test_heldout_evaluation_compares_new_candidate_with_current_promoted_head(self):
+        for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Reviewer',role='training')
+        test=self.rows[2]
+        self.lib.review(self.m,test['id'],0,self.labels(),'Reviewer',role='test')
+        current=train(self.lib,self.m)
+        current_row=next(row for row in candidates(self.lib,self.m) if row['id']==current['id'])
+        with self.lib.connect(self.m) as conn:
+            conn.execute('''INSERT INTO night_model_decisions(id,mission_id,candidate_id,candidate_hash,
+                previous_candidate_id,action,evaluation_id,operator,reason,created)
+                VALUES (?,?,?,?,?,?,?,?,?,?)''',('decision-current',self.m,current['id'],current_row['artifact_hash'],
+                None,'promote',None,'Reviewer','Synthetic current-head fixture','2026-01-01T00:00:00+00:00'))
+        reversed_labels=[{**item,'night_class':{'headlight':'streetlight','streetlight':'headlight'}[item['night_class']]}
+            for item in self.labels()]
+        for row in self.rows[:2]:self.lib.review(self.m,row['id'],1,reversed_labels,'Reviewer',role='training')
+        challenger=train(self.lib,self.m)
+        evaluation=evaluate_test(self.lib,self.m,challenger['id'],'Independent reviewer')
+        comparison=evaluation['report']['baseline_comparison']
+        self.assertEqual(comparison['status'],'compared')
+        self.assertEqual(comparison['current_candidate_id'],current['id'])
+        self.assertEqual(comparison['regions'],2)
+        self.assertFalse(comparison['test_labels_used_for_fit_or_validation'])
+        self.assertIn('macro_f1',comparison['delta'])
     def test_promotion_requires_current_test_evaluation_and_rollback_is_audited(self):
         for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Synthetic test',role='training')
         self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Synthetic test',role='test')

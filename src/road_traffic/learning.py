@@ -99,6 +99,15 @@ def load_head(library,mission,identifier,expected_hash=None):
 
 
 def _test_fingerprint(records):
+    manifest=[{'sha256':row['sha256'],'box':[round(float(v),6) for v in row['box']],
+        'class':row['class']}
+        for row in records]
+    manifest.sort(key=lambda item:(item['sha256'],item['box'],item['class']))
+    return hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def _legacy_test_fingerprint(records):
+    """Recognize pre-label fingerprints so upgrades cannot silently reuse test data."""
     manifest=[{'sha256':row['sha256'],'box':[round(float(v),6) for v in row['box']]}
         for row in records]
     manifest.sort(key=lambda item:(item['sha256'],item['box']))
@@ -118,10 +127,28 @@ def _feature_vectors(library,mission,records):
     return np.asarray(vectors,dtype=np.float64)
 
 
+def _classification_metrics(actual,predicted):
+    labels=sorted(set(actual)|set(predicted))
+    metrics={};confusion={label:{other:0 for other in labels} for label in labels}
+    for truth,guess in zip(actual,predicted):confusion[truth][guess]+=1
+    for label in labels:
+        tp=sum(t==label and p==label for t,p in zip(actual,predicted))
+        fp=sum(t!=label and p==label for t,p in zip(actual,predicted))
+        fn=sum(t==label and p!=label for t,p in zip(actual,predicted))
+        precision=tp/(tp+fp) if tp+fp else 0.;recall=tp/(tp+fn) if tp+fn else 0.
+        metrics[label]={'precision':precision,'recall':recall,
+            'f1':2*precision*recall/(precision+recall) if precision+recall else 0.,
+            'support':actual.count(label)}
+    return {'per_class':metrics,'confusion_matrix':confusion,
+        'accuracy':sum(a==p for a,p in zip(actual,predicted))/len(actual),
+        'macro_f1':sum(item['f1'] for item in metrics.values())/len(metrics)}
+
+
 def evaluation_status(library,mission):
     prepare(library,mission)
     data=inventory(library,mission)
     fingerprint=_test_fingerprint(data['test'])
+    legacy_fingerprint=_legacy_test_fingerprint(data['test'])
     with library.connect(mission) as c:
         rows=[dict(row) for row in c.execute('''SELECT * FROM night_evaluations
           WHERE mission_id=? ORDER BY created,id''',(mission,))]
@@ -129,7 +156,8 @@ def evaluation_status(library,mission):
         row['report']=json.loads(row['report']) if row['report'] else None
     return {'test_fingerprint':fingerprint,'test_regions':len(data['test']),
         'test_images':len({row['image_id'] for row in data['test']}),
-        'already_evaluated':any(row['status']=='completed' and row['test_fingerprint']==fingerprint for row in rows),
+        'already_evaluated':any(row['status']=='completed' and row['test_fingerprint'] in
+            {fingerprint,legacy_fingerprint} for row in rows),
         'evaluations':rows}
 
 
@@ -204,11 +232,12 @@ def evaluate_test(library,mission,candidate_id,operator):
     test_views={row['view'] for row in data['test']}
     if test_views!={model.get('view')}:
         raise ValueError('Test examples must match the candidate’s verified camera view')
-    fingerprint=_test_fingerprint(data['test']);evaluation_id=str(uuid.uuid4())
+    fingerprint=_test_fingerprint(data['test']);legacy_fingerprint=_legacy_test_fingerprint(data['test']);evaluation_id=str(uuid.uuid4())
     with library.connect(mission) as c:
         c.execute('BEGIN IMMEDIATE')
-        if c.execute('SELECT 1 FROM night_evaluations WHERE mission_id=? AND test_fingerprint=? AND status=\'completed\'',
-                     (mission,fingerprint)).fetchone():
+        if c.execute('''SELECT 1 FROM night_evaluations WHERE mission_id=?
+            AND test_fingerprint IN (?,?) AND status='completed' LIMIT 1''',
+                     (mission,fingerprint,legacy_fingerprint)).fetchone():
             raise ValueError('This unchanged test set has already been used for an independent evaluation')
         c.execute('''INSERT INTO night_evaluations(id,mission_id,candidate_id,candidate_hash,
           test_fingerprint,operator,status,created) VALUES (?,?,?,?,?,?,?,?)''',
@@ -217,21 +246,29 @@ def evaluate_test(library,mission,candidate_id,operator):
         vectors=_feature_vectors(library,mission,data['test'])
         actual=[row['class'] for row in data['test']]
         predicted=[head.predict(vector)[0] for vector in vectors]
-        labels=sorted(set(actual)|set(predicted))
-        metrics={};confusion={label:{other:0 for other in labels} for label in labels}
-        for truth,guess in zip(actual,predicted):confusion[truth][guess]+=1
-        for label in labels:
-            tp=sum(t==label and p==label for t,p in zip(actual,predicted))
-            fp=sum(t!=label and p==label for t,p in zip(actual,predicted))
-            fn=sum(t==label and p!=label for t,p in zip(actual,predicted))
-            precision=tp/(tp+fp) if tp+fp else 0.;recall=tp/(tp+fn) if tp+fn else 0.
-            metrics[label]={'precision':precision,'recall':recall,
-                'f1':2*precision*recall/(precision+recall) if precision+recall else 0.,
-                'support':actual.count(label)}
+        candidate_metrics=_classification_metrics(actual,predicted)
+        current=governance_status(library,mission)
+        baseline_comparison={'status':'unavailable','reason':'No distinct promoted candidate is available for comparison.'}
+        baseline_id=current.get('promoted_candidate_id')
+        if baseline_id and baseline_id!=candidate_id:
+            try:
+                baseline_head,baseline_hash=load_head(library,mission,baseline_id)
+                if baseline_head.data.get('view')!=model.get('view'):
+                    baseline_comparison={'status':'unavailable','reason':'The current candidate uses a different camera view.'}
+                else:
+                    baseline_predictions=[baseline_head.predict(vector)[0] for vector in vectors]
+                    baseline_metrics=_classification_metrics(actual,baseline_predictions)
+                    comparison_candidate=_classification_metrics(actual,predicted)
+                    baseline_comparison={'status':'compared','current_candidate_id':baseline_id,
+                        'current_candidate_hash':baseline_hash,'regions':len(actual),
+                        'candidate':comparison_candidate,'current':baseline_metrics,
+                        'delta':{'accuracy':comparison_candidate['accuracy']-baseline_metrics['accuracy'],
+                            'macro_f1':comparison_candidate['macro_f1']-baseline_metrics['macro_f1']},
+                        'test_labels_used_for_fit_or_validation':False}
+            except ValueError as exc:
+                baseline_comparison={'status':'unavailable','reason':str(exc)}
         report={'regions':len(actual),'images':len({row['image_id'] for row in data['test']}),
-            'per_class':metrics,'confusion_matrix':confusion,
-            'accuracy':sum(a==p for a,p in zip(actual,predicted))/len(actual),
-            'macro_f1':sum(item['f1'] for item in metrics.values())/len(metrics),
+            **candidate_metrics,'baseline_comparison':baseline_comparison,
             'scope':'held-out labeled light patches for this frozen candidate; not whole-image vehicle or traffic-count accuracy',
             'test_labels_used_for_fit_or_validation':False,'automatic_promotion':False}
         with library.connect(mission) as c:
