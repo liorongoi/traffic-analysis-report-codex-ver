@@ -266,16 +266,21 @@ def serve(workspace, web, port=8765, open_browser=False):
                     result = library.review(data['mission'],data['image'],data['revision'],data['annotations'],data['operator'],data['role'],data['status'],data.get('prediction_run'))
                 elif self.path == '/api/object-search/interpret':
                     from .object_search import interpret
+                    from .inference_store import latest_run_id, search_scope_snapshot
                     library.settings(data['mission'])
-                    run = data.get('run') or None
-                    rows = library.images(data['mission'], run)
-                    run = run or next((row.get('prediction_run') for row in rows if row.get('prediction_run')), None)
+                    run = data.get('run') or latest_run_id(library,data['mission'])
+                    snapshot = search_scope_snapshot(library,data['mission'],run)
                     result = {'spec': interpret(data['query'], mission_id=data['mission'],
-                        view_id=data.get('view_id') or None, run_id=run)}
+                        view_id=data.get('view_id') or None, run_id=run, scope_snapshot=snapshot)}
                 elif self.path == '/api/object-search/execute':
                     from .object_search import execute
-                    result = execute(library, data['mission'], data.get('spec'),
-                        confirmed=data.get('confirmed'), run=data.get('run') or None)
+                    from .inference_store import search_scope_snapshot
+                    spec=data.get('spec')
+                    run=(spec.get('run_id') if isinstance(spec,dict) else None) or data.get('run') or None
+                    snapshot=search_scope_snapshot(library,data['mission'],run)
+                    result = execute(library, data['mission'], spec,
+                        confirmed=data.get('confirmed'), run=data.get('run') or None,
+                        scope_snapshot=snapshot)
                 elif self.path == '/api/inference/start':
                     result=inference.start(data['mission'],data.get('threshold',.18),data.get('tiled',True),data.get('night_lights',True),data.get('night_head_id'))
                 elif self.path == '/api/inference/roi-rerun':

@@ -36,7 +36,7 @@ _FILLER = {'find', 'show', 'locate', 'search', 'for', 'the', 'a', 'an', 'some', 
 
 
 def interpret(query: str, *, mission_id: str | None = None, view_id: str | None = None,
-              run_id: str | None = None) -> dict:
+              run_id: str | None = None, scope_snapshot: dict | None = None) -> dict:
     """Parse a small, explicit grammar; never executes generated code or calls a model."""
     if not isinstance(query, str) or not 1 <= len(query.strip()) <= 500:
         raise ValueError('Describe an object in 1–500 characters')
@@ -96,11 +96,14 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
         'mission_id': mission_id,
         'view_id': view_id,
         'run_id': run_id,
+        'scope_snapshot': json.loads(json.dumps(scope_snapshot, ensure_ascii=False)) if scope_snapshot is not None else None,
         'scope': {
             'mission': 'current mission only',
-            'run': run_id or 'latest saved inference run',
-            'run_scope': 'the run freezes its schedule, view assignments, and ROI input decisions',
-            'region': 'selected view, if provided; otherwise all views in the saved run',
+            'run': run_id or 'no saved inference run exists',
+            'run_scope': ('the run freezes its schedule, view assignments, and ROI input decisions'
+                          if run_id else 'no saved run schedule or region scope is available'),
+            'region': ('selected view, if provided; otherwise all views in the saved run'
+                       if run_id else 'no saved run views are available'),
         },
         'attribute_limits': ['color', 'fine vehicle subtype'],
         'operator_confirmation_required': True,
@@ -118,12 +121,14 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
     return spec
 
 
-def execute(library, mission: str, spec: dict, *, confirmed: bool, run: str | None = None) -> dict:
+def execute(library, mission: str, spec: dict, *, confirmed: bool, run: str | None = None,
+            scope_snapshot: dict | None = None) -> dict:
     if confirmed is not True:
         raise ValueError('Review and confirm the interpreted search before execution')
     if not isinstance(spec, dict) or not isinstance(spec.get('query'), str):
         raise ValueError('Search specification is invalid')
-    fresh = interpret(spec['query'], mission_id=mission, view_id=spec.get('view_id'), run_id=spec.get('run_id'))
+    fresh = interpret(spec['query'], mission_id=mission, view_id=spec.get('view_id'),
+                      run_id=spec.get('run_id'), scope_snapshot=scope_snapshot)
     if spec != fresh:
         raise ValueError('Search specification changed; interpret it again')
     if run and spec.get('run_id') and run != spec['run_id']:

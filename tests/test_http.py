@@ -140,6 +140,7 @@ class HttpTests(unittest.TestCase):
             spec=json.load(response)['spec']
         self.assertEqual(spec['categories'],['truck'])
         self.assertTrue(spec['operator_confirmation_required'])
+        self.assertIsNone(spec['scope_snapshot'])
         with self.assertRaises(urllib.error.HTTPError) as exc:
             self.request('/api/object-search/execute',{'mission':mission,'spec':spec,'confirmed':False})
         self.assertEqual(exc.exception.code,400)

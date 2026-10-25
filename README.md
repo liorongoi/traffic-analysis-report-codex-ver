@@ -42,7 +42,7 @@ Fintraffic samples supplied by the user are imported locally into `workspace/sam
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-See [verification record](docs/09-verification.md). The 141-test Python suite covers the current API and processing workflows, including operator-confirmed offline search, video workflow, host inventory, source integrity, and byte-range checks. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
+See [verification record](docs/09-verification.md). The 144-test Python suite covers the current API and processing workflows, including operator-confirmed offline search, video workflow, host inventory, source integrity, and byte-range checks. Additional real-model and browser evidence is recorded in docs/10-vehicle-detection.md. These checks do not establish detection accuracy or native Windows compatibility.
 
 ## Not implemented yet
 

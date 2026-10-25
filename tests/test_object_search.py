@@ -1,7 +1,12 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
+from PIL import Image
 
 from road_traffic.object_search import execute, interpret
+from road_traffic.store import Library
+from road_traffic.inference_store import create_run, search_scope_snapshot
 
 
 class SearchLibrary:
@@ -21,6 +26,43 @@ class ObjectSearchTests(unittest.TestCase):
         self.assertTrue(spec['operator_confirmation_required'])
         self.assertIn('color', spec['interpretation']['unsupported_or_unobservable'])
         self.assertEqual(spec['scope']['run'], 'run-1')
+
+    def test_interpretation_binds_the_exact_saved_run_schedule_views_and_regions(self):
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as source:
+            library = Library(workspace)
+            mission = library.create('Search scope', 'Israel', 'Asia/Jerusalem')
+            Image.new('RGB', (24, 24), (60, 90, 120)).save(Path(source) / '17052026-1604-scope.jpg')
+            library.import_folder(mission, source, 'camera')
+            image = library.images(mission)[0]['id']
+            view = library.create_view(mission, 'North gate', 'Operator')
+            library.assign_view(mission, image, view['id'], 'Operator')
+            region = library.add_view_region(mission, view['id'], 'include',
+                [[0.05, 0.05], [0.95, 0.05], [0.95, 0.95], [0.05, 0.95]], 'Operator')
+            library.add_scan_window(mission, {'weekdays': [6], 'start_date': '2026-05-17',
+                'end_date': '2026-05-17', 'start_time': '17:00', 'end_time': '20:00'})
+            run = create_run(library, mission, {'threshold': 0.18, 'tiled': True})
+            snapshot = search_scope_snapshot(library, mission, run)
+            spec = interpret('Find cars', mission_id=mission, run_id=run, scope_snapshot=snapshot)
+            self.assertEqual(spec['scope_snapshot']['schedule']['timezone'], 'Asia/Jerusalem')
+            self.assertEqual(spec['scope_snapshot']['schedule']['windows'][0]['weekdays'], [6])
+            self.assertEqual(spec['scope_snapshot']['view_assignments'][0]['view_name'], 'North gate')
+            self.assertEqual(spec['scope_snapshot']['view_assignments'][0]['image_count'], 1)
+            self.assertEqual(spec['scope_snapshot']['regions_by_view'][view['id']][0]['id'], region['region_key'])
+            self.assertIn('spec_hash', spec)
+
+    def test_changed_run_scope_requires_reinterpretation(self):
+        library = SearchLibrary([])
+        scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
+            'view_assignments': [], 'regions_by_view': {}}
+        spec = interpret('Find cars', mission_id='mission', run_id='run-1', scope_snapshot=scope)
+        changed = {**scope, 'schedule': {'timezone': 'Europe/Riga'}}
+        with self.assertRaisesRegex(ValueError, 'changed'):
+            execute(library, 'mission', spec, confirmed=True, scope_snapshot=changed)
+
+    def test_interpretation_does_not_claim_a_run_scope_when_no_run_exists(self):
+        spec = interpret('Find cars', mission_id='mission')
+        self.assertEqual(spec['scope']['run'], 'no saved inference run exists')
+        self.assertIsNone(spec['scope_snapshot'])
 
     def test_unsupported_terms_and_missing_categories_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'Unsupported search terms'):

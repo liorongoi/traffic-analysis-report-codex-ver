@@ -121,6 +121,54 @@ def runs(library,mission):
         return [dict(r) for r in conn.execute('SELECT * FROM inference_runs ORDER BY created DESC')]
 
 
+def latest_run_id(library,mission):
+    prepare(library,mission)
+    with library.connect(mission) as conn:
+        row=conn.execute('SELECT id FROM inference_runs ORDER BY created DESC,id DESC LIMIT 1').fetchone()
+    return row['id'] if row else None
+
+
+def search_scope_snapshot(library,mission,run):
+    """Return the immutable schedule, view assignments and ROI used by a saved run."""
+    if not run:return None
+    prepare(library,mission)
+    with library.connect(mission) as conn:
+        row=conn.execute('SELECT config,created,total FROM inference_runs WHERE id=?',(run,)).fetchone()
+        if not row:raise ValueError('Inference run is not part of this mission')
+        config=json.loads(row['config'])
+        view_rows=conn.execute('''SELECT view_id,view_revision,COUNT(*) image_count
+            FROM inference_input_views WHERE inference_id=? GROUP BY view_id,view_revision
+            ORDER BY view_id,view_revision''',(run,)).fetchall()
+        grouped={}
+        for item in view_rows:
+            key=item['view_id']
+            grouped.setdefault(key,{'view_id':key,'image_count':0,'assignment_revisions':[]})
+            grouped[key]['image_count']+=item['image_count']
+            grouped[key]['assignment_revisions'].append(item['view_revision'])
+        view_assignments=[]
+        for item in grouped.values():
+            name=None
+            if item['view_id']:
+                event=conn.execute('''SELECT action,details FROM view_events WHERE view_id=?
+                    AND action IN ('created','renamed') AND created<=?
+                    ORDER BY created DESC,id DESC LIMIT 1''',(item['view_id'],row['created'])).fetchone()
+                if event:
+                    details=json.loads(event['details'])
+                    name=details.get('name') if event['action']=='created' else details.get('after')
+            view_assignments.append({**item,'view_name':name})
+    used={item['view_id'] for item in view_assignments if item['view_id']}
+    all_regions=config.get('view_regions_snapshot',{})
+    regions={view_id:all_regions.get(view_id,[]) for view_id in sorted(used)}
+    return {
+        'run_id':run,
+        'run_created':row['created'],
+        'input_image_count':row['total'],
+        'schedule':config.get('scan_schedule_snapshot'),
+        'view_assignments':view_assignments,
+        'regions_by_view':regions,
+    }
+
+
 def roi_drift(library,mission,run):
     """List views whose effective current ROI differs from this run's snapshot."""
     prepare(library,mission)
