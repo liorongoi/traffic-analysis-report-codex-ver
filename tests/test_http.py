@@ -61,6 +61,7 @@ class HttpTests(unittest.TestCase):
         self.assertIn('video-event-preview-button',script)
         self.assertIn('source_relative_path',script)
         self.assertIn('function renderLearningReport()',script)
+        self.assertIn('function renderLearningCapabilities()',script)
         self.assertIn('candidateValidation',script)
         self.assertIn('correct_timing',script)
         self.assertIn('videoMetadataUnavailable',script)
@@ -110,6 +111,9 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(hardware['gpu_execution'],'not verified by provider listing')
             self.assertEqual(hardware['storage_performance']['state'],'measured')
             self.assertGreater(hardware['storage_performance']['write_mib_s'],0)
+            with self.request('/api/learning/capabilities') as response:
+                capabilities=json.load(response)
+            self.assertIn('camera-view.geometry-proposer',{item['id'] for item in capabilities})
             for key in ('keyboardHelp','helpImport','helpSchedule','helpViews','helpReview','helpScope'):
                 self.assertIn(f'data-t="{key}"',page)
     def test_write_requires_session_token(self):
@@ -131,6 +135,11 @@ class HttpTests(unittest.TestCase):
             learning=json.load(response)
         self.assertEqual(learning['evaluation']['test_regions'],0)
         self.assertFalse(learning['evaluation']['already_evaluated'])
+        capabilities={item['id']:item for item in learning['capabilities']}
+        self.assertEqual(capabilities['night-light.multinomial-correction-head']['methods'][
+            'downstream_classifier_training'],'supported')
+        self.assertEqual(capabilities['vehicle-detector.yolox-s-coco']['methods']['fine_tuning'],
+            'not_implemented')
         with self.request('/api/export?mission='+mission) as response:
             rows=list(csv.reader(io.StringIO(response.read().decode('utf-8-sig'))))
         self.assertEqual(len(rows),1)

@@ -242,6 +242,9 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 if parsed.path == '/api/hardware':
                     from .hardware import inventory
                     return self.reply(200, inventory(library.root))
+                if parsed.path == '/api/learning/capabilities':
+                    from .learning_capabilities import inventory
+                    return self.reply(200, inventory())
                 if parsed.path == '/api/images':
                     return self.reply(200, library.images(query['mission'][0],query.get('run',[None])[0]))
                 if parsed.path == '/api/plates':
@@ -257,9 +260,10 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     return self.reply(200,path.read_bytes(),'image/jpeg')
                 if parsed.path == '/api/night-learning':
                     from .learning import inventory,candidates,evaluation_status
+                    from .learning_capabilities import inventory as capability_inventory
                     m=query['mission'][0]
                     return self.reply(200,{'inventory':inventory(library,m),'candidates':candidates(library,m),
-                        'evaluation':evaluation_status(library,m)})
+                        'evaluation':evaluation_status(library,m),'capabilities':capability_inventory()})
                 if parsed.path == '/api/inference':
                     return self.reply(200,inference.status(query['mission'][0]))
                 if parsed.path == '/api/video/media':

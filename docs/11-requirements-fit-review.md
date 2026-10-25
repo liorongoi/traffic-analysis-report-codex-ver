@@ -29,6 +29,8 @@ The repository is a valid independent, still-image review and inference incremen
 
 ## Alignment issues to keep visible
 
+All shipped algorithms now expose a structured learning-capability declaration in the API and learning panel. The declaration identifies that the night-light head supports downstream-classifier training, the per-view background builder supports run-scoped background refitting, and other shipped detectors/heuristics currently lack training or calibration adapters. It explicitly records that YOLOX fine-tuning is not implemented. This metadata improves capability traceability; it does not close model promotion, representative-data, or accuracy gates.
+
 Video event timing trims and track identity edits are implemented as append-only corrections. Timing trims snap to saved same-track observations; merges create one corrected logical event; splits create child events at a saved analyzed frame. Event browsing, clip boundaries, and CSV/XLSX exports use corrected identities while retaining original event IDs and review history. Representative media, accuracy and native Windows acceptance remain open.
 
 - The README and `docs/10-vehicle-detection.md` describe the current real inference increment. Older planning text in documents 01, 05, 06, 08, and 09 must not claim that no adapter exists or that the detector is already accepted as a production capability.
