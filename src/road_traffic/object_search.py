@@ -55,6 +55,7 @@ _WEEKDAY_FORMS = {
 }
 _WEEKDAY_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _WEEKDAY_FORMS), key=len, reverse=True)) + r')(?!\w)', re.I)
 _TIME_RANGE_PATTERN = re.compile(r'(?<!\w)(?:between|from|בין)\s*(\d{1,2}:\d{2})\s*(?:and|to|through|ל|עד|-)\s*(\d{1,2}:\d{2})(?!\w)', re.I)
+_SINGLE_TIME_BOUND_PATTERN = re.compile(r'(?<!\w)(after|before|אחרי|לפני)\s*(\d{1,2}:\d{2})(?!\w)', re.I)
 _DATE_RANGE_PATTERN = re.compile(r'(?<!\w)(?:between|from)\s*(20\d{2}-\d{2}-\d{2})\s*(?:and|to|through)\s*(20\d{2}-\d{2}-\d{2})(?!\w)', re.I)
 _DATE_PATTERN = re.compile(r'(?<!\w)(20\d{2}-\d{2}-\d{2})(?!\w)')
 
@@ -79,6 +80,23 @@ def _extract_temporal_filter(query):
         result['start_time'] = start.strftime('%H:%M')
         result['end_time'] = end.strftime('%H:%M')
         text = text[:time_match.start()] + ' ' + text[time_match.end():]
+    single_time_matches=list(_SINGLE_TIME_BOUND_PATTERN.finditer(text))
+    if len(single_time_matches)>1 or (single_time_matches and time_match):
+        raise ValueError('Use one local-time bound or one explicit time range')
+    if single_time_matches:
+        match=single_time_matches[0]
+        boundary=_parse_time(match.group(2))
+        action=match.group(1).casefold()
+        if action in {'after','אחרי'}:
+            if boundary!=time(0,0):
+                result['start_time']=boundary.strftime('%H:%M')
+                result['end_time']='00:00'
+        elif boundary==time(0,0):
+            result['empty_time_range']=True
+        else:
+            result['start_time']='00:00'
+            result['end_time']=boundary.strftime('%H:%M')
+        text=text[:match.start()]+' '+text[match.end():]
 
     date_match = _DATE_RANGE_PATTERN.search(text)
     if date_match:
@@ -195,6 +213,8 @@ def _scope_timezone(scope_snapshot):
 def _matches_schedule(row, requested, scope_snapshot):
     if not requested:
         return True
+    if requested.get('empty_time_range'):
+        return False
     zone = _scope_timezone(scope_snapshot)
     raw = row.get('capture_utc')
     if not raw:

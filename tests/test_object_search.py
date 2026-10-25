@@ -178,6 +178,28 @@ class ObjectSearchTests(unittest.TestCase):
         self.assertEqual(spec['schedule_filter']['start_date'], '2026-05-17')
         self.assertEqual(spec['schedule_filter']['end_date'], '2026-05-19')
 
+    def test_english_after_and_hebrew_before_use_saved_local_timezone(self):
+        scope={'run_id':'run-1','schedule':{'timezone':'Europe/Riga'},
+            'view_assignments':[], 'regions_by_view':{}}
+        rows=[]
+        for image_id,captured in [('evening','2026-05-17T15:00:00Z'),
+            ('afternoon','2026-05-17T13:30:00Z'),('early','2026-05-17T02:30:00Z'),
+            ('morning','2026-05-17T03:30:00Z')]:
+            rows.append({'id':image_id,'name':image_id+'.jpg','capture_utc':captured,'view_id':None,
+                'view_name':None,'revision':0,'review_prediction_run':None,'prediction_run':'run-1',
+                'predictions':[{'kind':'candidate','label':'truck','box':[.1,.1,.1,.1]}],'annotations':'[]'})
+        after=interpret('Find trucks after 17:00',mission_id='mission',run_id='run-1',scope_snapshot=scope)
+        after_result=execute(SearchLibrary(rows),'mission',after,confirmed=True,scope_snapshot=scope)
+        self.assertEqual([row['image_id'] for row in after_result['results']],['evening'])
+        before=interpret('מצא משאיות לפני 06:00',mission_id='mission',run_id='run-1',scope_snapshot=scope)
+        before_result=execute(SearchLibrary(rows),'mission',before,confirmed=True,scope_snapshot=scope)
+        self.assertEqual([row['image_id'] for row in before_result['results']],['early'])
+
+    def test_before_midnight_is_an_empty_local_time_filter(self):
+        scope={'schedule':{'timezone':'Asia/Jerusalem'},'view_assignments':[],'regions_by_view':{}}
+        spec=interpret('Find cars before 00:00',scope_snapshot=scope)
+        self.assertTrue(spec['schedule_filter']['empty_time_range'])
+
     def test_temporal_search_requires_saved_iana_timezone(self):
         with self.assertRaisesRegex(ValueError, 'recorded IANA time zone'):
             interpret('Find cars on Monday', mission_id='mission')
