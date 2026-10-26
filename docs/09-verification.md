@@ -220,3 +220,9 @@ Offline object search now parses English and Hebrew phrases that name both endpo
 
 
 Offline object search accepts up to four explicit local-time ranges in one query and applies them with OR semantics after converting capture UTC into the saved run zone. Weekday and inclusive date constraints apply to each matching window’s start-day anchor, including overnight ranges; a fifth range is rejected. Focused object-search suite: 26 tests passed. Full suite: 230 tests passed; `node --check web/app.js` and `git diff --check` passed. Free-form schedule language remains unsupported.
+
+
+## Weekday and weekend group phrases in object search (2026-10-26)
+
+
+The constrained query grammar now maps “weekdays” and “weekends,” plus the Hebrew phrases “בימי חול” and “בסופי שבוע,” to explicit local weekday sets. The saved run’s IANA zone remains authoritative for capture-local day matching. Focused object-search suite: 27 tests passed. Full suite: 231 tests passed; `node --check web/app.js` and `git diff --check` passed. This does not add arbitrary natural-language schedule interpretation.

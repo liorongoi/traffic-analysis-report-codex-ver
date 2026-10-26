@@ -243,6 +243,34 @@ class ObjectSearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'at most four'):
             interpret(query, mission_id='mission')
 
+    def test_weekday_and_weekend_groups_are_supported_in_english_and_hebrew(self):
+        scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
+            'view_assignments': [], 'regions_by_view': {}}
+        weekends = interpret('Find trucks on weekends', mission_id='mission',
+            run_id='run-1', scope_snapshot=scope)
+        hebrew_weekends = interpret('מצא משאיות בסופי שבוע', mission_id='mission',
+            run_id='run-1', scope_snapshot=scope)
+        self.assertEqual(weekends['schedule_filter']['weekdays'], [5, 6])
+        self.assertEqual(hebrew_weekends['schedule_filter']['weekdays'], [5, 6])
+        weekdays = interpret('Find trucks on weekdays', mission_id='mission',
+            run_id='run-1', scope_snapshot=scope)
+        hebrew_weekdays = interpret('מצא משאיות בימי חול', mission_id='mission',
+            run_id='run-1', scope_snapshot=scope)
+        self.assertEqual(weekdays['schedule_filter']['weekdays'], [0, 1, 2, 3, 4])
+        self.assertEqual(hebrew_weekdays['schedule_filter']['weekdays'], [0, 1, 2, 3, 4])
+
+        def row(image_id, captured):
+            return {'id': image_id, 'name': image_id + '.jpg', 'capture_utc': captured,
+                'view_id': None, 'view_name': None, 'revision': 0, 'review_prediction_run': None,
+                'prediction_run': 'run-1', 'predictions': [{'kind': 'candidate', 'label': 'truck',
+                    'box': [.1, .1, .2, .2]}], 'annotations': '[]'}
+        result = execute(SearchLibrary([
+            row('friday', '2026-05-15T09:00:00Z'),
+            row('saturday', '2026-05-16T09:00:00Z'),
+            row('sunday', '2026-05-17T09:00:00Z'),
+        ]), 'mission', weekends, confirmed=True, scope_snapshot=scope)
+        self.assertEqual([item['image_id'] for item in result['results']], ['saturday', 'sunday'])
+
     def test_search_interprets_an_explicit_inclusive_iso_date_range(self):
         scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Europe/Riga'},
             'view_assignments': [], 'regions_by_view': {}}

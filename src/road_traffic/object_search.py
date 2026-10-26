@@ -53,8 +53,17 @@ _WEEKDAY_FORMS = {
     **{word: 6 for word in ('sunday', 'sundays', 'sun')},
     'שני': 0, 'שלישי': 1, 'רביעי': 2, 'חמישי': 3, 'שישי': 4, 'שבת': 5, 'ראשון': 6,
 }
+_WEEKDAY_GROUP_FORMS = {
+    'weekdays': {0, 1, 2, 3, 4},
+    'weekends': {5, 6},
+    'ימי חול': {0, 1, 2, 3, 4},
+    'בימי חול': {0, 1, 2, 3, 4},
+    'סופי שבוע': {5, 6},
+    'בסופי שבוע': {5, 6},
+}
 _WEEKDAY_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _WEEKDAY_FORMS), key=len, reverse=True)) + r')(?!\w)', re.I)
 _WEEKDAY_ALTERNATION = '|'.join(sorted(map(re.escape, _WEEKDAY_FORMS), key=len, reverse=True))
+_WEEKDAY_GROUP_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _WEEKDAY_GROUP_FORMS), key=len, reverse=True)) + r')(?!\w)', re.I)
 _WEEKDAY_OVERNIGHT_PATTERN = re.compile(
     r'(?<!\w)(?:(?:from|on)\s+|מיום\s+)?(?P<start_day>' + _WEEKDAY_ALTERNATION + r')\s+'
     r'(?P<start_time>\d{1,2}:\d{2})\s+(?:through|to|until|עד)\s+'
@@ -145,12 +154,17 @@ def _extract_temporal_filter(query):
             text = text[:matches[0].start()] + ' ' + text[matches[0].end():]
 
     weekdays = set()
+    for match in _WEEKDAY_GROUP_PATTERN.finditer(text):
+        weekdays.update(_WEEKDAY_GROUP_FORMS[match.group(1).casefold()])
+    text = _WEEKDAY_GROUP_PATTERN.sub(' ', text)
     for match in _WEEKDAY_PATTERN.finditer(text):
         weekdays.add(_WEEKDAY_FORMS[match.group(1).casefold()])
     if weekdays:
         if result.get('weekdays'):
-            raise ValueError('Use one weekday window per search')
-        result['weekdays'] = sorted(weekdays)
+            if set(result['weekdays']) != weekdays:
+                raise ValueError('Use one weekday window per search')
+        else:
+            result['weekdays'] = sorted(weekdays)
         text = _WEEKDAY_PATTERN.sub(' ', text)
     return text, result
 
