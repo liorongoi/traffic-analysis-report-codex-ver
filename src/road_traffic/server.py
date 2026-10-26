@@ -532,6 +532,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     result=video_store.review_event(library,data['mission'],data['event_id'],
                         data['expected_revision'],data['operator'],data['action'],data.get('payload'))
                 elif self.path == '/api/video/clips':
+                    video_store.logical_event_by_id(library,data['mission'],data['event_id'])
                     with inference.lock:
                         if inference.training_active or inference._has_active_worker():
                             raise ValueError('Finish local processing before exporting a video clip')
