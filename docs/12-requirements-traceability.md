@@ -30,5 +30,5 @@ This matrix maps every numbered section in the preserved source request (`docs/r
 
 - Repository automated checks establish code-path behavior on this Mac, not native Windows deployment or algorithm accuracy.
 - Required external acceptance inputs are authorized representative fixed-camera video with verified UTC origin and codecs, authorized plate-localization samples for Iran/Lebanon/Israel/Latvia, target Windows hardware, and product-owner thresholds for accuracy, throughput, retention, and model promotion.
-- The original request's OCR and plate-text fields are superseded by the confirmed crop-only amendment; no OCR, text extraction, or plate identity feature is authorized.
+- The original request's LPR/OCR and plate-text fields are superseded by the confirmed plate-chip-only amendment: extract image crops for human approval; do not read text or infer plate identity.
 - Video identity semantics are settled: merges produce one corrected logical event; splits produce child events; original event records and audit history remain preserved.
