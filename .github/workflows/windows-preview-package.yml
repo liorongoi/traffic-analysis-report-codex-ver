@@ -1,0 +1,100 @@
+name: Windows preview package
+
+on:
+  push:
+    branches:
+      - codex/mission-configuration
+    paths:
+      - '.github/workflows/windows-preview-package.yml'
+      - 'docs/**'
+      - 'installer/windows/**'
+      - 'model-packs/**'
+      - 'requirements-inference-windows.lock.txt'
+      - 'scripts/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'web/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-preview:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Windows Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Build private Windows runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Split-Path -Parent (Get-Command python).Source
+          $runtime = Join-Path $env:GITHUB_WORKSPACE 'staging\python-runtime'
+          New-Item -ItemType Directory -Path $runtime -Force | Out-Null
+          Copy-Item -Path (Join-Path $source '*') -Destination $runtime -Recurse -Force
+          $python = Join-Path $runtime 'python.exe'
+          & $python -m pip install --disable-pip-version-check --only-binary=:all: --target (Join-Path $runtime 'Lib\site-packages') -r requirements-inference-windows.lock.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run the full test suite on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $python = Join-Path $env:GITHUB_WORKSPACE 'staging\python-runtime\python.exe'
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'src'
+          & $python -B -m unittest discover -s tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Stage offline application payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & staging\python-runtime\python.exe scripts\stage-windows.py --runtime staging\python-runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $compiler)) { throw 'Inno Setup compiler is missing from the Windows runner image.' }
+          & $compiler installer\windows\traffic-analysis.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $setup = Join-Path $env:GITHUB_WORKSPACE 'dist\windows\Traffic-Analysis-Preview-Setup.exe'
+          if (-not (Test-Path $setup)) { throw 'Installer compiler did not produce the expected setup executable.' }
+
+      - name: Install and verify bundled runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Join-Path $env:GITHUB_WORKSPACE 'dist\windows\Traffic-Analysis-Preview-Setup.exe'
+          $install = Join-Path $env:LOCALAPPDATA ('Programs\RoadTrafficAnalysis-CI-' + $env:GITHUB_RUN_ID)
+          $process = Start-Process -FilePath $setup -ArgumentList ("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=$install") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer exited with code $($process.ExitCode)." }
+          $receipt = Join-Path $install 'verified-receipt.json'
+          if (-not (Test-Path $receipt)) {
+            $errorFile = Join-Path $install 'verification-error.txt'
+            if (Test-Path $errorFile) { Get-Content $errorFile | Write-Error }
+            throw 'Installed payload did not produce its verified receipt.'
+          }
+          $uninstaller = Join-Path $install 'unins000.exe'
+          if (-not (Test-Path $uninstaller)) { throw 'Current-user uninstall entry point is missing.' }
+          $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with code $($uninstall.ExitCode)." }
+
+      - name: Upload short-lived preview installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: traffic-analysis-preview-${{ github.sha }}
+          path: dist/windows/Traffic-Analysis-Preview-Setup.exe
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
