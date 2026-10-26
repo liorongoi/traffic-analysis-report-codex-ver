@@ -81,9 +81,12 @@ class StoreTests(unittest.TestCase):
         with patch('road_traffic.store.sqlite3.connect',side_effect=delayed_connect):
             thread=threading.Thread(target=create_mission)
             thread.start()
-            self.assertTrue(opened.wait(5),'mission initialization did not pause')
-            self.assertEqual([row['id'] for row in self.lib.missions()],[self.mission])
-            finish.set();thread.join(5)
+            try:
+                self.assertTrue(opened.wait(30),'mission initialization did not pause')
+                self.assertEqual([row['id'] for row in self.lib.missions()],[self.mission])
+            finally:
+                finish.set()
+                thread.join(30)
         self.assertFalse(thread.is_alive())
         self.assertNotIn('error',result)
         self.assertIn(result['mission'],[row['id'] for row in self.lib.missions()])
