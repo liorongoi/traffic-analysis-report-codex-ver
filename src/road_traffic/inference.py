@@ -126,10 +126,11 @@ class InferenceService:
             raise ValueError('ROI reruns currently support still-image General Traffic missions only')
         with self.lock:
             if self.training_active:raise ValueError('Finish correction-head training before starting inference')
-            if self._has_active_worker():raise InferenceBusy('An inference worker is already running')
+            inference_store.prepare(self.library,mission)
             with self.library.connect(mission) as conn:
                 row=conn.execute('SELECT config FROM inference_runs WHERE id=?',(run,)).fetchone()
             if not row:raise ValueError('Inference run not found')
+            if self._has_active_worker():raise InferenceBusy('An inference worker is already running')
             config=json.loads(row['config'])
             _,sha=model_pack(self.pack)
             if config.get('adapter')!=VERSION or config.get('model_sha256')!=sha:

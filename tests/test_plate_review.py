@@ -34,6 +34,13 @@ class PlateCropReviewTests(unittest.TestCase):
                 json.dumps({'x':2,'y':3,'width':12,'height':5}),.8,'a'*64,'2026-10-25T00:00:00+00:00'))
     def tearDown(self):self.tmp.cleanup()
 
+    def test_crop_database_connection_closes_after_context(self):
+        _,_,db=_paths(self.lib,self.mission)
+        with _connect(db) as connection:
+            self.assertEqual(connection.execute('SELECT 1').fetchone()[0],1)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            connection.execute('SELECT 1')
+
     def test_crop_is_saved_under_configured_output_and_checksum_verified(self):
         crop=crop_file(self.lib,self.mission,self.crop_id)
         self.assertTrue(crop.is_relative_to((self.output/'plate-crops'/self.mission).resolve()))

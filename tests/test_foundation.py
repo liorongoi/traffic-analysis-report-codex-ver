@@ -58,6 +58,12 @@ class StoreTests(unittest.TestCase):
         self.image=self.lib.images(self.mission)[0]
         self.annotations=[{'kind':'candidate','label':'single light','box':[.1,.2,.1,.2]}]
     def tearDown(self):self.tmp.cleanup()
+    def test_mission_connection_closes_after_context(self):
+        with self.lib.connect(self.mission) as connection:
+            self.assertEqual(connection.execute('SELECT 1').fetchone()[0],1)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            connection.execute('SELECT 1')
+
 
     def save(self,revision=0,role='none'):
         return self.lib.review(self.mission,self.image['id'],revision,self.annotations,'Test operator',role,'partial')

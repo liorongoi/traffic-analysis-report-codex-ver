@@ -550,7 +550,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
             except (ValueError, KeyError, TypeError, OSError) as exc:
                 self.reply(400,{'error':str(exc)})
             except Exception as exc:
-                self.log_error('Internal request error (%s)', type(exc).__name__)
+                self.log_error('Internal request error (%s): %s', type(exc).__name__, exc)
                 self.reply(500,{'error':'Operation failed; inspect local diagnostics'})
     server = ThreadingHTTPServer((host,port), Handler)
     if not loopback:
