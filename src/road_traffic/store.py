@@ -1,5 +1,6 @@
 """One database per mission, immutable source snapshots and revisioned human labels."""
 import csv
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -71,7 +72,19 @@ class Library:
             raise ValueError('Invalid mission ID')
         return self.root / mission
 
+    @contextmanager
     def connect(self, mission):
+        conn = self._open_connection(mission)
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _open_connection(self, mission):
         path = self.location(mission) / 'mission.sqlite3'
         if not path.is_file():
             raise ValueError('Mission not found')

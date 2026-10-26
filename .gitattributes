@@ -1,0 +1,3 @@
+# Model pack checksums are computed over the exact upstream bytes. Prevent
+# checkout-time CRLF conversion from changing text license/notice files.
+model-packs/** -text
