@@ -214,3 +214,9 @@ Night-light candidate evidence now fingerprints the selected training/validation
 ## Explicit weekday-spanning overnight object search (2026-10-26)
 
 Offline object search now parses English and Hebrew phrases that name both endpoints of a weekday overnight window. The typed filter stores only the start weekday, so a “Sunday 17:00 through Monday 05:00” request includes Sunday evening and Monday before 05:00 without also matching Monday evening. Nonconsecutive weekdays and non-overnight endpoint times are rejected. Focused object-search suite: 24 tests passed. Full suite: 228 tests passed; `node --check web/app.js` and `git diff --check` passed. This remains constrained grammar, not unrestricted conversational schedule interpretation.
+
+
+## Multiple explicit local-time windows in object search (2026-10-26)
+
+
+Offline object search accepts up to four explicit local-time ranges in one query and applies them with OR semantics after converting capture UTC into the saved run zone. Weekday and inclusive date constraints apply to each matching window’s start-day anchor, including overnight ranges; a fifth range is rejected. Focused object-search suite: 26 tests passed. Full suite: 230 tests passed; `node --check web/app.js` and `git diff --check` passed. Free-form schedule language remains unsupported.

@@ -213,6 +213,36 @@ class ObjectSearchTests(unittest.TestCase):
             with self.subTest(query=query), self.assertRaisesRegex(ValueError, 'weekday overnight'):
                 interpret(query, mission_id='mission')
 
+    def test_search_applies_multiple_explicit_local_time_windows(self):
+        scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
+            'view_assignments': [], 'regions_by_view': {}}
+        spec = interpret('Find trucks on Sunday between 17:00 and 18:00 or between 20:00 and 21:00',
+            mission_id='mission', run_id='run-1', scope_snapshot=scope)
+        self.assertEqual(spec['schedule_filter'], {'weekdays': [6], 'time_windows': [
+            {'start_time': '17:00', 'end_time': '18:00'},
+            {'start_time': '20:00', 'end_time': '21:00'}]})
+
+        def row(image_id, captured):
+            return {'id': image_id, 'name': image_id + '.jpg', 'capture_utc': captured,
+                'view_id': None, 'view_name': None, 'revision': 0, 'review_prediction_run': None,
+                'prediction_run': 'run-1', 'predictions': [{'kind': 'candidate', 'label': 'truck',
+                    'box': [.1, .1, .2, .2]}], 'annotations': '[]'}
+        result = execute(SearchLibrary([
+            row('first-window', '2026-05-17T14:30:00Z'),
+            row('between-windows', '2026-05-17T16:30:00Z'),
+            row('second-window', '2026-05-17T17:30:00Z'),
+            row('wrong-weekday', '2026-05-18T14:30:00Z'),
+        ]), 'mission', spec, confirmed=True, scope_snapshot=scope)
+        self.assertEqual([item['image_id'] for item in result['results']],
+            ['first-window', 'second-window'])
+
+    def test_search_rejects_more_than_four_explicit_time_windows(self):
+        query = ('Find cars between 01:00 and 02:00 or between 03:00 and 04:00 '
+                 'or between 05:00 and 06:00 or between 07:00 and 08:00 '
+                 'or between 09:00 and 10:00')
+        with self.assertRaisesRegex(ValueError, 'at most four'):
+            interpret(query, mission_id='mission')
+
     def test_search_interprets_an_explicit_inclusive_iso_date_range(self):
         scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Europe/Riga'},
             'view_assignments': [], 'regions_by_view': {}}

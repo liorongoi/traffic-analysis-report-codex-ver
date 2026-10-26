@@ -87,19 +87,27 @@ def _extract_temporal_filter(query):
             raise ValueError('A weekday overnight search must end on the following day with an earlier time')
         result.update(start_time=start.strftime('%H:%M'), end_time=end.strftime('%H:%M'), weekdays=[start_day])
         text = text[:overnight_match.start()] + ' ' + text[overnight_match.end():]
-    time_match = _TIME_RANGE_PATTERN.search(text)
-    if time_match:
+    time_matches = list(_TIME_RANGE_PATTERN.finditer(text))
+    if time_matches:
         if result:
             raise ValueError('Use one local-time window per search')
-        start = _parse_time(time_match.group(1))
-        end = _parse_time(time_match.group(2))
-        if start == end:
-            raise ValueError('A search time range must have different start and end times')
-        result['start_time'] = start.strftime('%H:%M')
-        result['end_time'] = end.strftime('%H:%M')
-        text = text[:time_match.start()] + ' ' + text[time_match.end():]
+        if len(time_matches) > 4:
+            raise ValueError('A search can include at most four explicit local-time windows')
+        windows = []
+        for match in time_matches:
+            start = _parse_time(match.group(1))
+            end = _parse_time(match.group(2))
+            if start == end:
+                raise ValueError('A search time range must have different start and end times')
+            windows.append({'start_time': start.strftime('%H:%M'), 'end_time': end.strftime('%H:%M')})
+        for match in reversed(time_matches):
+            text = text[:match.start()] + ' ' + text[match.end():]
+        if len(windows) == 1:
+            result.update(windows[0])
+        else:
+            result['time_windows'] = windows
     single_time_matches=list(_SINGLE_TIME_BOUND_PATTERN.finditer(text))
-    if len(single_time_matches)>1 or (single_time_matches and time_match):
+    if len(single_time_matches)>1 or (single_time_matches and time_matches):
         raise ValueError('Use one local-time bound or one explicit time range')
     if single_time_matches:
         if result:
@@ -250,26 +258,38 @@ def _matches_schedule(row, requested, scope_snapshot):
         local = captured.astimezone(zone)
     except (ValueError, OverflowError):
         return False
-    day = local.date()
-    start_text, end_text = requested.get('start_time'), requested.get('end_time')
-    if start_text and end_text:
-        start, end = _parse_time(start_text), _parse_time(end_text)
-        clock = local.timetz().replace(tzinfo=None)
+    local_day = local.date()
+    clock = local.timetz().replace(tzinfo=None)
+    windows = requested.get('time_windows')
+    if windows is None:
+        start_text, end_text = requested.get('start_time'), requested.get('end_time')
+        windows = ([{'start_time': start_text, 'end_time': end_text}]
+                   if start_text and end_text else [None])
+
+    def matching_anchor(window):
+        if window is None:
+            return local_day
+        start, end = _parse_time(window['start_time']), _parse_time(window['end_time'])
         if start < end:
-            if not start <= clock < end:
-                return False
-        else:
-            if not (clock >= start or clock < end):
-                return False
-            if clock < end:
-                day -= timedelta(days=1)
-    if requested.get('weekdays') and day.weekday() not in requested['weekdays']:
-        return False
-    if requested.get('start_date') and day < date.fromisoformat(requested['start_date']):
-        return False
-    if requested.get('end_date') and day > date.fromisoformat(requested['end_date']):
-        return False
-    return True
+            return local_day if start <= clock < end else None
+        if clock >= start:
+            return local_day
+        if clock < end:
+            return local_day - timedelta(days=1)
+        return None
+
+    for window in windows:
+        day = matching_anchor(window)
+        if day is None:
+            continue
+        if requested.get('weekdays') and day.weekday() not in requested['weekdays']:
+            continue
+        if requested.get('start_date') and day < date.fromisoformat(requested['start_date']):
+            continue
+        if requested.get('end_date') and day > date.fromisoformat(requested['end_date']):
+            continue
+        return True
+    return False
 
 
 
