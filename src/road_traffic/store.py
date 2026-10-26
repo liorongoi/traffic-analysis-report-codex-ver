@@ -253,8 +253,11 @@ class Library:
         mission = str(uuid.uuid4())
         folder = self.location(mission)
         folder.mkdir()
-        (folder / 'sources').mkdir()
-        conn = sqlite3.connect(folder / 'mission.sqlite3')
+        sources = folder / 'sources'
+        sources.mkdir()
+        final_database = folder / 'mission.sqlite3'
+        initializing_database = folder / 'mission.sqlite3.initializing'
+        conn = sqlite3.connect(initializing_database)
         try:
             with conn:
                 conn.executescript('''
@@ -340,8 +343,14 @@ class Library:
                     (mission, input_type, analysis_mode, location.strip(), source_root,
                      int(settings.get('include_subdirectories', True)), processing_mode,
                      output_root, json.dumps(export_formats), '', resource_profile))
-        finally:
             conn.close()
+            initializing_database.replace(final_database)
+        except BaseException:
+            conn.close()
+            initializing_database.unlink(missing_ok=True)
+            sources.rmdir()
+            folder.rmdir()
+            raise
         return mission
 
     @staticmethod

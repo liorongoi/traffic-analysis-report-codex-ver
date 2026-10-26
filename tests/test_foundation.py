@@ -3,7 +3,9 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 from road_traffic.domain import capture_time, named_zone, budget
 from road_traffic.store import Library, safe_file
 from PIL import Image
@@ -63,6 +65,28 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(connection.execute('SELECT 1').fetchone()[0],1)
         with self.assertRaises(sqlite3.ProgrammingError):
             connection.execute('SELECT 1')
+
+    def test_monitor_mission_listing_cannot_see_half_created_database(self):
+        real_connect=sqlite3.connect
+        opened=threading.Event();finish=threading.Event();result={}
+        def delayed_connect(database,*args,**kwargs):
+            connection=real_connect(database,*args,**kwargs)
+            if Path(database).name=='mission.sqlite3.initializing':
+                opened.set()
+                if not finish.wait(5):raise TimeoutError('test did not release mission creation')
+            return connection
+        def create_mission():
+            try:result['mission']=self.lib.create('Atomic mission','Iran','Asia/Tehran')
+            except BaseException as exc:result['error']=exc
+        with patch('road_traffic.store.sqlite3.connect',side_effect=delayed_connect):
+            thread=threading.Thread(target=create_mission)
+            thread.start()
+            self.assertTrue(opened.wait(5),'mission initialization did not pause')
+            self.assertEqual([row['id'] for row in self.lib.missions()],[self.mission])
+            finish.set();thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertNotIn('error',result)
+        self.assertIn(result['mission'],[row['id'] for row in self.lib.missions()])
 
 
     def save(self,revision=0,role='none'):
