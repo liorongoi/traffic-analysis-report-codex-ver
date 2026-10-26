@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from PIL import Image
-from road_traffic.plate_review import _connect, _paths, crop_file, list_crops, review, _sha, propose
+from road_traffic.plate_review import _connect, _paths, crop_file, list_crops, review, review_text, _sha, propose
 from unittest.mock import patch
 from road_traffic.store import Library
 from datetime import datetime, timezone
@@ -61,20 +61,35 @@ class PlateCropReviewTests(unittest.TestCase):
                 conn.execute('UPDATE reviews SET decision=? WHERE crop_id=?',('approved',self.crop_id))
 
     @patch('road_traffic.plate_review.PlateDetector')
-    def test_detector_proposals_are_saved_as_crop_images_without_text_fields(self, detector):
+    def test_detector_proposals_are_saved_with_unverified_ocr_suggestions(self, detector):
         _,folder,db=_paths(self.lib,self.mission)
         with _connect(db) as conn:conn.execute('DELETE FROM crops WHERE id=?',(self.crop_id,))
         (folder/(self.crop_id+'.jpg')).unlink()
         detector.return_value.sha='b'*64
+        detector.return_value.recognizer.read.return_value={'text':'AB1234','confidence':.82,'model_sha256':'d'*64}
         detector.return_value.detect.return_value=[{'box':[.25,.25,.5,.25],'confidence':.91,'model_sha256':'b'*64}]
         rows=propose(self.lib,self.mission,self.image['id'],Path('model-packs/license-plate-yolox'))
         self.assertEqual(len(rows),1)
         self.assertEqual(rows[0]['decision'],None)
         self.assertEqual(rows[0]['source_name'],self.image['name'])
         self.assertTrue(crop_file(self.lib,self.mission,rows[0]['id']).is_file())
-        self.assertNotIn('text',rows[0]);self.assertNotIn('ocr',rows[0])
+        self.assertEqual(rows[0]['ocr_text'],'AB1234');self.assertEqual(rows[0]['ocr_confidence'],.82)
+        self.assertEqual(rows[0]['text_decision'],None)
         repeated=propose(self.lib,self.mission,self.image['id'],Path('model-packs/license-plate-yolox'))
         self.assertEqual(len(repeated),1)
+
+    def test_text_acceptance_and_correction_are_separate_append_only_reviews(self):
+        accepted=review_text(self.lib,self.mission,self.crop_id,0,'accepted','AB1234','Operator A')
+        self.assertEqual(accepted['verified_text'],'AB1234')
+        corrected=review_text(self.lib,self.mission,self.crop_id,1,'corrected','AB1284','Operator B')
+        row=list_crops(self.lib,self.mission)[0]
+        self.assertEqual((row['text_decision'],row['verified_text'],row['text_revision']),('corrected','AB1284',2))
+        with self.assertRaisesRegex(ValueError,'changed since it was opened'):
+            review_text(self.lib,self.mission,self.crop_id,1,'accepted','AB1284','Operator C')
+        _,_,db=_paths(self.lib,self.mission)
+        with _connect(db) as conn:
+            with self.assertRaisesRegex(sqlite3.IntegrityError,'append-only'):
+                conn.execute('UPDATE text_reviews SET verified_text=? WHERE crop_id=?',('OTHER',self.crop_id))
 
     def test_reviews_reject_missing_operator_and_invalid_decision(self):
         with self.assertRaisesRegex(ValueError,'Operator'):
@@ -82,7 +97,7 @@ class PlateCropReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Choose approved or rejected'):
             review(self.lib,self.mission,self.crop_id,0,'read-text','Operator')
 
-    def test_video_frame_crops_keep_pts_utc_and_context_without_text_recognition(self):
+    def test_video_frame_crops_keep_pts_utc_context_and_ocr_fields(self):
         import numpy as np
         from road_traffic.plate_review import propose_video_frame, context_file
         root=Path(self.tmp.name);source_root=root/'videos';source_root.mkdir()
@@ -94,9 +109,12 @@ class PlateCropReviewTests(unittest.TestCase):
         origin=datetime(2026,5,17,16,4,tzinfo=timezone.utc)
         source=register_video(self.lib,video_mission,'camera.mp4',recording_start_utc=origin,
             origin_provenance='verified recorder metadata')
+        class Recognizer:
+            def read(self,image):return {'text':'','confidence':0.0,'model_sha256':'d'*64}
         class Detector:
             sha='c'*64
             calls=0
+            recognizer=Recognizer()
             def detect(self,image):
                 self.calls+=1
                 return [{'box':[.25,.25,.5,.25],'confidence':.9,'model_sha256':self.sha}]
@@ -112,7 +130,7 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertTrue(context_file(self.lib,video_mission,row['id']).is_file())
         self.assertEqual(propose_video_frame(self.lib,video_mission,source['id'],decoded,detector),[])
         self.assertEqual(detector.calls,1)
-        self.assertNotIn('text',row);self.assertNotIn('ocr',row)
+        self.assertEqual(row['ocr_text'],'');self.assertEqual(row['text_decision'],None)
 
 
 if __name__=='__main__':unittest.main()

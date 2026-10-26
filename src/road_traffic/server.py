@@ -460,6 +460,9 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 elif self.path == '/api/plates/review':
                     from .plate_review import review
                     result=review(library,data['mission'],data['crop_id'],data['expected_revision'],data['decision'],data['operator'])
+                elif self.path == '/api/plates/text-review':
+                    from .plate_review import review_text
+                    result=review_text(library,data['mission'],data['crop_id'],data.get('expected_revision',0),data['decision'],data.get('verified_text',''),data['operator'])
                 elif self.path == '/api/review':
                     result = library.review(data['mission'],data['image'],data['revision'],data['annotations'],data['operator'],data['role'],data['status'],data.get('prediction_run'))
                 elif self.path == '/api/object-search/interpret':

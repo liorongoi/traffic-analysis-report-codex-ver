@@ -53,23 +53,28 @@ class WindowsPackagingTests(unittest.TestCase):
             (pack / 'plate_yolox_tiny_640.onnx').write_bytes(model)
             for name in ('LICENSE', 'NOTICE', 'README.md'):
                 (pack / name).write_text(name, encoding='utf-8')
+            ocr_assets = {}
+            for name, content in (('plate_ocr_arabic_ppocrv3_mobile.onnx', b'ocr model'), ('plate_ocr_arabic_dict.json', b'[]')):
+                (pack / name).write_bytes(content)
+                ocr_assets[name] = {'sha256': hashlib.sha256(content).hexdigest(), 'bytes': len(content)}
             manifest = {'model': 'plate_yolox_tiny_640.onnx',
                 'sha256': hashlib.sha256(model).hexdigest(), 'bytes': len(model),
-                'ocr_assets_included': False}
+                'ocr_assets_included': True, 'ocr_artifacts': ocr_assets}
         (pack / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
 
-    def test_staged_model_packs_include_verified_plate_only_detector(self):
+    def test_staged_model_packs_include_verified_plate_detector_and_ocr(self):
         vehicle = STAGER['validate_model_pack'](ROOT / 'model-packs' / 'yolox-s', 'vehicle')
         plate = STAGER['validate_model_pack'](ROOT / 'model-packs' / 'license-plate-yolox', 'plate')
         self.assertIn('model.onnx', vehicle['files'])
-        self.assertIs(plate['ocr_assets_included'], False)
+        self.assertIs(plate['ocr_assets_included'], True)
+        self.assertIn('plate_ocr_arabic_ppocrv3_mobile.onnx', plate['ocr_artifacts'])
 
-    def test_plate_pack_refuses_manifest_that_enables_recognition_assets(self):
+    def test_plate_pack_refuses_manifest_missing_recognition_assets(self):
         with tempfile.TemporaryDirectory() as temp:
             pack = Path(temp)
             (pack / 'manifest.json').write_text(json.dumps({
-                'model': 'plate_yolox_tiny_640.onnx', 'ocr_assets_included': True}), encoding='utf-8')
-            with self.assertRaisesRegex(ValueError, 'exclude OCR assets'):
+                'model': 'plate_yolox_tiny_640.onnx', 'ocr_assets_included': False}), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'include the detector and matched OCR'):
                 STAGER['validate_model_pack'](pack, 'plate')
 
     def test_windows_runtime_staging_requires_x64_and_offline_dependencies(self):

@@ -1,7 +1,9 @@
-# Plate-region detector pack
+# Plate localization and local OCR pack
 
-This pack contains only the YOLOX-tiny plate-region detector. The application uses its bounding boxes to save plate image crops for human review. It does not load, bundle, or call OCR, text recognition, normalization, or identity lookup.
+This pack contains a YOLOX-tiny plate-region detector and a CPU ONNX CTC text recognizer. The app saves each detected plate chip, displays an editable OCR suggestion, and records chip approval separately from text acceptance, correction, rejection, or unreadable decisions. OCR text is never treated as verified without an operator action.
 
-The detector weights are Apache-2.0 and SHA-256 pinned in `manifest.json`. `LICENSE` and `NOTICE` are retained from the upstream model pack. The upstream notice says its training set includes community-contributed images for which consent was not obtained; the source images are not included here. Target-country performance for Iran, Lebanon, Israel, and Latvia has not been independently evaluated. Treat detections as unconfirmed proposals and approve or reject each crop.
+The recognizer is an ONNX conversion of PaddleOCR's official [`arabic_PP-OCRv3_mobile_rec` model](https://huggingface.co/PaddlePaddle/arabic_PP-OCRv3_mobile_rec), using the [documented ONNX conversion](https://huggingface.co/tobiichioriguchi/arabic_PP-OCRv3_mobile_rec_onnx) and the [official Arabic dictionary](https://github.com/PaddlePaddle/PaddleOCR/blob/main/ppocr/utils/dict/arabic_dict.txt). Its 161-character dictionary includes Latin, Arabic/Persian letters, ASCII digits, and Arabic-Indic digits. Model and dictionary hashes, source revisions, and sizes are pinned in `manifest.json`. Inference uses the installed CPU ONNX Runtime only; no network access or runtime substitution is allowed.
 
-Upstream: [open-lpr model pack](https://huggingface.co/faisalthaheem/open-lpr-models). Only `plate_yolox_tiny_640.onnx` is used. The OCR model and character dictionary are deliberately absent.
+PaddleOCR reports 73.55% exact recognition accuracy on a general Arabic-text benchmark. That is not plate-text accuracy. Iranian Persian digit forms and OCR quality for Iran, Lebanon, Israel, and Latvia have not been independently evaluated. Inspect each chip and manually correct or reject suggestions. No vehicle identity lookup is performed.
+
+The detector weights are Apache-2.0. Its publisher notice says some community-contributed training photos were used without consent obtained; source imagery is not redistributed. See `NOTICE` and the per-artifact manifest for provenance.

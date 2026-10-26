@@ -2,10 +2,35 @@
   "model": "plate_yolox_tiny_640.onnx",
   "sha256": "e5350bb2152eb44fa129b2438d1e39bbbf3c27accfe51cd893ce6e17d028d0b9",
   "bytes": 20183226,
-  "input": [1, 3, 640, 640],
-  "output": [1, 8400, 6],
+  "input": [
+    1,
+    3,
+    640,
+    640
+  ],
+  "output": [
+    1,
+    8400,
+    6
+  ],
   "role": "single-class plate-region detection only",
   "license": "Apache-2.0",
   "source": "https://huggingface.co/faisalthaheem/open-lpr-models",
-  "ocr_assets_included": false
+  "ocr_assets_included": true,
+  "ocr_artifacts": {
+    "plate_ocr_arabic_ppocrv3_mobile.onnx": {
+      "sha256": "0394ca6c66c72d882b199aaeff34b3b448328592e14a0f95b36a398a339b2142",
+      "bytes": 8987194,
+      "role": "Arabic/Persian and Latin plate-text suggestion recognizer (CTC)",
+      "license": "Apache-2.0 conversion of PaddleOCR official arabic_PP-OCRv3_mobile_rec; source commit bd089ea44f4229385fdb506afc69730fe7ffd038",
+      "source_url": "https://huggingface.co/tobiichioriguchi/arabic_PP-OCRv3_mobile_rec_onnx/tree/bd089ea44f4229385fdb506afc69730fe7ffd038"
+    },
+    "plate_ocr_arabic_dict.json": {
+      "sha256": "45cb8e46aded3f9680d1b382676d17ea163ef8072da93b2d3fd349cf68520fb5",
+      "bytes": 729,
+      "role": "matched Arabic/Persian and Latin CTC character dictionary",
+      "license": "Apache-2.0 PaddleOCR dictionary at pinned source blob 916d421c53bad563dfd980c1b64dcce07a3c9d24",
+      "source_url": "https://api.github.com/repos/PaddlePaddle/PaddleOCR/git/blobs/916d421c53bad563dfd980c1b64dcce07a3c9d24"
+    }
+  }
 }

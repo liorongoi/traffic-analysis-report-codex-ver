@@ -98,10 +98,11 @@ def validate_model_pack(pack, kind):
             raise ValueError('Vehicle model pack manifest has no files map')
     elif kind == 'plate':
         model_name = manifest.get('model')
-        if model_name != 'plate_yolox_tiny_640.onnx' or manifest.get('ocr_assets_included') is not False:
-            raise ValueError('Plate model manifest must identify the crop-only detector and exclude OCR assets')
-        expected = {model_name: {'sha256': manifest.get('sha256'), 'bytes': manifest.get('bytes')}}
-        required = (model_name, 'LICENSE', 'NOTICE', 'README.md')
+        ocr = manifest.get('ocr_artifacts')
+        if model_name != 'plate_yolox_tiny_640.onnx' or manifest.get('ocr_assets_included') is not True or not isinstance(ocr, dict):
+            raise ValueError('Plate model manifest must include the detector and matched OCR model/dictionary')
+        expected = {model_name: {'sha256': manifest.get('sha256'), 'bytes': manifest.get('bytes')}, **ocr}
+        required = (model_name, 'plate_ocr_arabic_ppocrv3_mobile.onnx', 'plate_ocr_arabic_dict.json', 'LICENSE', 'NOTICE', 'README.md')
     else:
         raise ValueError('Unknown model pack kind')
     for name in required:
@@ -158,8 +159,8 @@ def stage(project, runtime):
         shutil.copytree(plate_pack, output / 'model-packs' / 'license-plate-yolox')
         (output / 'PREVIEW-LIMITATIONS.txt').write_text(
             'This is a preview build, not an accepted production deployment.\n'
-            'Plate handling locates plate regions, saves crops, and asks for human approval; '
-            'it does not read plate text or identify vehicles from plates.\n'
+            'Plate handling locates regions, saves chips, and proposes Latin and Arabic/Persian letters with digits with local OCR. '
+            'Operators separately approve/correct/reject text; Persian digit recognition and target-country accuracy are unvalidated.\n'
             'Vehicle and plate detector accuracy, Windows execution, offline install/update, '
             'LAN authentication, GPU support, and target-hardware performance are not accepted.\n'
             'The application includes still-image monitoring, CSV/XLSX export, video event review, '
@@ -172,7 +173,7 @@ def stage(project, runtime):
         shutil.rmtree(output, ignore_errors=True)
         raise
     print('Staged offline preview media:', output)
-    print('The bundle includes vehicle and crop-only plate models plus all runtime worker entry points.')
+    print('The bundle includes vehicle and plate detection/OCR models plus all runtime worker entry points.')
     print('Compile installer/windows/traffic-analysis.iss on Windows, inspect extracted payload, then test offline on a no-admin Windows account.')
     return output
 

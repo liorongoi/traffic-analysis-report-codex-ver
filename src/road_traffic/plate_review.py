@@ -1,6 +1,8 @@
-"""Plate-region proposals, crop files, and append-only human review.
+"""Plate localization, chip extraction, OCR suggestions, and append-only human review.
 
-This module intentionally has no OCR dependency, text field, or recognition step.
+OCR is a local proposal only. The recognizer supports Latin plus Arabic/Persian
+letters, while Persian plate digits and target-country plate accuracy remain unverified.
+Operators separately accept, correct, reject, or mark suggestions unreadable.
 """
 from __future__ import annotations
 from contextlib import contextmanager
@@ -14,6 +16,10 @@ from pathlib import Path
 
 MODEL_SHA256 = 'e5350bb2152eb44fa129b2438d1e39bbbf3c27accfe51cd893ce6e17d028d0b9'
 MODEL_NAME = 'plate_yolox_tiny_640.onnx'
+OCR_MODEL_NAME = 'plate_ocr_arabic_ppocrv3_mobile.onnx'
+OCR_DICT_NAME = 'plate_ocr_arabic_dict.json'
+OCR_MODEL_SHA256 = '0394ca6c66c72d882b199aaeff34b3b448328592e14a0f95b36a398a339b2142'
+OCR_DICT_SHA256 = '45cb8e46aded3f9680d1b382676d17ea163ef8072da93b2d3fd349cf68520fb5'
 
 
 def _sha(path):
@@ -56,11 +62,23 @@ def _open_connection(db):
                 id TEXT PRIMARY KEY, image_id TEXT NOT NULL, source_name TEXT NOT NULL,
                 source_sha256 TEXT NOT NULL, crop_file TEXT NOT NULL UNIQUE,
                 crop_sha256 TEXT NOT NULL, bbox TEXT NOT NULL, confidence REAL NOT NULL,
-                model_sha256 TEXT NOT NULL, created TEXT NOT NULL);
+                model_sha256 TEXT NOT NULL, created TEXT NOT NULL,
+                ocr_text TEXT NOT NULL DEFAULT '', ocr_confidence REAL NOT NULL DEFAULT 0,
+                ocr_model_sha256 TEXT NOT NULL DEFAULT '');
             CREATE TABLE IF NOT EXISTS reviews(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, crop_id TEXT NOT NULL REFERENCES crops(id),
                 revision INTEGER NOT NULL, decision TEXT NOT NULL CHECK(decision IN ('approved','rejected')),
                 operator TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(crop_id,revision));
+            CREATE TABLE IF NOT EXISTS text_reviews(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, crop_id TEXT NOT NULL REFERENCES crops(id),
+                revision INTEGER NOT NULL, decision TEXT NOT NULL CHECK(decision IN ('accepted','corrected','rejected','unreadable')),
+                verified_text TEXT NOT NULL DEFAULT '', operator TEXT NOT NULL, created TEXT NOT NULL,
+                UNIQUE(crop_id,revision));
+            CREATE INDEX IF NOT EXISTS text_reviews_latest ON text_reviews(crop_id,revision DESC);
+            CREATE TRIGGER IF NOT EXISTS immutable_plate_text_reviews_update BEFORE UPDATE ON text_reviews
+                BEGIN SELECT RAISE(ABORT,'plate text reviews are append-only'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_plate_text_reviews_delete BEFORE DELETE ON text_reviews
+                BEGIN SELECT RAISE(ABORT,'plate text reviews are append-only'); END;
             CREATE INDEX IF NOT EXISTS reviews_latest ON reviews(crop_id,revision DESC);
             CREATE TRIGGER IF NOT EXISTS immutable_plate_reviews_update BEFORE UPDATE ON reviews
                 BEGIN SELECT RAISE(ABORT,'plate crop reviews are append-only'); END;
@@ -71,7 +89,9 @@ def _open_connection(db):
         for name, declaration in (
             ('source_kind', "TEXT NOT NULL DEFAULT 'image'"), ('video_source_id','TEXT'),
             ('frame_index','INTEGER'), ('pts','INTEGER'), ('time_base_num','INTEGER'),
-            ('time_base_den','INTEGER'), ('capture_utc','TEXT'), ('context_file','TEXT')):
+            ('time_base_den','INTEGER'), ('capture_utc','TEXT'), ('context_file','TEXT'),
+            ('ocr_text', "TEXT NOT NULL DEFAULT ''"), ('ocr_confidence','REAL NOT NULL DEFAULT 0'),
+            ('ocr_model_sha256', "TEXT NOT NULL DEFAULT ''")):
             if name not in columns:conn.execute(f'ALTER TABLE crops ADD COLUMN {name} {declaration}')
         return conn
     except BaseException:
@@ -103,6 +123,71 @@ def _model_pack(pack):
     return model,actual
 
 
+class PlateTextRecognizer:
+    """CPU CTC recognizer for Latin and Arabic/Persian letters; outputs need review."""
+    def __init__(self,pack):
+        import numpy as np
+        import onnxruntime as ort
+        pack=Path(pack).resolve(strict=True)
+        model=pack/OCR_MODEL_NAME;dictionary=pack/OCR_DICT_NAME
+        if _sha(model)!=OCR_MODEL_SHA256 or _sha(dictionary)!=OCR_DICT_SHA256:
+            raise ValueError('Plate OCR model or matched dictionary checksum mismatch')
+        manifest=json.loads((pack/'manifest.json').read_text())
+        artifacts=manifest.get('ocr_artifacts',{})
+        if artifacts.get(OCR_MODEL_NAME,{}).get('sha256')!=OCR_MODEL_SHA256 or artifacts.get(OCR_DICT_NAME,{}).get('sha256')!=OCR_DICT_SHA256:
+            raise ValueError('Plate OCR manifest does not match the pinned recognizer and dictionary')
+        chars=json.loads(dictionary.read_text(encoding='utf-8'))
+        if not isinstance(chars,list) or len(chars)!=161 or not all(isinstance(c,str) and len(c)==1 for c in chars):
+            raise ValueError('Plate OCR character dictionary is invalid')
+        self.charset=['']+chars+[' ']
+        options=ort.SessionOptions();options.intra_op_num_threads=2;options.inter_op_num_threads=1
+        self.session=ort.InferenceSession(str(model),sess_options=options,providers=['CPUExecutionProvider'])
+        if self.session.get_providers()!=['CPUExecutionProvider']:
+            raise RuntimeError('Plate OCR must run on the CPU provider')
+        inputs=self.session.get_inputs();outputs=self.session.get_outputs()
+        if len(inputs)!=1 or len(outputs)!=1:
+            raise ValueError('Unexpected plate OCR model input/output schema')
+        self.input=inputs[0].name;self.output=outputs[0].name
+        self.sha=OCR_MODEL_SHA256;self.np=np
+
+    def read(self,image):
+        from PIL import Image
+        np=self.np;image=image.convert('RGB');width,height=image.size
+        if width<1 or height<1:raise ValueError('Cannot read an empty plate crop')
+        resized_width=max(8,min(320,int(round(width*48/height))//8*8))
+        resized=image.resize((resized_width,48),Image.Resampling.BILINEAR)
+        tensor=np.asarray(resized,dtype=np.float32)[...,::-1].transpose(2,0,1)[None]
+        tensor=np.ascontiguousarray((tensor/255.0-0.5)/0.5)
+        raw=np.asarray(self.session.run([self.output],{self.input:tensor})[0])
+        if raw.ndim==3:
+            if raw.shape[0]!=1:raise ValueError(f'Unexpected plate OCR batch output: {raw.shape}')
+            raw=raw[0]
+        if raw.ndim!=2 or raw.shape[-1]!=len(self.charset):
+            raise ValueError(f'Unexpected plate OCR output schema: {raw.shape}')
+        sums=raw.sum(axis=-1,keepdims=True)
+        if not (np.all(raw>=-1e-5) and np.all(raw<=1.00001) and np.allclose(sums,1,atol=1e-3)):
+            shifted=raw-raw.max(axis=-1,keepdims=True);exp=np.exp(shifted);raw=exp/exp.sum(axis=-1,keepdims=True)
+        indices=raw.argmax(axis=-1);scores=raw.max(axis=-1);out=[];confidence=[];previous=-1
+        for index,score in zip(indices,scores):
+            index=int(index)
+            if index!=previous and index!=0 and index<len(self.charset):
+                char=self.charset[index]
+                if char.isalnum():out.append(char.upper() if char.isascii() else char);confidence.append(float(score))
+            previous=index
+        text=''.join(out)
+        if any('\u0600'<=char<='\u06ff' or '\u0750'<=char<='\u077f' for char in text):
+            groups=[];latin=''
+            for char in text:
+                if char.isascii() and (char.isalnum() or char in ' :*./%+-'):
+                    latin+=char
+                else:
+                    if latin:groups.append(latin);latin=''
+                    groups.append(char)
+            if latin:groups.append(latin)
+            text=''.join(reversed(groups))
+        return { 'text':text, 'confidence':float(sum(confidence)/len(confidence)) if confidence else 0.0, 'model_sha256':self.sha }
+
+
 class PlateDetector:
     def __init__(self,pack,threshold=.3):
         import cv2
@@ -117,6 +202,7 @@ class PlateDetector:
             raise RuntimeError('Plate detector must run on the validated CPU provider')
         self.input=self.session.get_inputs()[0].name
         self.threshold=threshold
+        self.recognizer=PlateTextRecognizer(pack)
         self.grids=[]
         for stride in (8,16,32):
             y,x=np.meshgrid(np.arange(640//stride),np.arange(640//stride),indexing='ij')
@@ -180,9 +266,10 @@ def propose(library,mission,image_id,pack,threshold=.3):
             coords=(max(0,int(x*im.width)),max(0,int(y*im.height)),min(im.width,int((x+bw)*im.width)),min(im.height,int((y+bh)*im.height)))
             if coords[2]<=coords[0] or coords[3]<=coords[1]:continue
             filename=f'{crop_id}.jpg';target=folder/filename;tmp=folder/(filename+'.tmp')
+            ocr=detector.recognizer.read(im.crop(coords))
             im.crop(coords).save(tmp,format='JPEG',quality=95)
             tmp.replace(target)
-            crops.append((crop_id,filename,target,item,coords))
+            crops.append((crop_id,filename,target,item,coords,ocr))
     created=datetime.now(timezone.utc).isoformat()
     inserted=[]
     try:
@@ -191,22 +278,22 @@ def propose(library,mission,image_id,pack,threshold=.3):
             if existing:
                 for item in crops:(folder/item[1]).unlink(missing_ok=True)
                 return list_crops(library,mission,image_id)
-            for crop_id,filename,path,item,coords in crops:
+            for crop_id,filename,path,item,coords,ocr in crops:
                 box=item['box']
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
-                    crop_sha256,bbox,confidence,model_sha256,created) VALUES (?,?,?,?,?,?,?,?,?,?)''',(
-                    crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
+                    crop_sha256,bbox,confidence,model_sha256,created,ocr_text,ocr_confidence,ocr_model_sha256)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',(crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],'height':coords[3]-coords[1]}),
-                    item['confidence'],detector.sha,created))
+                    item['confidence'],detector.sha,created,ocr['text'],ocr['confidence'],ocr['model_sha256']))
                 inserted.append(crop_id)
     except Exception:
-        for crop_id,filename,path,item,coords in crops:path.unlink(missing_ok=True)
+        for crop_id,filename,path,item,coords,ocr in crops:path.unlink(missing_ok=True)
         raise
     return list_crops(library,mission,image_id)
 
 
 def propose_video_frame(library,mission,source_id,decoded,detector):
-    """Save plate-region crops from one decoded frame, without reading plate text."""
+    """Save plate chips from one decoded frame and attach OCR suggestions."""
     from PIL import Image
     from . import video_store
     import numpy as np
@@ -233,22 +320,25 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
                 if coords[2]<=coords[0] or coords[3]<=coords[1]:continue
                 crop_name=f'{crop_id}.jpg';context_name=f'{crop_id}-context.jpg'
                 crop_path=folder/crop_name;context_path=folder/context_name
+                ocr=detector.recognizer.read(image.crop(coords))
                 image.crop(coords).save(crop_path,format='JPEG',quality=95)
                 image.save(context_path,format='JPEG',quality=88)
-                saved.append((crop_id,crop_name,context_name,crop_path,context_path,item,coords))
+                saved.append((crop_id,crop_name,context_name,crop_path,context_path,item,coords,ocr))
         with _connect(db) as conn:
-            for crop_id,crop_name,context_name,crop_path,context_path,item,coords in saved:
+            for crop_id,crop_name,context_name,crop_path,context_path,item,coords,ocr in saved:
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
                     crop_sha256,bbox,confidence,model_sha256,created,source_kind,video_source_id,
-                    frame_index,pts,time_base_num,time_base_den,capture_utc,context_file)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+                    frame_index,pts,time_base_num,time_base_den,capture_utc,context_file,
+                    ocr_text,ocr_confidence,ocr_model_sha256)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
                     crop_id,image_id,source['original_name'],source['sha256'],crop_name,_sha(crop_path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],
                         'height':coords[3]-coords[1]}),item['confidence'],detector.sha,created,'video',
                     source_id,decoded.index,decoded.timestamp.pts,decoded.timestamp.time_base_num,
-                    decoded.timestamp.time_base_den,utc.isoformat() if utc else None,context_name))
+                    decoded.timestamp.time_base_den,utc.isoformat() if utc else None,context_name,
+                    ocr['text'],ocr['confidence'],ocr['model_sha256']))
     except Exception:
-        for _,_,_,crop_path,context_path,_,_ in saved:
+        for _,_,_,crop_path,context_path,_,_,_ in saved:
             crop_path.unlink(missing_ok=True);context_path.unlink(missing_ok=True)
         raise
     return [crop_id for crop_id,*_ in saved]
@@ -257,8 +347,11 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
 def list_crops(library,mission,image_id=None):
     root,folder,db=_paths(library,mission)
     with _connect(db) as conn:
-        sql='''SELECT c.*,r.decision,r.operator,r.revision FROM crops c LEFT JOIN reviews r ON r.id=(
-            SELECT id FROM reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)'''
+        sql='''SELECT c.*,r.decision,r.operator,r.revision,
+            tr.decision AS text_decision,tr.verified_text,tr.revision AS text_revision,tr.operator AS text_operator
+            FROM crops c LEFT JOIN reviews r ON r.id=(
+            SELECT id FROM reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)
+            LEFT JOIN text_reviews tr ON tr.id=(SELECT id FROM text_reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)'''
         params=()
         if image_id:sql+=' WHERE c.image_id=?';params=(image_id,)
         sql+=' ORDER BY c.created,c.source_name,c.id'
@@ -306,3 +399,23 @@ def review(library,mission,crop_id,expected_revision,decision,operator):
         conn.execute('INSERT INTO reviews(crop_id,revision,decision,operator,created) VALUES (?,?,?,?,?)',
             (crop_id,revision,decision,operator.strip(),datetime.now(timezone.utc).isoformat()))
     return {'crop_id':crop_id,'revision':revision,'decision':decision}
+
+
+def review_text(library,mission,crop_id,expected_revision,decision,verified_text,operator):
+    allowed=('accepted','corrected','rejected','unreadable')
+    if decision not in allowed:raise ValueError('Choose accepted, corrected, rejected, or unreadable')
+    if not isinstance(operator,str) or not 1<=len(operator.strip())<=120:raise ValueError('Operator must contain 1–120 characters')
+    if not isinstance(verified_text,str) or len(verified_text)>64:raise ValueError('Plate text must be a string up to 64 characters')
+    value=verified_text.strip()
+    if decision in ('accepted','corrected') and not value:raise ValueError('Enter or correct the plate text before confirming it')
+    if decision in ('rejected','unreadable'):value=''
+    _,_,db=_paths(library,mission)
+    with _connect(db) as conn:
+        if not conn.execute('SELECT 1 FROM crops WHERE id=?',(crop_id,)).fetchone():raise ValueError('Plate crop not found in mission')
+        row=conn.execute('SELECT revision FROM text_reviews WHERE crop_id=? ORDER BY revision DESC LIMIT 1',(crop_id,)).fetchone()
+        current=row['revision'] if row else 0
+        if expected_revision!=current:raise ValueError('Plate text changed since it was opened; reload before reviewing')
+        revision=current+1
+        conn.execute('INSERT INTO text_reviews(crop_id,revision,decision,verified_text,operator,created) VALUES (?,?,?,?,?,?)',
+            (crop_id,revision,decision,value,operator.strip(),datetime.now(timezone.utc).isoformat()))
+    return {'crop_id':crop_id,'revision':revision,'decision':decision,'verified_text':value}
