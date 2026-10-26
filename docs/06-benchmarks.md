@@ -19,6 +19,15 @@ The current review increment uses a local COCO-pretrained YOLOX-S ONNX pack from
 - [AI City 2019](https://www.aicitychallenge.org/2019-data-sets/) better matches fixed traffic cameras and supplies relative synchronization offsets, but requires a participation agreement and does not establish absolute UTC.
 - The [Zenodo traffic-evaluation videos](https://zenodo.org/records/14041920) have no declared license or timezone on the record and are therefore not cleared for use.
 
+
+### Additional source review (2026-10-26)
+
+- The [University of Bath RoundaboutHD record](https://researchdata.bath.ac.uk/1574/) describes 40 minutes of labeled 4K/15 fps footage from four fixed-position traffic cameras, with vehicle tracking annotations. Its data archive metadata says “Software: MIT License,” but does not separately state a data license; the record also does not document an absolute UTC origin or a video-PTS-to-UTC mapping. It is a strong technical candidate for later review, but neither reuse rights nor the required UTC alignment are established.
+- The [AI City 2019 dataset page](https://www.aicitychallenge.org/2019-data-sets/) describes synchronized fixed-camera videos and per-video start offsets, but does not establish absolute UTC capture time; the dataset is gated by a challenge participation agreement.
+- The [Zenodo Traffic Evaluation v2 record](https://zenodo.org/records/14041920) includes long monitored-road videos, but its license field and timezone/UTC origin are blank.
+
+These sources do not clear the acceptance gate. Do not download, redistribute, or use them as accuracy evidence until the rights and time provenance are confirmed.
+
 No candidate has been acquired or accepted. Do not include media in the repository until its exact terms, provenance, and UTC alignment are confirmed.
 
 ## Selection and evidence
