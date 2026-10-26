@@ -68,7 +68,7 @@ jobs:
           New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
           $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $compiler)) { throw 'Inno Setup compiler is missing from the Windows runner image.' }
-          & $compiler installer\windows\traffic-analysis.iss
+          & $compiler "--output-dir=$outputDir" installer\windows\traffic-analysis.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $setup = Join-Path $env:GITHUB_WORKSPACE 'dist\windows\Traffic-Analysis-Preview-Setup.exe'
           if (-not (Test-Path $setup)) { throw 'Installer compiler did not produce the expected setup executable.' }
