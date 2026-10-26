@@ -57,7 +57,13 @@ class HttpTests(unittest.TestCase):
         if data is not None:
             hdr['Content-Type']='application/json'
             if token:hdr['X-Session-Token']=self.session['token']
-        return urllib.request.urlopen(urllib.request.Request(self.base+path,data=json.dumps(data).encode() if data is not None else None,headers=hdr),timeout=5)
+        try:
+            return urllib.request.urlopen(urllib.request.Request(self.base+path,data=json.dumps(data).encode() if data is not None else None,headers=hdr),timeout=5)
+        except urllib.error.HTTPError as exc:
+            body=exc.read()
+            diagnostic=urllib.error.HTTPError(exc.url,exc.code,exc.msg,exc.hdrs,io.BytesIO(body))
+            diagnostic.add_note('HTTP response body: '+body.decode('utf-8',errors='replace'))
+            raise diagnostic from None
     def test_page_and_local_assets(self):
         for path in ('/','/app.js','/style.css'):
             with self.request(path) as response:
