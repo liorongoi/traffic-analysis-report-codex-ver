@@ -226,3 +226,8 @@ Offline object search accepts up to four explicit local-time ranges in one query
 
 
 The constrained query grammar now maps “weekdays” and “weekends,” plus the Hebrew phrases “בימי חול” and “בסופי שבוע,” to explicit local weekday sets. The saved run’s IANA zone remains authoritative for capture-local day matching. Focused object-search suite: 27 tests passed. Full suite: 231 tests passed; `node --check web/app.js` and `git diff --check` passed. This does not add arbitrary natural-language schedule interpretation.
+
+
+## Windows preview package CI (2026-10-26)
+
+The first Windows runner completed runtime setup but exposed SQLite handle leaks and a model-pack license checksum failure after Git line-ending conversion. `Library.connect` now closes mission database connections, and `.gitattributes` disables text conversion for model-pack bytes. The next Windows run completed all 231 tests in 406.595 seconds, confirmed the checksum fix, and exposed remaining plate-review SQLite handles plus XLSX `fsync` on a read-only handle; it failed with 2 failures and 14 errors before staging. Plate-review connections now close on exit, and XLSX durability checks open generated files read/write before `fsync`. The local full suite passes all 231 tests; the HTTP module passes 25 tests. A concise local server diagnostic is captured by the HTTP tests for the next Windows run. The follow-up Windows run has not yet run; installer compilation, install, uninstall, and artifact upload remain unverified.

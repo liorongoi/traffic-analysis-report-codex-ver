@@ -25,11 +25,13 @@ class HttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp=tempfile.TemporaryDirectory()
+        cls.server_log_path=Path(cls.tmp.name)/'server.stderr.log'
+        cls.server_log=cls.server_log_path.open('wb')
         with socket.socket() as sock:
             sock.bind(('127.0.0.1',0))
             cls.port=sock.getsockname()[1]
         cls.base=f'http://127.0.0.1:{cls.port}'
-        cls.proc=subprocess.Popen([sys.executable,'-m','road_traffic','serve','--port',str(cls.port),'--workspace',cls.tmp.name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        cls.proc=subprocess.Popen([sys.executable,'-m','road_traffic','serve','--port',str(cls.port),'--workspace',cls.tmp.name],stdout=subprocess.DEVNULL,stderr=cls.server_log)
         for attempt in range(100):
             try:
                 with urllib.request.urlopen(cls.base+'/api/session',timeout=.2) as response:
@@ -43,6 +45,12 @@ class HttpTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.proc.terminate()
         cls.proc.wait(timeout=10)
+        cls.server_log.flush()
+        cls.server_log.close()
+        diagnostics=[line for line in cls.server_log_path.read_text(encoding='utf-8',errors='replace').splitlines()
+            if 'Internal request error' in line]
+        if diagnostics:
+            print('HTTP test server diagnostics:\n'+'\n'.join(diagnostics),file=sys.stderr)
         cls.tmp.cleanup()
     def request(self,path,data=None,token=True,headers=None):
         hdr=headers or {}

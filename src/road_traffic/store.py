@@ -825,7 +825,7 @@ class Library:
                             content=''.join(cell_xml(column_name(i+1),row_number,value) for i,value in enumerate(values))
                             sheet.write(f'<row r="{row_number}">{content}</row>'.encode('utf-8'));row_count+=1
                         sheet.write(b'</sheetData></worksheet>')
-            with target.open('rb') as stream:os.fsync(stream.fileno())
+            with target.open('r+b') as stream:os.fsync(stream.fileno())
             snapshot_hash=digest(target)
             with self.connect(mission) as conn:
                 conn.execute("UPDATE exports SET snapshot_sha256=?,row_count=?,status='completed',finished=? WHERE id=?",

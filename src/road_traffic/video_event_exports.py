@@ -264,7 +264,7 @@ def _export_format(library, mission, run_id, operator, format_name):
                 row_count = _write_csv(conn, mission, run_id, temp_name)
             else:
                 _write_xlsx(conn, mission, run_id, temp_name, count)
-                with Path(temp_name).open('rb') as stream:
+                with Path(temp_name).open('r+b') as stream:
                     os.fsync(stream.fileno())
                 row_count = count
             if row_count != count:

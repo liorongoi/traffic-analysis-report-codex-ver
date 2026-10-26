@@ -3,6 +3,7 @@
 This module intentionally has no OCR dependency, text field, or recognition step.
 """
 from __future__ import annotations
+from contextlib import contextmanager
 import hashlib
 import json
 import math
@@ -45,33 +46,50 @@ def _paths(library, mission):
     return root,folder,db
 
 
-def _connect(db):
+def _open_connection(db):
     conn=sqlite3.connect(db,timeout=20)
-    conn.row_factory=sqlite3.Row
-    conn.execute('PRAGMA foreign_keys=ON')
-    conn.executescript('''
-        CREATE TABLE IF NOT EXISTS crops(
-            id TEXT PRIMARY KEY, image_id TEXT NOT NULL, source_name TEXT NOT NULL,
-            source_sha256 TEXT NOT NULL, crop_file TEXT NOT NULL UNIQUE,
-            crop_sha256 TEXT NOT NULL, bbox TEXT NOT NULL, confidence REAL NOT NULL,
-            model_sha256 TEXT NOT NULL, created TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS reviews(
-            id INTEGER PRIMARY KEY AUTOINCREMENT, crop_id TEXT NOT NULL REFERENCES crops(id),
-            revision INTEGER NOT NULL, decision TEXT NOT NULL CHECK(decision IN ('approved','rejected')),
-            operator TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(crop_id,revision));
-        CREATE INDEX IF NOT EXISTS reviews_latest ON reviews(crop_id,revision DESC);
-        CREATE TRIGGER IF NOT EXISTS immutable_plate_reviews_update BEFORE UPDATE ON reviews
-            BEGIN SELECT RAISE(ABORT,'plate crop reviews are append-only'); END;
-        CREATE TRIGGER IF NOT EXISTS immutable_plate_reviews_delete BEFORE DELETE ON reviews
-            BEGIN SELECT RAISE(ABORT,'plate crop reviews are append-only'); END;
-    ''')
-    columns={row['name'] for row in conn.execute('PRAGMA table_info(crops)')}
-    for name, declaration in (
-        ('source_kind', "TEXT NOT NULL DEFAULT 'image'"), ('video_source_id','TEXT'),
-        ('frame_index','INTEGER'), ('pts','INTEGER'), ('time_base_num','INTEGER'),
-        ('time_base_den','INTEGER'), ('capture_utc','TEXT'), ('context_file','TEXT')):
-        if name not in columns:conn.execute(f'ALTER TABLE crops ADD COLUMN {name} {declaration}')
-    return conn
+    try:
+        conn.row_factory=sqlite3.Row
+        conn.execute('PRAGMA foreign_keys=ON')
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS crops(
+                id TEXT PRIMARY KEY, image_id TEXT NOT NULL, source_name TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL, crop_file TEXT NOT NULL UNIQUE,
+                crop_sha256 TEXT NOT NULL, bbox TEXT NOT NULL, confidence REAL NOT NULL,
+                model_sha256 TEXT NOT NULL, created TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS reviews(
+                id INTEGER PRIMARY KEY AUTOINCREMENT, crop_id TEXT NOT NULL REFERENCES crops(id),
+                revision INTEGER NOT NULL, decision TEXT NOT NULL CHECK(decision IN ('approved','rejected')),
+                operator TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(crop_id,revision));
+            CREATE INDEX IF NOT EXISTS reviews_latest ON reviews(crop_id,revision DESC);
+            CREATE TRIGGER IF NOT EXISTS immutable_plate_reviews_update BEFORE UPDATE ON reviews
+                BEGIN SELECT RAISE(ABORT,'plate crop reviews are append-only'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_plate_reviews_delete BEFORE DELETE ON reviews
+                BEGIN SELECT RAISE(ABORT,'plate crop reviews are append-only'); END;
+        ''')
+        columns={row['name'] for row in conn.execute('PRAGMA table_info(crops)')}
+        for name, declaration in (
+            ('source_kind', "TEXT NOT NULL DEFAULT 'image'"), ('video_source_id','TEXT'),
+            ('frame_index','INTEGER'), ('pts','INTEGER'), ('time_base_num','INTEGER'),
+            ('time_base_den','INTEGER'), ('capture_utc','TEXT'), ('context_file','TEXT')):
+            if name not in columns:conn.execute(f'ALTER TABLE crops ADD COLUMN {name} {declaration}')
+        return conn
+    except BaseException:
+        conn.close()
+        raise
+
+
+@contextmanager
+def _connect(db):
+    conn=_open_connection(db)
+    try:
+        yield conn
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _model_pack(pack):
