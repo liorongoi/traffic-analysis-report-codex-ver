@@ -54,6 +54,12 @@ _WEEKDAY_FORMS = {
     'שני': 0, 'שלישי': 1, 'רביעי': 2, 'חמישי': 3, 'שישי': 4, 'שבת': 5, 'ראשון': 6,
 }
 _WEEKDAY_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _WEEKDAY_FORMS), key=len, reverse=True)) + r')(?!\w)', re.I)
+_WEEKDAY_ALTERNATION = '|'.join(sorted(map(re.escape, _WEEKDAY_FORMS), key=len, reverse=True))
+_WEEKDAY_OVERNIGHT_PATTERN = re.compile(
+    r'(?<!\w)(?:(?:from|on)\s+|מיום\s+)?(?P<start_day>' + _WEEKDAY_ALTERNATION + r')\s+'
+    r'(?P<start_time>\d{1,2}:\d{2})\s+(?:through|to|until|עד)\s+'
+    r'(?:יום\s+)?(?P<end_day>' + _WEEKDAY_ALTERNATION + r')\s+'
+    r'(?P<end_time>\d{1,2}:\d{2})(?!\w)', re.I)
 _TIME_RANGE_PATTERN = re.compile(r'(?<!\w)(?:between|from|בין)\s*(\d{1,2}:\d{2})\s*(?:and|to|through|ל|עד|-)\s*(\d{1,2}:\d{2})(?!\w)', re.I)
 _SINGLE_TIME_BOUND_PATTERN = re.compile(r'(?<!\w)(after|before|אחרי|לפני)\s*(\d{1,2}:\d{2})(?!\w)', re.I)
 _DATE_RANGE_PATTERN = re.compile(r'(?<!\w)(?:between|from)\s*(20\d{2}-\d{2}-\d{2})\s*(?:and|to|through)\s*(20\d{2}-\d{2}-\d{2})(?!\w)', re.I)
@@ -71,8 +77,20 @@ def _parse_time(value):
 def _extract_temporal_filter(query):
     text = query.casefold()
     result = {}
+    overnight_match = _WEEKDAY_OVERNIGHT_PATTERN.search(text)
+    if overnight_match:
+        start_day = _WEEKDAY_FORMS[overnight_match.group('start_day').casefold()]
+        end_day = _WEEKDAY_FORMS[overnight_match.group('end_day').casefold()]
+        start = _parse_time(overnight_match.group('start_time'))
+        end = _parse_time(overnight_match.group('end_time'))
+        if end_day != (start_day + 1) % 7 or start <= end:
+            raise ValueError('A weekday overnight search must end on the following day with an earlier time')
+        result.update(start_time=start.strftime('%H:%M'), end_time=end.strftime('%H:%M'), weekdays=[start_day])
+        text = text[:overnight_match.start()] + ' ' + text[overnight_match.end():]
     time_match = _TIME_RANGE_PATTERN.search(text)
     if time_match:
+        if result:
+            raise ValueError('Use one local-time window per search')
         start = _parse_time(time_match.group(1))
         end = _parse_time(time_match.group(2))
         if start == end:
@@ -84,6 +102,8 @@ def _extract_temporal_filter(query):
     if len(single_time_matches)>1 or (single_time_matches and time_match):
         raise ValueError('Use one local-time bound or one explicit time range')
     if single_time_matches:
+        if result:
+            raise ValueError('Use one local-time window per search')
         match=single_time_matches[0]
         boundary=_parse_time(match.group(2))
         action=match.group(1).casefold()
@@ -120,6 +140,8 @@ def _extract_temporal_filter(query):
     for match in _WEEKDAY_PATTERN.finditer(text):
         weekdays.add(_WEEKDAY_FORMS[match.group(1).casefold()])
     if weekdays:
+        if result.get('weekdays'):
+            raise ValueError('Use one weekday window per search')
         result['weekdays'] = sorted(weekdays)
         text = _WEEKDAY_PATTERN.sub(' ', text)
     return text, result

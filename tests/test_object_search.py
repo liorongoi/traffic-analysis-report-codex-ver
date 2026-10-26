@@ -183,6 +183,36 @@ class ObjectSearchTests(unittest.TestCase):
         result = execute(SearchLibrary([row]), 'mission', spec, confirmed=True, scope_snapshot=scope)
         self.assertEqual(result['matched_objects'], 1)
 
+    def test_explicit_weekday_overnight_span_does_not_repeat_on_end_weekday(self):
+        scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
+            'view_assignments': [], 'regions_by_view': {}}
+        spec = interpret('Find trucks from Sunday 17:00 through Monday 05:00',
+            mission_id='mission', run_id='run-1', scope_snapshot=scope)
+        self.assertEqual(spec['schedule_filter'], {
+            'start_time': '17:00', 'end_time': '05:00', 'weekdays': [6]})
+        hebrew = interpret('מצא משאיות מיום ראשון 17:00 עד יום שני 05:00',
+            mission_id='mission', run_id='run-1', scope_snapshot=scope)
+        self.assertEqual(hebrew['schedule_filter'], spec['schedule_filter'])
+
+        def row(image_id, captured):
+            return {'id': image_id, 'name': image_id + '.jpg', 'capture_utc': captured,
+                'view_id': None, 'view_name': None, 'revision': 0, 'review_prediction_run': None,
+                'prediction_run': 'run-1', 'predictions': [{'kind': 'candidate', 'label': 'truck',
+                    'box': [.1, .1, .2, .2]}], 'annotations': '[]'}
+        result = execute(SearchLibrary([
+            row('sunday-evening', '2026-05-17T15:00:00Z'),
+            row('monday-before-end', '2026-05-17T23:00:00Z'),
+            row('monday-evening', '2026-05-18T15:00:00Z'),
+        ]), 'mission', spec, confirmed=True, scope_snapshot=scope)
+        self.assertEqual([item['image_id'] for item in result['results']],
+            ['sunday-evening', 'monday-before-end'])
+
+    def test_weekday_overnight_span_rejects_nonconsecutive_or_nonovernight_windows(self):
+        for query in ('Find trucks from Sunday 17:00 through Tuesday 05:00',
+                      'Find trucks from Sunday 05:00 through Monday 17:00'):
+            with self.subTest(query=query), self.assertRaisesRegex(ValueError, 'weekday overnight'):
+                interpret(query, mission_id='mission')
+
     def test_search_interprets_an_explicit_inclusive_iso_date_range(self):
         scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Europe/Riga'},
             'view_assignments': [], 'regions_by_view': {}}
