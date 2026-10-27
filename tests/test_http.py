@@ -263,6 +263,44 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(len(rows),1)
         self.assertEqual(rows[0][0],'image')
 
+    def test_learning_training_endpoint_queues_and_persists_background_job(self):
+        with self.request('/api/missions',{'name':'Background learning','country':'Israel',
+                'zone':'Asia/Jerusalem','request_id':str(uuid.uuid4())}) as response:
+            mission=json.load(response)['id']
+        with self.request('/api/night-learning/train',{'mission':mission}) as response:
+            queued=json.load(response)
+        self.assertEqual(queued['status'],'queued')
+        self.assertEqual(queued['kind'],'train')
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            with self.request('/api/night-learning?mission='+mission) as response:
+                info=json.load(response)
+            task=next(item for item in info['tasks'] if item['id']==queued['id'])
+            if task['status'] not in ('queued','running'):
+                break
+            time.sleep(.05)
+        self.assertEqual(task['status'],'completed')
+        self.assertEqual(task['result_status'],'needs_labels')
+
+    def test_heldout_evaluation_endpoint_returns_before_failure_is_recorded(self):
+        with self.request('/api/missions',{'name':'Background evaluation','country':'Israel',
+                'zone':'Asia/Jerusalem','request_id':str(uuid.uuid4())}) as response:
+            mission=json.load(response)['id']
+        with self.request('/api/night-learning/evaluate-test',{
+                'mission':mission,'candidate_id':'missing-candidate','operator':'Reviewer'}) as response:
+            queued=json.load(response)
+        self.assertEqual(queued['status'],'queued')
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            with self.request('/api/night-learning?mission='+mission) as response:
+                info=json.load(response)
+            task=next(item for item in info['tasks'] if item['id']==queued['id'])
+            if task['status'] not in ('queued','running'):
+                break
+            time.sleep(.05)
+        self.assertEqual(task['status'],'failed')
+        self.assertIn('No eligible independent test labels',task['error'])
+
     def test_download_reviewed_learning_dataset(self):
         from road_traffic.store import Library
         workspace=Library(self.tmp.name)

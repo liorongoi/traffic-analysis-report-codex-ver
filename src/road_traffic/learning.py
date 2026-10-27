@@ -54,6 +54,83 @@ def prepare(library,mission):
             BEGIN SELECT RAISE(ABORT,'model decision history is append-only'); END;
           CREATE TRIGGER IF NOT EXISTS immutable_night_model_decisions_d BEFORE DELETE ON night_model_decisions
             BEGIN SELECT RAISE(ABORT,'model decision history is append-only'); END;''')
+        c.execute('''CREATE TABLE IF NOT EXISTS learning_tasks(
+          id TEXT PRIMARY KEY,mission_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('train','evaluate_test')),
+          payload TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
+          result_id TEXT,result_status TEXT,error TEXT,created TEXT NOT NULL,started TEXT,finished TEXT)''')
+        c.execute('CREATE INDEX IF NOT EXISTS learning_tasks_recent ON learning_tasks(created DESC)')
+
+
+def queue_task(library,mission,kind,payload=None):
+    """Persist a user-started learning job before dispatching its worker."""
+    if kind not in ('train','evaluate_test'):
+        raise ValueError('Unsupported learning task')
+    prepare(library,mission)
+    identifier=str(uuid.uuid4())
+    with library.connect(mission) as c:
+        c.execute('BEGIN IMMEDIATE')
+        active=c.execute("SELECT id FROM learning_tasks WHERE status IN ('queued','running') LIMIT 1").fetchone()
+        if active:
+            raise ValueError('A learning task is already queued or running for this mission')
+        c.execute('''INSERT INTO learning_tasks(id,mission_id,kind,payload,status,created)
+            VALUES (?,?,?,?,?,?)''',(identifier,mission,kind,json.dumps(payload or {},sort_keys=True),'queued',now()))
+    return {'id':identifier,'mission_id':mission,'kind':kind,'status':'queued'}
+
+
+def run_task(library,mission,task_id):
+    """Run one persisted learning task; progress and the result ledger survive browser closure."""
+    prepare(library,mission)
+    with library.connect(mission) as c:
+        c.execute("UPDATE learning_tasks SET status='running',started=? WHERE id=? AND mission_id=? AND status='queued'",
+            (now(),task_id,mission))
+        claimed=c.execute('SELECT changes()').fetchone()[0]
+        row=c.execute('SELECT * FROM learning_tasks WHERE id=? AND mission_id=?',(task_id,mission)).fetchone()
+    if claimed!=1 or not row or row['status']!='running':
+        raise ValueError('Learning task is not queued')
+    payload=json.loads(row['payload'])
+    try:
+        if row['kind']=='train':
+            result=train(library,mission)
+        elif row['kind']=='evaluate_test':
+            result=evaluate_test(library,mission,payload.get('candidate_id'),payload.get('operator'))
+        else:
+            raise ValueError('Unsupported learning task')
+        with library.connect(mission) as c:
+            c.execute("UPDATE learning_tasks SET status='completed',result_id=?,result_status=?,finished=? WHERE id=? AND status='running'",
+                (result.get('id'),result.get('status','completed'),now(),task_id))
+        return result
+    except Exception as exc:
+        with library.connect(mission) as c:
+            c.execute("UPDATE learning_tasks SET status='failed',error=?,finished=? WHERE id=? AND status='running'",
+                (str(exc)[:1000],now(),task_id))
+        raise
+
+
+def task_status(library,mission):
+    prepare(library,mission)
+    with library.connect(mission) as c:
+        return [dict(row) for row in c.execute(
+            'SELECT * FROM learning_tasks WHERE mission_id=? ORDER BY created DESC LIMIT 20',(mission,))]
+
+
+def recover_interrupted_tasks(library):
+    """Mark work abandoned by a process restart as failed; never imply it resumed."""
+    recovered=0
+    for mission in library.missions():
+        prepare(library,mission['id'])
+        with library.connect(mission['id']) as c:
+            stamp=now()
+            message='Application stopped before this learning task completed; start a new task to retry.'
+            c.execute("UPDATE learning_tasks SET status='failed',error=?,finished=? WHERE status IN ('queued','running')",
+                (message,stamp))
+            recovered+=c.execute("SELECT changes()").fetchone()[0]
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='night_training'").fetchone():
+                c.execute("UPDATE night_training SET status='failed',finished=?,error=? WHERE status='running'",
+                    (stamp,message))
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='night_evaluations'").fetchone():
+                c.execute("UPDATE night_evaluations SET status='failed',finished=?,error=? WHERE status='running'",
+                    (stamp,message))
+    return recovered
 
 
 def inventory(library,mission):

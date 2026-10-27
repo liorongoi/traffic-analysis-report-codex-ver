@@ -9,6 +9,7 @@ import ssl
 import threading
 import traceback
 import webbrowser
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -29,6 +30,8 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
         raise ValueError('LAN host and TLS settings can only be used with a non-loopback bind address')
     library = Library(workspace)
     library.reconcile_exports()
+    from .learning import recover_interrupted_tasks
+    recover_interrupted_tasks(library)
     from .monitor import SourceMonitor
     from .inference import InferenceService
     inference=InferenceService(library,Path(web).parent/'model-packs'/'yolox-s')
@@ -41,6 +44,32 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
     video_clips.reconcile_exports(library)
     video_event_exports.reconcile_exports(library)
     token = secrets.token_urlsafe(32)
+    def schedule_learning_task(mission,kind,payload=None):
+        from . import learning
+        with inference.lock:
+            if inference.training_active or inference._has_active_worker():
+                raise ValueError('Finish active processing before starting a learning task')
+            task=learning.queue_task(library,mission,kind,payload)
+            inference.training_active=True
+        def worker():
+            try:
+                learning.run_task(library,mission,task['id'])
+            except Exception as exc:
+                traceback.print_exc()
+            finally:
+                with inference.lock:
+                    inference.training_active=False
+        thread=threading.Thread(target=worker,name=f'roadloom-learning-{kind}',daemon=True)
+        try:
+            thread.start()
+        except Exception as exc:
+            with library.connect(mission) as c:
+                c.execute("UPDATE learning_tasks SET status='failed',error=?,finished=? WHERE id=?",
+                    (str(exc)[:1000],datetime.now(timezone.utc).isoformat(),task['id']))
+            with inference.lock:
+                inference.training_active=False
+            raise
+        return task
     class Handler(BaseHTTPRequestHandler):
         def reply(self, status, data, content='application/json; charset=utf-8'):
             if not isinstance(data, bytes):
@@ -232,12 +261,13 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     return self.reply(200,path.read_bytes(),'image/jpeg')
                 if parsed.path == '/api/night-learning':
                     from .learning import (inventory,reviewed_evidence_inventory,candidates,
-                        evaluation_status,governance_status)
+                        evaluation_status,governance_status,task_status)
                     from .learning_capabilities import inventory as capability_inventory
                     m=query['mission'][0]
                     return self.reply(200,{'inventory':inventory(library,m),'candidates':candidates(library,m),
                         'evidence_inventory':reviewed_evidence_inventory(library,m),
                         'evaluation':evaluation_status(library,m),'governance':governance_status(library,m),
+                        'tasks':task_status(library,m),
                         'capabilities':capability_inventory()})
                 if parsed.path == '/api/learning/dataset':
                     return self.download_learning_dataset(query)
@@ -465,24 +495,10 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 elif self.path == '/api/inference/resume':
                     result=inference.resume(data['mission'],data['run'])
                 elif self.path == '/api/night-learning/train':
-                    from .learning import train
-                    with inference.lock:
-                        if inference.training_active or inference._has_active_worker():raise ValueError('Finish active processing before fitting the light head')
-                        inference.training_active=True
-                    try:
-                        result=train(library,data['mission'])
-                    finally:
-                        with inference.lock:inference.training_active=False
+                    result=schedule_learning_task(data['mission'],'train')
                 elif self.path == '/api/night-learning/evaluate-test':
-                    from .learning import evaluate_test
-                    with inference.lock:
-                        if inference.training_active or inference._has_active_worker():
-                            raise ValueError('Finish active processing before evaluating the held-out test set')
-                        inference.training_active=True
-                    try:
-                        result=evaluate_test(library,data['mission'],data.get('candidate_id'),data.get('operator'))
-                    finally:
-                        with inference.lock:inference.training_active=False
+                    result=schedule_learning_task(data['mission'],'evaluate_test',{
+                        'candidate_id':data.get('candidate_id'),'operator':data.get('operator')})
                 elif self.path == '/api/night-learning/decision':
                     from .learning import record_model_decision
                     result=record_model_decision(library,data['mission'],data.get('action'),
