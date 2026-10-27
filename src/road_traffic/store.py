@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import tempfile
+import threading
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -66,6 +67,7 @@ class Library:
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self._create_lock = threading.RLock()
 
     def location(self, mission):
         if str(uuid.UUID(mission)) != mission:
@@ -208,7 +210,11 @@ class Library:
             BEGIN SELECT RAISE(ABORT,'camera view merge history cannot be reversed'); END''')
         return conn
 
-    def create(self, name, country, zone, settings=None):
+    def create(self, name, country, zone, settings=None, request_id=None):
+        with self._create_lock:
+            return self._create_locked(name, country, zone, settings, request_id)
+
+    def _create_locked(self, name, country, zone, settings=None, request_id=None):
         settings = settings or {}
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
             raise ValueError('Mission name must contain 1–120 characters')
@@ -250,8 +256,31 @@ class Library:
             Path(output_root).is_relative_to(Path(source_root))
         ):
             raise ValueError('Source and output directories must not overlap')
-        mission = str(uuid.uuid4())
+        mission = str(uuid.uuid4()) if request_id is None else request_id
+        try:
+            if str(uuid.UUID(mission)) != mission:
+                raise ValueError
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError('Invalid mission request ID') from exc
         folder = self.location(mission)
+        if folder.exists():
+            try:
+                with self.connect(mission) as conn:
+                    saved_mission = conn.execute('SELECT name,country,zone FROM mission WHERE id=?',
+                        (mission,)).fetchone()
+                    saved_settings = conn.execute('SELECT input_type,analysis_mode,location,source_root,'
+                        'include_subdirectories,processing_mode,output_root,export_formats,resource_profile '
+                        'FROM mission_settings WHERE mission_id=?',(mission,)).fetchone()
+            except (sqlite3.Error, ValueError) as exc:
+                raise ValueError('Mission request ID is already in use') from exc
+            expected_mission=(name.strip(),country,zone)
+            expected_settings=(input_type,analysis_mode,location.strip(),source_root,
+                int(settings.get('include_subdirectories',True)),processing_mode,output_root,
+                json.dumps(export_formats),resource_profile)
+            if (saved_mission is not None and saved_settings is not None and
+                    tuple(saved_mission)==expected_mission and tuple(saved_settings)==expected_settings):
+                return mission
+            raise ValueError('Mission request ID is already in use with different settings')
         staging_root = self.root / '.mission-initializing'
         staging_root.mkdir(exist_ok=True)
         staging = staging_root / mission

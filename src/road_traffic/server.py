@@ -327,7 +327,8 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         'include_subdirectories', 'processing_mode', 'output_root', 'export_formats',
                         'resource_profile'
                     ) if key in data}
-                    result = {'id': library.create(data['name'],data['country'],data['zone'],settings)}
+                    result = {'id': library.create(data['name'],data['country'],data['zone'],settings,
+                        request_id=data.get('request_id'))}
                 elif self.path == '/api/export':
                     mission = data['mission']
                     if any(job['status'] in ('queued', 'running') for job in inference.status(mission)):

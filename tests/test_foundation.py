@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+import uuid
 from unittest.mock import patch
 from road_traffic.domain import capture_time, named_zone, budget
 from road_traffic.store import Library, safe_file
@@ -65,6 +66,16 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(connection.execute('SELECT 1').fetchone()[0],1)
         with self.assertRaises(sqlite3.ProgrammingError):
             connection.execute('SELECT 1')
+
+    def test_mission_request_id_makes_retries_idempotent(self):
+        request_id=str(uuid.uuid4())
+        created=self.lib.create('Retry mission','Lebanon','Asia/Beirut',request_id=request_id)
+        repeated=self.lib.create('Retry mission','Lebanon','Asia/Beirut',request_id=request_id)
+        self.assertEqual(created,request_id)
+        self.assertEqual(repeated,created)
+        with self.assertRaisesRegex(ValueError,'already in use'):
+            self.lib.create('Different mission','Lebanon','Asia/Beirut',request_id=request_id)
+        self.assertEqual([row['id'] for row in self.lib.missions()].count(request_id),1)
 
     def test_monitor_mission_listing_cannot_see_half_created_database(self):
         real_connect=sqlite3.connect

@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -223,8 +224,17 @@ class HttpTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/session',headers={'Host':'external.invalid'})
         self.assertEqual(exc.exception.code,403)
     def test_create_empty_mission_and_export(self):
-        with self.request('/api/missions',{'name':'בדיקת משימה','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+        payload={'name':'בדיקת משימה','country':'Israel','zone':'Asia/Jerusalem','request_id':str(uuid.uuid4())}
+        try:
+            response=self.request('/api/missions',payload)
+        except (OSError,urllib.error.URLError):
+            # A socket may close after the server commits but before the client
+            # receives the response. Reissue the same idempotency key safely.
+            response=self.request('/api/missions',payload)
+        with response:
             mission=json.load(response)['id']
+        with self.request('/api/missions',payload) as response:
+            self.assertEqual(json.load(response)['id'],mission)
         with self.request('/api/images?mission='+mission) as response:self.assertEqual(json.load(response),[])
         with self.request('/api/source-reconciliation?mission='+mission) as response:
             self.assertEqual(json.load(response),{'candidates':[],'history':[]})
