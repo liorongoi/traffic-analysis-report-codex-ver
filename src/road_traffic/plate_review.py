@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import hashlib
 import json
+from .ort_session import create_session
 import math
 import sqlite3
 import unicodedata
@@ -177,10 +178,7 @@ class PlateTextRecognizer:
         if not isinstance(chars,list) or len(chars)!=161 or not all(isinstance(c,str) and len(c)==1 for c in chars):
             raise ValueError('Plate OCR character dictionary is invalid')
         self.charset=['']+chars+[' ']
-        options=ort.SessionOptions();options.intra_op_num_threads=2;options.inter_op_num_threads=1
-        self.session=ort.InferenceSession(str(model),sess_options=options,providers=['CPUExecutionProvider'])
-        if self.session.get_providers()!=['CPUExecutionProvider']:
-            raise RuntimeError('Plate OCR must run on the CPU provider')
+        self.session=create_session(ort,model,2)
         inputs=self.session.get_inputs();outputs=self.session.get_outputs()
         if len(inputs)!=1 or len(outputs)!=1:
             raise ValueError('Unexpected plate OCR model input/output schema')
@@ -233,10 +231,7 @@ class PlateDetector:
         if not .01<=threshold<=.9:raise ValueError('Invalid plate detector threshold')
         self.cv,self.np=cv2,np
         self.model,self.sha=_model_pack(pack)
-        opts=ort.SessionOptions();opts.intra_op_num_threads=2;opts.inter_op_num_threads=1
-        self.session=ort.InferenceSession(str(self.model),sess_options=opts,providers=['CPUExecutionProvider'])
-        if self.session.get_providers()!=['CPUExecutionProvider']:
-            raise RuntimeError('Plate detector must run on the validated CPU provider')
+        self.session=create_session(ort,self.model,2)
         self.input=self.session.get_inputs()[0].name
         self.threshold=threshold
         self.recognizer=PlateTextRecognizer(pack)

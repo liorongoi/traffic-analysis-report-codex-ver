@@ -333,8 +333,8 @@ def _resource_profiles(total_bytes, available_bytes, logical_cores=None):
             'reserved_headroom_gib': round(reserve, 2),
             'cpu_threads': min(1 if name == 'conservative' else 4, max(1, logical_cores or 1)),
             'workers': 1,
-            'device_recommendation': 'cpu until a model execution probe succeeds',
-            'guidance': 'advisory RAM budget; selected profile applies the listed ONNX CPU thread limit',
+            'device_recommendation': 'DirectML when available, otherwise CPU',
+            'guidance': 'advisory RAM budget; DirectML is preferred when available, with a CPU thread limit and CPU fallback',
         }
     return profiles, ('expanded' if total >= 40 else 'conservative')
 
@@ -353,11 +353,11 @@ def resolve_resource_profile(requested='auto'):
             'cpu_threads': profile['cpu_threads'],
             'analysis_memory_gib': profile['analysis_memory_gib'],
             'reserved_headroom_gib': profile['reserved_headroom_gib'],
-            'workers': 1, 'device': 'CPUExecutionProvider'}
+            'workers': 1, 'device': 'auto'}
     return {'requested': requested, 'selected': selected,
         'cpu_threads': min(1 if selected == 'conservative' else 4, cores),
         'analysis_memory_gib': None, 'reserved_headroom_gib': None,
-        'workers': 1, 'device': 'CPUExecutionProvider'}
+        'workers': 1, 'device': 'auto'}
 
 
 def inventory(storage_path):

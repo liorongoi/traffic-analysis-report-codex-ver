@@ -1,11 +1,9 @@
-"""Local ONNX vehicle detector and experimental, separately labelled night-light proposals.
-Preprocessing/anchor decoding follows OpenCV Zoo's Apache-2.0 YOLOX-S export.
-No download/import-time model loading. CPU only until a dedicated backend is validated.
-"""
+"""Local ONNX vehicle detector and experimental, separately labelled night-light proposals."""
 import hashlib
 import json
 from pathlib import Path
 import math
+from .ort_session import create_session
 
 VEHICLES={1:'bicycle',2:'car',3:'motorcycle',5:'bus',7:'truck'}
 VERSION='yolox-s-coco+night-lights-v5'
@@ -43,9 +41,7 @@ class VehicleDetector:
         if type(cpu_threads) is not int or not 1<=cpu_threads<=64:raise ValueError('CPU thread limit must be between 1 and 64')
         self.cv,self.np=cv2,np
         self.path,self.sha=model_pack(pack)
-        options=ort.SessionOptions();options.intra_op_num_threads=cpu_threads;options.inter_op_num_threads=1
-        self.session=ort.InferenceSession(str(self.path),sess_options=options,providers=['CPUExecutionProvider'])
-        if self.session.get_providers()!=['CPUExecutionProvider']:raise RuntimeError('Unexpected inference device')
+        self.session=create_session(ort,self.path,cpu_threads)
         self.input=self.session.get_inputs()[0].name
         self.threshold,self.tiled,self.cpu_threads=threshold,tiled,cpu_threads
         grids=[];strides=[]

@@ -97,7 +97,7 @@ def execute(library,mission,run,pack):
                     conn.execute("UPDATE inference_runs SET status='cancelled',stage='cancelled',finished=? WHERE id=?",(now(),run));return
                 conn.execute("UPDATE inference_runs SET stage='detecting' WHERE id=?",(run,))
             start=time.perf_counter()
-            details={'adapter':VERSION,'model_sha256':detector.sha,'device':'CPUExecutionProvider','cpu_threads':detector.cpu_threads,
+            details={'adapter':VERSION,'model_sha256':detector.sha,'device':detector.session.provider,'cpu_threads':detector.cpu_threads,
                 'resource_profile':config.get('resource_profile'),'input_sha256':row['sha256'],
                 'threshold':config['threshold'],'tiled':config['tiled'],'light_background':background,
                 'view_id':row.get('view_id') or None,'view_assignment_revision':row.get('view_revision',0),
@@ -107,6 +107,8 @@ def execute(library,mission,run,pack):
                 rgb=load(row);h,w=rgb.shape[:2];gray=cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY)
                 details.update({'width':w,'height':h,**illumination(rgb)})
                 predictions=detector.infer(rgb)
+                details['device']=detector.session.provider
+                details['provider_fallback_reason']=detector.session.fallback_reason
                 if config.get('night_lights') and details['low_light']:
                     persistent=None;light_context=None;usable=counts is not None and gray.shape==shape
                     similarity=float(np.corrcoef(anchor,cv2.resize(gray,(160,90)).astype(float).ravel())[0,1]) if usable else 0

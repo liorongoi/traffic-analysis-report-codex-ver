@@ -141,7 +141,7 @@ class VideoInferenceService:
         _paths(self.library,mission)
         _,sha=_model_pack(self.plate_pack)
         config={'task':'license_plate','plate_detector':{'version':'plate-yolox-tiny-v1',
-            'sha256':sha,'threshold':float(threshold),'device':'CPUExecutionProvider',
+            'sha256':sha,'threshold':float(threshold),'device':'auto',
             'human_confirmation':True},'tracker_policy':{'max_gap_seconds':[1,1],
             'minimum_iou':0,'max_center_distance':1,'association_margin':0,
             'compatible_label_groups':[]}}
