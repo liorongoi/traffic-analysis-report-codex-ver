@@ -66,8 +66,8 @@ class VideoInferenceService:
         from .detector import VEHICLES
         from .hardware import resolve_resource_profile
         settings = self.library.settings(mission)
-        if settings['input_type'] != 'videos' or settings['analysis_mode'] != 'video_traffic':
-            raise ValueError('Automatic video analysis supports Video Traffic missions only')
+        if settings['input_type'] != 'videos' or settings['analysis_mode'] not in ('video_traffic', 'object_search'):
+            raise ValueError('Video analysis requires a Video Traffic or Object Search mission')
         if type(threshold) not in (int, float) or not .01 <= threshold <= .9:
             raise ValueError('Detector threshold must be between 0.01 and 0.90')
         if type(tiled) is not bool:
@@ -82,7 +82,7 @@ class VideoInferenceService:
         target_labels=[label for label in supported_labels if label in target_labels]
         resources=resolve_resource_profile(resource_profile)
         _, sha = model_pack(self.pack)
-        config = {'detector': {'version': VERSION, 'sha256': sha,
+        config = {'task': settings['analysis_mode'], 'detector': {'version': VERSION, 'sha256': sha,
             'threshold': float(threshold), 'tiled': tiled,
             'target_labels':target_labels,
             'device': resources['device'], 'cpu_threads':resources['cpu_threads'],

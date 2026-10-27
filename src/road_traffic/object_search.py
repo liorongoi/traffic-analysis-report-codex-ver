@@ -308,8 +308,13 @@ def _matches_schedule(row, requested, scope_snapshot):
 
 
 def interpret(query: str, *, mission_id: str | None = None, view_id: str | None = None,
-              run_id: str | None = None, scope_snapshot: dict | None = None) -> dict:
+              run_id: str | None = None, scope_snapshot: dict | None = None,
+              media_type: str = 'images') -> dict:
     """Parse a small, explicit grammar; never executes generated code or calls a model."""
+    if media_type not in {'images', 'videos'}:
+        raise ValueError('Search media type must be images or videos')
+    if media_type == 'videos' and not run_id:
+        raise ValueError('Select a saved video run before interpreting a search')
     if not isinstance(query, str) or not 1 <= len(query.strip()) <= 500:
         raise ValueError('Describe an object in 1–500 characters')
     query_without_time, schedule_filter = _extract_temporal_filter(query)
@@ -318,6 +323,8 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
         query_without_scope, scope_snapshot, requested_view)
     if schedule_filter:
         _scope_timezone(scope_snapshot)
+        if media_type == 'videos' and not (scope_snapshot or {}).get('recording_start_utc'):
+            raise ValueError('This video has no verified UTC origin, so local-time filters are unavailable')
     view_id = requested_view
     words = re.findall(r"[\w-]+", query_without_scope.casefold(), flags=re.UNICODE)
     if not words:
@@ -367,6 +374,7 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
     # while subtype remains explicitly unobservable unless a future reviewed attribute source adds it.
     spec = {
         'version': 1,
+        'media_type': media_type,
         'query': query.strip(),
         'categories': sorted(positives),
         'excluded_categories': sorted(negatives),
@@ -381,7 +389,9 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
         'scope': {
             'mission': 'current mission only',
             'run': run_id or 'no saved inference run exists',
-            'run_scope': ('the run freezes its schedule, view assignments, and ROI input decisions'
+            'run_scope': ('the saved video run and its recorded UTC origin'
+                          if media_type == 'videos' else
+                          'the run freezes its schedule, view assignments, and ROI input decisions'
                           if run_id else 'no saved run schedule or region scope is available'),
             'region': (requested_region['name'] if requested_region else
                        ('selected view, if provided; otherwise all views in the saved run'
@@ -405,6 +415,112 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
         'attribute_source_note': ('Color and fine subtype are not inferred by the detector. Search filters operator-recorded values; missing values remain uncertain.'),
     }
     return spec
+
+
+def video_scope_snapshot(library, mission: str, run_id: str) -> dict:
+    """Freeze the selected video run, mission timezone and UTC-origin evidence."""
+    from . import video_store
+    settings = library.settings(mission)
+    if settings['input_type'] != 'videos':
+        raise ValueError('Video event search requires a video mission')
+    with library.connect(mission) as connection:
+        mission_row = connection.execute('SELECT zone FROM mission WHERE id=?', (mission,)).fetchone()
+    if not mission_row:
+        raise ValueError('Video mission was not found')
+    run = video_store.run_detail(library, mission, run_id)
+    if run['status'] != 'completed':
+        raise ValueError('Search requires a completed saved video run')
+    source = video_store.source_detail(library, mission, run['source_id'])
+    return {
+        'media_type': 'videos', 'run_id': run_id,
+        'run_config': run['config'], 'source_id': run['source_id'],
+        'source_relative_path': source['source_relative_path'],
+        'source_sha256': source['sha256'],
+        'recording_start_utc': source.get('recording_start_utc'),
+        'timezone': mission_row['zone'],
+        'schedule': {'timezone': mission_row['zone']},
+    }
+
+
+def execute_video(library, mission: str, spec: dict, *, confirmed: bool,
+                  run: str | None = None, scope_snapshot: dict | None = None) -> dict:
+    """Search immutable logical video events in one confirmed, saved run."""
+    from . import video_store
+    if confirmed is not True:
+        raise ValueError('Review and confirm the interpreted search before execution')
+    if not isinstance(spec, dict) or spec.get('media_type') != 'videos' or not isinstance(spec.get('query'), str):
+        raise ValueError('Video search specification is invalid')
+    selected_run = spec.get('run_id')
+    if not selected_run or (run and run != selected_run):
+        raise ValueError('Selected video run changed; interpret the query again')
+    fresh_scope = video_scope_snapshot(library, mission, selected_run)
+    if scope_snapshot is not None and scope_snapshot != fresh_scope:
+        raise ValueError('Saved video run scope changed; interpret the query again')
+    fresh = interpret(spec['query'], mission_id=mission, run_id=selected_run,
+        scope_snapshot=fresh_scope, media_type='videos')
+    if spec != fresh:
+        raise ValueError('Search specification changed; interpret it again')
+    run_detail = video_store.run_detail(library, mission, selected_run)
+    if run_detail['status'] != 'completed':
+        raise ValueError('Search requires a completed saved video run')
+    source = video_store.source_detail(library, mission, run_detail['source_id'])
+    matches = []
+    uncertain_count = 0
+    offset = 0
+    video_store.prepare(library, mission)
+    with library.connect(mission) as connection:
+        connection.execute('BEGIN')
+        while True:
+            page = video_store.events(library, mission, selected_run, limit=100,
+                offset=offset, prepared=True, connection=connection)
+            for event in page:
+                if event.get('review_status') in {'rejected', 'duplicate'}:
+                    continue
+                row = dict(event)
+                row['capture_utc'] = row.get('first_utc')
+                if not _matches_schedule(row, spec.get('schedule_filter') or {},
+                        {'schedule': {'timezone': fresh_scope['timezone']}}):
+                    continue
+                labels = [str(label).casefold() for label in (event.get('labels') or [])]
+                known_categories = {category for label in labels for category, (_, forms) in _CATEGORIES.items()
+                                    if label in forms}
+                if known_categories and not (known_categories & set(spec['categories'])):
+                    continue
+                if known_categories & set(spec['excluded_categories']):
+                    continue
+                category_uncertain = not known_categories
+                event_uncertain = bool(event.get('association_uncertain') or event.get('uncertainty_reasons'))
+                unknown_attributes = []
+                if category_uncertain:
+                    unknown_attributes.append('vehicle category')
+                if spec['required_attributes'] or spec['excluded_attributes']:
+                    unknown_attributes.extend(attr['attribute'] for attr in
+                        spec['required_attributes'] + spec['excluded_attributes'])
+                unknown_attributes = list(dict.fromkeys(unknown_attributes))
+                if unknown_attributes or event_uncertain:
+                    uncertain_count += 1
+                first = float(event['first_offset_num']) / event['first_offset_den']
+                last = float(event['last_offset_num']) / event['last_offset_den']
+                matches.append({
+                    'event_id': event['id'], 'run_id': selected_run, 'source_id': run_detail['source_id'],
+                    'source_relative_path': source['source_relative_path'],
+                    'labels': event.get('labels') or [], 'review_status': event.get('review_status', 'pending'),
+                    'first_utc': event.get('first_utc'), 'last_utc': event.get('last_utc'),
+                    'first_offset_seconds': first, 'last_offset_seconds': last,
+                    'observation_count': event.get('observation_count'),
+                    'association_uncertain': bool(event.get('association_uncertain')),
+                    'uncertainty_reasons': event.get('uncertainty_reasons') or [],
+                    'uncertain_attributes': unknown_attributes,
+                })
+            if len(page) < 100:
+                break
+            offset += len(page)
+    return {
+        'media_type': 'videos', 'spec_hash': fresh['spec_hash'], 'mission': mission,
+        'run': selected_run, 'matched_events': len(matches),
+        'uncertain_events': uncertain_count, 'results': matches,
+        'evidence_note': 'Matches are saved logical event proposals or operator-corrected events, not proof of object presence. Unknown categories, associations, and unreviewed attributes remain uncertain.',
+    }
 
 
 def execute(library, mission: str, spec: dict, *, confirmed: bool, run: str | None = None,

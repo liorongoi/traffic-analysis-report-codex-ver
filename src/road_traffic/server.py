@@ -382,22 +382,38 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 elif self.path == '/api/review':
                     result = library.review(data['mission'],data['image'],data['revision'],data['annotations'],data['operator'],data['role'],data['status'],data.get('prediction_run'))
                 elif self.path == '/api/object-search/interpret':
-                    from .object_search import interpret
+                    from .object_search import interpret,video_scope_snapshot
                     from .inference_store import latest_run_id, search_scope_snapshot
-                    library.settings(data['mission'])
-                    run = data.get('run') or latest_run_id(library,data['mission'])
-                    snapshot = search_scope_snapshot(library,data['mission'],run)
-                    result = {'spec': interpret(data['query'], mission_id=data['mission'],
-                        view_id=data.get('view_id') or None, run_id=run, scope_snapshot=snapshot)}
+                    settings=library.settings(data['mission'])
+                    if settings['input_type']=='videos':
+                        completed=[item for item in video_store.runs(library,data['mission'])
+                            if item['status']=='completed']
+                        run=data.get('run') or (completed[0]['id'] if completed else None)
+                        if not run:
+                            raise ValueError('Complete a video analysis run before searching events')
+                        snapshot=video_scope_snapshot(library,data['mission'],run)
+                        result={'spec':interpret(data['query'],mission_id=data['mission'],
+                            run_id=run,scope_snapshot=snapshot,media_type='videos')}
+                    else:
+                        run = data.get('run') or latest_run_id(library,data['mission'])
+                        snapshot = search_scope_snapshot(library,data['mission'],run)
+                        result = {'spec': interpret(data['query'], mission_id=data['mission'],
+                            view_id=data.get('view_id') or None, run_id=run, scope_snapshot=snapshot)}
                 elif self.path == '/api/object-search/execute':
-                    from .object_search import execute
-                    from .inference_store import search_scope_snapshot
+                    from .object_search import execute,execute_video,video_scope_snapshot
                     spec=data.get('spec')
                     run=(spec.get('run_id') if isinstance(spec,dict) else None) or data.get('run') or None
-                    snapshot=search_scope_snapshot(library,data['mission'],run)
-                    result = execute(library, data['mission'], spec,
-                        confirmed=data.get('confirmed'), run=data.get('run') or None,
-                        scope_snapshot=snapshot)
+                    if isinstance(spec,dict) and spec.get('media_type')=='videos':
+                        snapshot=video_scope_snapshot(library,data['mission'],run)
+                        result=execute_video(library,data['mission'],spec,
+                            confirmed=data.get('confirmed'),run=data.get('run') or None,
+                            scope_snapshot=snapshot)
+                    else:
+                        from .inference_store import search_scope_snapshot
+                        snapshot=search_scope_snapshot(library,data['mission'],run)
+                        result = execute(library, data['mission'], spec,
+                            confirmed=data.get('confirmed'), run=data.get('run') or None,
+                            scope_snapshot=snapshot)
                 elif self.path == '/api/inference/start':
                     result=inference.start(data['mission'],data.get('threshold',.18),data.get('tiled',True),data.get('night_lights',True),data.get('night_head_id'),resource_profile=data.get('resource_profile','auto'))
                 elif self.path == '/api/inference/roi-rerun':

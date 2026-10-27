@@ -16,6 +16,9 @@ import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
 from PIL import Image
+from datetime import datetime, timezone
+from road_traffic.store import Library
+from road_traffic import video_store
 
 
 def write_test_image(path,color=(45,85,125)):
@@ -378,6 +381,46 @@ class HttpTests(unittest.TestCase):
             result=json.load(response)
         self.assertEqual(result['matched_images'],0)
         self.assertEqual(result['matched_objects'],0)
+
+    def test_video_object_search_interpret_confirm_and_open_saved_event(self):
+        with tempfile.TemporaryDirectory() as video_input:
+            root=Path(video_input)
+            (root/'traffic.mkv').write_bytes(b'http-video-search-fixture')
+            self._assert_video_object_search_api(root)
+
+    def _assert_video_object_search_api(self, root):
+        library=Library(self.tmp.name)
+        mission=library.create('Video search API','Israel','Asia/Jerusalem',{
+            'input_type':'videos','analysis_mode':'video_traffic','source_root':str(root),'output_root':''})
+        source=video_store.register_video(library,mission,'traffic.mkv',
+            recording_start_utc=datetime(2026,5,17,14,0,tzinfo=timezone.utc),
+            origin_provenance='operator confirmed from recorder log')
+        run=video_store.create_run(library,mission,source['id'],{
+            'detector':{'version':'fixture','sha256':'fixture'},
+            'tracker_policy':{'max_gap_seconds':[1,2],'minimum_iou':.2,'max_center_distance':.15,
+                'association_margin':.05,'compatible_label_groups':[]}})
+        event_id='video-search-api-event'
+        with library.connect(mission) as conn:
+            conn.execute("UPDATE video_runs SET status='completed',stage='completed' WHERE id=?",(run['id'],))
+            conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,last_time_base_den,
+                first_offset_num,first_offset_den,last_offset_num,last_offset_den,first_utc,last_utc,labels,
+                observation_count,association_uncertain,representative_box,uncertainty_reasons,created)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (event_id,mission,run['id'],source['id'],'video-search-track',1800,1,1,1800,1,1,1800,1,1800,1,
+                 '2026-05-17T14:30:00+00:00','2026-05-17T14:30:00+00:00','["truck"]',2,0,
+                 '[0.1,0.1,0.2,0.2]','[]','2026-05-17T14:00:00+00:00'))
+        with self.request('/api/object-search/interpret',{'mission':mission,'run':run['id'],
+                'query':'Find trucks on Sunday between 17:00 and 20:00'}) as response:
+            spec=json.load(response)['spec']
+        self.assertEqual(spec['media_type'],'videos')
+        self.assertEqual(spec['scope_snapshot']['run_id'],run['id'])
+        with self.request('/api/object-search/execute',{'mission':mission,'run':run['id'],
+                'spec':spec,'confirmed':True}) as response:
+            result=json.load(response)
+        self.assertEqual(result['matched_events'],1)
+        self.assertEqual(result['results'][0]['event_id'],event_id)
+        self.assertEqual(result['results'][0]['source_relative_path'],'traffic.mkv')
 
     def test_view_proposals_route_is_local_and_still_image_scoped(self):
         with self.request('/api/missions',{'name':'View proposal fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:

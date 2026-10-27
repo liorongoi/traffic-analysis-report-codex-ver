@@ -260,3 +260,10 @@ Windows run `40555328250` (commit `4d4aab7`) passed all 239 tests, staged the of
 ## Authorized representative-video search update (2026-10-27)
 
 Reviewed the official pages for the 2K Dashcam Traffic Surveillance Video Corpus, TIme Square Intersection dataset, and AAU MTID. The first currently exposes no files and lacks UTC-to-PTS provenance; the second is research-only image sequences rather than video; the third publishes neither reuse terms nor timezone-aware UTC/PTS provenance. None clears the acceptance gate and no media was downloaded. See [benchmark research](06-benchmarks.md) and [open decisions](02-open-decisions.md).
+
+
+## Confirmed video object search (2026-10-27)
+
+Video missions now expose the offline interpretation/confirmation flow against a selected completed run. Search pages over the corrected logical events returned by the video store, filters supported categories and local schedule windows using each event's verified UTC start plus the mission IANA zone, and leaves association, unreviewed color, and fine subtype uncertainty explicit. An absent UTC origin rejects local-time filters. The saved search spec binds run config, source checksum, UTC provenance, and zone; a changed run or altered spec requires reinterpretation. Results open the video player at the saved event time. Video Traffic and manual Object Search missions can start a one-time video analysis run; continuous auto-run policies remain limited to Video Traffic.
+
+Validation: all 29 `tests.test_object_search` tests pass, including corrected-merge projection, UTC/local-time filtering, uncertainty and stale-run rejection. The two loopback HTTP integration tests for image and video search pass. `node --check web/app.js` and `git diff --check` pass. The local sparse checkout lacks detector model packs and PyAV: three unrelated model-dependent video-inference tests could not initialize, and the full video-store suite could not import. The focused synthetic test for launching a manual run in Object Search mode passes; native Windows CI is required for full packaging evidence.

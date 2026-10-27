@@ -4,9 +4,11 @@ import unittest
 from pathlib import Path
 from PIL import Image
 
-from road_traffic.object_search import execute, interpret
+from datetime import datetime, timezone
+from road_traffic.object_search import execute, execute_video, interpret, video_scope_snapshot
 from road_traffic.store import Library
 from road_traffic.inference_store import create_run, search_scope_snapshot
+from road_traffic import video_store
 
 
 class SearchLibrary:
@@ -72,6 +74,61 @@ class ObjectSearchTests(unittest.TestCase):
         spec = interpret('Find cars', mission_id='mission')
         self.assertEqual(spec['scope']['run'], 'no saved inference run exists')
         self.assertIsNone(spec['scope_snapshot'])
+
+    def test_video_search_is_run_bound_uses_utc_local_time_and_keeps_uncertainty(self):
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as source_root:
+            source_path = Path(source_root) / 'traffic.mkv'
+            source_path.write_bytes(b'video-search-fixture')
+            library = Library(workspace)
+            mission = library.create('Video search', 'Israel', 'Asia/Jerusalem', {
+                'input_type': 'videos', 'analysis_mode': 'video_traffic',
+                'source_root': source_root, 'output_root': '',
+            })
+            source = video_store.register_video(library, mission, 'traffic.mkv',
+                recording_start_utc=datetime(2026, 5, 17, 14, 0, tzinfo=timezone.utc),
+                origin_provenance='operator confirmed from recorder log')
+            run = video_store.create_run(library, mission, source['id'], {
+                'detector': {'version': 'fixture', 'sha256': 'fixture'},
+                'tracker_policy': {'max_gap_seconds': [1, 2], 'minimum_iou': .2,
+                    'max_center_distance': .15, 'association_margin': .05,
+                    'compatible_label_groups': []},
+            })
+            with library.connect(mission) as conn:
+                conn.execute("UPDATE video_runs SET status='completed',stage='completed' WHERE id=?", (run['id'],))
+                for event_id, track, label, utc_text, offset, uncertain in (
+                    ('merge-source', 'track-1', ['truck'], '2026-05-17T14:30:00+00:00', 1800, 1),
+                    ('merge-target', 'track-4', ['bus'], '2026-05-17T14:35:00+00:00', 2100, 0),
+                    ('rejected-truck', 'track-5', ['truck'], '2026-05-17T14:40:00+00:00', 2400, 0),
+                    ('out-window', 'track-2', ['truck'], '2026-05-17T18:30:00+00:00', 16200, 0),
+                    ('wrong-class', 'track-3', ['car'], '2026-05-17T14:45:00+00:00', 2700, 0),
+                ):
+                    conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                        first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,last_time_base_den,
+                        first_offset_num,first_offset_den,last_offset_num,last_offset_den,first_utc,last_utc,labels,
+                        observation_count,association_uncertain,representative_box,uncertainty_reasons,created)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                        (event_id, mission, run['id'], source['id'], track, offset, 1, 1, offset, 1, 1,
+                         offset, 1, offset, 1, utc_text, utc_text, json.dumps(label), 2, uncertain,
+                         '[0.1,0.1,0.2,0.2]', json.dumps(['ambiguous association'] if uncertain else []), '2026-05-17T14:00:00+00:00'))
+            video_store.review_event(library, mission, 'merge-source', 0, 'Operator',
+                'merge_tracks', {'target_event_id': 'merge-target'})
+            video_store.review_event(library, mission, 'rejected-truck', 0, 'Operator', 'reject')
+            scope = video_scope_snapshot(library, mission, run['id'])
+            spec = interpret('Find trucks on Sunday between 17:00 and 20:00',
+                mission_id=mission, run_id=run['id'], scope_snapshot=scope, media_type='videos')
+            self.assertEqual(spec['media_type'], 'videos')
+            result = execute_video(library, mission, spec, confirmed=True,
+                run=run['id'], scope_snapshot=scope)
+            self.assertEqual([item['event_id'] for item in result['results']], ['merge-target'])
+            self.assertEqual(result['uncertain_events'], 1)
+            self.assertEqual(result['results'][0]['source_relative_path'], 'traffic.mkv')
+            with self.assertRaisesRegex(ValueError, 'changed'):
+                execute_video(library, mission, spec, confirmed=True, run='another-run', scope_snapshot=scope)
+
+    def test_video_local_time_search_requires_verified_utc_origin(self):
+        with self.assertRaisesRegex(ValueError, 'verified UTC origin'):
+            interpret('Find cars after 17:00', mission_id='mission', run_id='run-1',
+                scope_snapshot={'schedule': {'timezone': 'Asia/Jerusalem'}}, media_type='videos')
 
     def test_unsupported_terms_and_missing_categories_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'Unsupported search terms'):

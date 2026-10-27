@@ -1,6 +1,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from road_traffic.inference import InferenceService
 from road_traffic.store import Library
@@ -84,6 +85,19 @@ class VideoInferenceServiceTests(unittest.TestCase):
             self.service.start(self.mission,source['id'],self.tracker_policy(),
                 threshold=.18,tiled=False,target_labels=['semi-trailer'])
         self.assertEqual(self.service.status(self.mission), [])
+
+    def test_manual_video_analysis_is_available_in_object_search_missions(self):
+        mission=self.library.create('Video object search','Israel','Asia/Jerusalem',{
+            'input_type':'videos','analysis_mode':'object_search','source_root':str(self.source_root)})
+        source=register_video(self.library,mission,'clip.mp4')
+        with patch('road_traffic.detector.model_pack',return_value=(self.pack,'fixture-sha256')) as model_pack, \
+                patch.object(self.service,'_spawn') as spawn:
+            result=self.service.start(mission,source['id'],self.tracker_policy(),
+                threshold=.18,tiled=False,target_labels=['truck'])
+        self.assertEqual(result['status'],'queued')
+        self.assertEqual(result['config']['detector']['target_labels'],['truck'])
+        model_pack.assert_called_once_with(self.pack)
+        spawn.assert_called_once_with(mission,result['run'])
 
     def test_video_proposal_adapter_filters_to_the_saved_target_classes(self):
         class Detector:

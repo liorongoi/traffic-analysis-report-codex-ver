@@ -292,7 +292,7 @@ def create_run(library, mission, source_id, config, *, total_frames=None):
         task = config.get('task', 'video_traffic')
         if settings['analysis_mode'] != task:
             raise ValueError('Video run task must match the mission analysis mode')
-        if task not in ('video_traffic', 'license_plate'):
+        if task not in ('video_traffic', 'object_search', 'license_plate'):
             raise ValueError('Unsupported video analysis task')
         if task == 'license_plate' and not isinstance(config.get('plate_detector'), dict):
             raise ValueError('Plate crop review runs must snapshot plate_detector settings')
@@ -502,7 +502,7 @@ def frame_overlay(library, mission, run_id, seconds):
         if not run:
             raise ValueError('Video run not found in this mission')
         config = json.loads(run['config'])
-        if config.get('task', 'video_traffic') != 'video_traffic':
+        if config.get('task', 'video_traffic') not in ('video_traffic', 'object_search'):
             return {'run_id': run_id, 'source_id': run['source_id'], 'frame': None, 'detections': []}
         before = conn.execute('''SELECT * FROM video_frame_detections WHERE mission_id=? AND run_id=?
             AND offset_seconds<=? ORDER BY offset_seconds DESC,frame_index DESC LIMIT 1''',
