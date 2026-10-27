@@ -13,9 +13,138 @@ import tempfile
 import threading
 import uuid
 import zipfile
+import zlib
 from datetime import datetime, timezone
 from .domain import capture_time, named_zone
 from xml.sax.saxutils import escape
+
+
+CSV_EXPORT_HEADERS = ['mission_id','inference_run','source_id','source_run_id','source_sha256',
+    'filename','capture_utc','timestamp_precision','review_status','revision',
+    'confirmed_vehicle_count','candidate_count','light_count','annotations',
+    'prediction_run','inference_status','original_predictions','review_prediction_run',
+    'evidence_role','operator','bulk_approval_id','bulk_approval_type']
+XLSX_EXPORT_HEADERS = CSV_EXPORT_HEADERS
+EXPORT_SPACE_MARGIN = 64 * 1024
+XLSX_MAX_DATA_ROWS = 1_048_575
+
+
+def _image_export_values(mission, inference_run, row, bulk_approval_id, csv_safe=False):
+    annotations = json.loads(row['annotations'])
+    active = [annotation for annotation in annotations if not annotation.get('rejected')]
+    filename = row['name']
+    operator = row.get('operator', '')
+    if csv_safe:
+        if filename.lstrip().startswith(('=', '+', '-', '@')):
+            filename = "'" + filename
+        if operator.lstrip().startswith(('=', '+', '-', '@')):
+            operator = "'" + operator
+    return [mission, inference_run or '', row['id'], row['run_id'], row['sha256'],
+        filename, row['capture_utc'], row['precision'], row['review_status'], row['revision'],
+        sum(annotation['kind']=='vehicle' for annotation in active),
+        sum(annotation['kind']=='candidate' for annotation in active),
+        sum(annotation['kind']=='light' for annotation in active),
+        json.dumps(annotations, ensure_ascii=False), row.get('prediction_run'),
+        row.get('inference_status'), json.dumps(row.get('predictions', []), ensure_ascii=False),
+        row.get('review_prediction_run'), row.get('evidence_role'), operator,
+        bulk_approval_id or '', 'bulk_unreviewed' if bulk_approval_id else '']
+
+
+def _xlsx_column_name(number):
+    name = ''
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        name = chr(65 + remainder) + name
+    return name
+
+
+def _xlsx_cell_xml(column, row_number, value):
+    reference = f'{column}{row_number}'
+    if isinstance(value, int):
+        return f'<c r="{reference}"><v>{value}</v></c>'
+    value = '' if value is None else str(value)
+    if len(value) > 32767:
+        raise ValueError(f'Cell {reference} exceeds the XLSX 32,767-character limit')
+    if any((ord(char) < 32 and char not in '\t\n\r') or ord(char) in (0xfffe, 0xffff) for char in value):
+        raise ValueError(f'Cell {reference} contains a character Excel cannot store')
+    return f'<c r="{reference}" t="inlineStr"><is><t xml:space="preserve">{escape(value)}</t></is></c>'
+
+
+def _xlsx_metadata_entries(sheet_count, sheet_names):
+    types = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'''+''.join(
+        f'<Override PartName="/xl/worksheets/sheet{i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' for i in range(sheet_count))+'</Types>'
+    root_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'''
+    workbook = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'''+''.join(
+        f'<sheet name="{name}" sheetId="{i+1}" r:id="rId{i+1}"/>' for i,name in enumerate(sheet_names))+'</sheets></workbook>'
+    workbook_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'''+''.join(
+        f'<Relationship Id="rId{i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i+1}.xml"/>' for i in range(sheet_count))+'</Relationships>'
+    return [('[Content_Types].xml', types), ('_rels/.rels', root_rels),
+        ('xl/workbook.xml', workbook), ('xl/_rels/workbook.xml.rels', workbook_rels)]
+
+
+def _compressed_zip_entry_size(name, chunks):
+    compressor = zlib.compressobj(wbits=-15)
+    compressed = 0
+    for chunk in chunks:
+        compressed += len(compressor.compress(chunk))
+    compressed += len(compressor.flush())
+    name_size = len(name.encode('utf-8'))
+    # Local header, compressed payload, and central-directory record.
+    return 30 + name_size + compressed + 46 + name_size
+
+
+def _estimate_xlsx_size(library, mission, inference_run, snapshot_rowid, bulk_approval_id, count):
+    max_data_rows = XLSX_MAX_DATA_ROWS
+    sheet_count = max(1, (count + max_data_rows - 1) // max_data_rows)
+    sheet_names = ['Traffic' if sheet_count == 1 else f'Traffic {i+1}' for i in range(sheet_count)]
+    total = sum(_compressed_zip_entry_size(name, [content.encode('utf-8')])
+        for name, content in _xlsx_metadata_entries(sheet_count, sheet_names))
+    rows = iter(library.iter_images(mission, inference_run, snapshot_rowid=snapshot_rowid))
+    prefix = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+    suffix = b'</sheetData></worksheet>'
+    for sheet_index in range(sheet_count):
+        sheet_rows = min(max_data_rows, max(0, count - sheet_index * max_data_rows))
+        name = f'xl/worksheets/sheet{sheet_index+1}.xml'
+        def chunks():
+            yield prefix
+            header = ''.join(_xlsx_cell_xml(_xlsx_column_name(i+1), 1, value)
+                for i, value in enumerate(XLSX_EXPORT_HEADERS))
+            yield f'<row r="1">{header}</row>'.encode('utf-8')
+            for row_number in range(2, sheet_rows + 2):
+                values = _image_export_values(mission, inference_run, next(rows), bulk_approval_id)
+                content = ''.join(_xlsx_cell_xml(_xlsx_column_name(i+1), row_number, value)
+                    for i, value in enumerate(values))
+                yield f'<row r="{row_number}">{content}</row>'.encode('utf-8')
+            yield suffix
+        total += _compressed_zip_entry_size(name, chunks())
+    return total + EXPORT_SPACE_MARGIN
+
+
+def _estimate_csv_size(library, mission, inference_run, snapshot_rowid, bulk_approval_id):
+    stream = io.StringIO(newline='')
+    writer = csv.writer(stream)
+    writer.writerow(CSV_EXPORT_HEADERS)
+    required = len(stream.getvalue().encode('utf-8-sig'))
+    for row in library.iter_images(mission, inference_run, snapshot_rowid=snapshot_rowid):
+        stream.seek(0)
+        stream.truncate(0)
+        writer.writerow(_image_export_values(mission, inference_run, row, bulk_approval_id, csv_safe=True))
+        required += len(stream.getvalue().encode('utf-8'))
+    return required + EXPORT_SPACE_MARGIN
+
+
+def _ensure_export_space(output_root, estimated_bytes):
+    try:
+        available = shutil.disk_usage(output_root).free
+    except OSError as exc:
+        raise ValueError(f'Could not check free space in output volume {output_root}: {exc}') from exc
+    if estimated_bytes > available:
+        raise ValueError(f'Export needs approximately {estimated_bytes:,} bytes including a safety margin; '
+            f'only {available:,} bytes are free in the output volume')
 
 
 def now():
@@ -756,6 +885,11 @@ class Library:
         if self.root.is_relative_to(Path(output_root)) or Path(output_root).is_relative_to(self.root):
             raise ValueError('Choose an output outside application-managed storage')
 
+        if snapshot_rowid is None:
+            with self.connect(mission) as conn:
+                snapshot_rowid = conn.execute('SELECT COALESCE(MAX(rowid),0) FROM images').fetchone()[0]
+        _ensure_export_space(Path(output_root), _estimate_csv_size(
+            self, mission, inference_run, snapshot_rowid, bulk_approval_id))
         rows = self.iter_images(mission, inference_run,snapshot_rowid=snapshot_rowid)
         export_id = str(uuid.uuid4())
         target = Path(output_root) / f'traffic-analysis-{mission[:8]}-{export_id}.csv'
@@ -767,29 +901,9 @@ class Library:
         try:
             with target.open('x', encoding='utf-8-sig', newline='') as stream:
                 writer = csv.writer(stream)
-                writer.writerow(['mission_id','inference_run','source_id','source_run_id','source_sha256',
-                    'filename','capture_utc','timestamp_precision','review_status','revision',
-                    'confirmed_vehicle_count','candidate_count','light_count','annotations',
-                    'prediction_run','inference_status','original_predictions','review_prediction_run',
-                    'evidence_role','operator','bulk_approval_id','bulk_approval_type'])
+                writer.writerow(CSV_EXPORT_HEADERS)
                 for row in rows:
-                    annotations = json.loads(row['annotations'])
-                    active = [annotation for annotation in annotations if not annotation.get('rejected')]
-                    filename = row['name']
-                    operator = row.get('operator', '')
-                    if filename.lstrip().startswith(('=', '+', '-', '@')):
-                        filename = "'" + filename
-                    if operator.lstrip().startswith(('=', '+', '-', '@')):
-                        operator = "'" + operator
-                    writer.writerow([mission, inference_run or '', row['id'], row['run_id'], row['sha256'],
-                        filename, row['capture_utc'], row['precision'], row['review_status'], row['revision'],
-                        sum(annotation['kind']=='vehicle' for annotation in active),
-                        sum(annotation['kind']=='candidate' for annotation in active),
-                        sum(annotation['kind']=='light' for annotation in active),
-                        json.dumps(annotations, ensure_ascii=False), row.get('prediction_run'),
-                        row.get('inference_status'), json.dumps(row.get('predictions', []), ensure_ascii=False),
-                        row.get('review_prediction_run'), row.get('evidence_role'), operator,
-                        bulk_approval_id or '', 'bulk_unreviewed' if bulk_approval_id else ''])
+                    writer.writerow(_image_export_values(mission, inference_run, row, bulk_approval_id, csv_safe=True))
                     row_count += 1
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -824,12 +938,10 @@ class Library:
             if snapshot_rowid is None:
                 snapshot_rowid=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM images').fetchone()[0]
             count=conn.execute('SELECT COUNT(*) FROM images WHERE rowid<=?',(snapshot_rowid,)).fetchone()[0]
+        _ensure_export_space(Path(output_root), _estimate_xlsx_size(
+            self, mission, inference_run, snapshot_rowid, bulk_approval_id, count))
         rows=self.iter_images(mission,inference_run,snapshot_rowid=snapshot_rowid)
-        headers=['mission_id','inference_run','source_id','source_run_id','source_sha256','filename','capture_utc',
-            'timestamp_precision','review_status','revision','confirmed_vehicle_count','candidate_count','light_count',
-            'annotations','prediction_run','inference_status','original_predictions','review_prediction_run','evidence_role','operator',
-            'bulk_approval_id','bulk_approval_type']
-        max_data_rows=1_048_575
+        max_data_rows=XLSX_MAX_DATA_ROWS
         sheet_count=max(1,(count+max_data_rows-1)//max_data_rows)
         sheet_names=['Traffic' if sheet_count==1 else f'Traffic {number+1}' for number in range(sheet_count)]
         export_id=str(uuid.uuid4());target=Path(output_root)/f'traffic-analysis-{mission[:8]}-{export_id}.xlsx';created=now()
@@ -839,50 +951,19 @@ class Library:
         row_count=0
         try:
             with zipfile.ZipFile(target,'x',compression=zipfile.ZIP_DEFLATED,allowZip64=True) as archive:
-                archive.writestr('[Content_Types].xml','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'''+''.join(
-                    f'<Override PartName="/xl/worksheets/sheet{i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' for i in range(sheet_count))+'</Types>')
-                archive.writestr('_rels/.rels','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>''')
-                archive.writestr('xl/workbook.xml','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'''+''.join(
-                    f'<sheet name="{name}" sheetId="{i+1}" r:id="rId{i+1}"/>' for i,name in enumerate(sheet_names))+'</sheets></workbook>')
-                archive.writestr('xl/_rels/workbook.xml.rels','''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'''+''.join(
-                    f'<Relationship Id="rId{i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{i+1}.xml"/>' for i in range(sheet_count))+'</Relationships>')
-
-                def cell_xml(column,row_number,value):
-                    reference=f'{column}{row_number}'
-                    if isinstance(value,int):return f'<c r="{reference}"><v>{value}</v></c>'
-                    value='' if value is None else str(value)
-                    if len(value)>32767:raise ValueError(f'Cell {reference} exceeds the XLSX 32,767-character limit')
-                    if any((ord(char)<32 and char not in '\t\n\r') or ord(char) in (0xfffe,0xffff) for char in value):
-                        raise ValueError(f'Cell {reference} contains a character Excel cannot store')
-                    return f'<c r="{reference}" t="inlineStr"><is><t xml:space="preserve">{escape(value)}</t></is></c>'
-
-                def column_name(number):
-                    name=''
-                    while number:
-                        number,remainder=divmod(number-1,26);name=chr(65+remainder)+name
-                    return name
+                for entry_name, content in _xlsx_metadata_entries(sheet_count, sheet_names):
+                    archive.writestr(entry_name, content)
 
                 for sheet_index in range(sheet_count):
                     sheet_rows=min(max_data_rows,max(0,count-sheet_index*max_data_rows))
                     with archive.open(f'xl/worksheets/sheet{sheet_index+1}.xml','w') as sheet:
                         sheet.write(b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>')
-                        header_xml=''.join(cell_xml(column_name(i+1),1,value) for i,value in enumerate(headers))
+                        header_xml=''.join(_xlsx_cell_xml(_xlsx_column_name(i+1),1,value) for i,value in enumerate(XLSX_EXPORT_HEADERS))
                         sheet.write(f'<row r="1">{header_xml}</row>'.encode('utf-8'))
                         for row_number in range(2,sheet_rows+2):
                             row=next(rows)
-                            annotations=json.loads(row['annotations']);active=[item for item in annotations if not item.get('rejected')]
-                            values=[mission,inference_run or '',row['id'],row['run_id'],row['sha256'],row['name'],row['capture_utc'],
-                                row['precision'],row['review_status'],row['revision'],sum(item['kind']=='vehicle' for item in active),
-                                sum(item['kind']=='candidate' for item in active),sum(item['kind']=='light' for item in active),
-                                json.dumps(annotations,ensure_ascii=False),row.get('prediction_run'),row.get('inference_status'),
-                                json.dumps(row.get('predictions',[]),ensure_ascii=False),row.get('review_prediction_run'),
-                                row.get('evidence_role'),row.get('operator'),bulk_approval_id or '',
-                                'bulk_unreviewed' if bulk_approval_id else '']
-                            content=''.join(cell_xml(column_name(i+1),row_number,value) for i,value in enumerate(values))
+                            values=_image_export_values(mission,inference_run,row,bulk_approval_id)
+                            content=''.join(_xlsx_cell_xml(_xlsx_column_name(i+1),row_number,value) for i,value in enumerate(values))
                             sheet.write(f'<row r="{row_number}">{content}</row>'.encode('utf-8'));row_count+=1
                         sheet.write(b'</sheetData></worksheet>')
             with target.open('r+b') as stream:os.fsync(stream.fileno())

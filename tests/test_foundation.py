@@ -9,7 +9,7 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 from road_traffic.domain import capture_time, named_zone, budget
-from road_traffic.store import Library, safe_file
+from road_traffic.store import Library, safe_file, _estimate_csv_size, _estimate_xlsx_size
 from PIL import Image
 
 
@@ -275,6 +275,43 @@ class StoreTests(unittest.TestCase):
         with patch('road_traffic.store.tempfile.NamedTemporaryFile',side_effect=PermissionError('ACL denies create')):
             with self.assertRaisesRegex(ValueError,'Output directory failed a write check'):
                 self.lib.create('Read-only output','Israel','Asia/Jerusalem',{'output_root':str(output)})
+
+    def test_csv_and_xlsx_exports_check_estimated_space_before_ledger_or_file_creation(self):
+        for format_name in ('csv','xlsx'):
+            with self.subTest(format=format_name):
+                output=self.root/f'output-{format_name}';output.mkdir()
+                mission=self.lib.create(f'Export {format_name}','Israel','Asia/Jerusalem',{
+                    'output_root':str(output),'export_formats':[format_name]})
+                self.lib.import_folder(mission,self.source,'camera')
+                method=self.lib.export_csv if format_name=='csv' else self.lib.export_xlsx
+                with patch('road_traffic.store.shutil.disk_usage',return_value=SimpleNamespace(free=0)):
+                    with self.assertRaisesRegex(ValueError,'Export needs approximately .* bytes including a safety margin'):
+                        method(mission)
+                with patch('road_traffic.store.shutil.disk_usage',side_effect=OSError('volume unavailable')):
+                    with self.assertRaisesRegex(ValueError,'Could not check free space in output volume'):
+                        method(mission)
+                with self.lib.connect(mission) as conn:
+                    self.assertEqual(conn.execute('SELECT COUNT(*) FROM exports').fetchone()[0],0)
+                self.assertEqual(list(output.iterdir()),[])
+
+    def test_export_size_estimates_cover_serialized_unicode_review_outputs(self):
+        output=self.root/'estimated-export-output';output.mkdir()
+        mission=self.lib.create('Estimated export','Israel','Asia/Jerusalem',{
+            'output_root':str(output),'export_formats':['csv','xlsx']})
+        self.lib.import_folder(mission,self.source,'camera')
+        image=self.lib.images(mission)[0]
+        self.lib.review(mission,image['id'],0,[{'kind':'vehicle','label':'car','box':[.1,.2,.3,.4]}],
+            '=מפעיל','training','reviewed')
+        with self.lib.connect(mission) as conn:
+            snapshot_rowid=conn.execute('SELECT MAX(rowid) FROM images').fetchone()[0]
+            count=conn.execute('SELECT COUNT(*) FROM images WHERE rowid<=?',(snapshot_rowid,)).fetchone()[0]
+        csv_estimate=_estimate_csv_size(self.lib,mission,None,snapshot_rowid,None)
+        xlsx_estimate=_estimate_xlsx_size(self.lib,mission,None,snapshot_rowid,None,count)
+        with patch('road_traffic.store.shutil.disk_usage',return_value=SimpleNamespace(free=10**9)):
+            result=self.lib.export_configured(mission)
+        actual={Path(item['path']).suffix[1:]:Path(item['path']).stat().st_size for item in result['files']}
+        self.assertLessEqual(actual['csv'],csv_estimate)
+        self.assertLessEqual(actual['xlsx'],xlsx_estimate)
 
     def test_legacy_mission_gets_additive_settings_migration(self):
         mission='00000000-0000-4000-8000-000000000001'
