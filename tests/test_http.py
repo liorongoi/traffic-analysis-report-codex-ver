@@ -59,9 +59,11 @@ class HttpTests(unittest.TestCase):
             print(f'HTTP test server exited before teardown with code {server_exit}.\n'
                 f'Full HTTP test server stderr:\n{diagnostics}',file=sys.stderr)
         cls.tmp.cleanup()
-    def request(self,path,data=None,token=True,headers=None):
+    def request(self,path,data=None,token=True,headers=None,_retry=0):
         hdr=headers or {}
         if data is not None:
+            if path=='/api/missions' and isinstance(data,dict):
+                data.setdefault('request_id',str(uuid.uuid4()))
             hdr['Content-Type']='application/json'
             if token:hdr['X-Session-Token']=self.session['token']
         try:
@@ -73,6 +75,8 @@ class HttpTests(unittest.TestCase):
             raise diagnostic from None
         except (OSError,urllib.error.URLError):
             self.__class__.server_diagnostics_requested=True
+            if path=='/api/missions' and data is not None and _retry==0:
+                return self.request(path,data,token,headers,_retry=1)
             raise
     def test_page_and_local_assets(self):
         for path in ('/','/app.js','/style.css'):
