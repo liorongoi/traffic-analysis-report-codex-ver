@@ -28,6 +28,7 @@ class HttpTests(unittest.TestCase):
         cls.tmp=tempfile.TemporaryDirectory()
         cls.server_log_path=Path(cls.tmp.name)/'server.stderr.log'
         cls.server_log=cls.server_log_path.open('wb')
+        cls.server_diagnostics_requested=False
         with socket.socket() as sock:
             sock.bind(('127.0.0.1',0))
             cls.port=sock.getsockname()[1]
@@ -44,14 +45,15 @@ class HttpTests(unittest.TestCase):
             raise RuntimeError('Development server did not become ready')
     @classmethod
     def tearDownClass(cls):
+        server_exit=cls.proc.poll()
         cls.proc.terminate()
         cls.proc.wait(timeout=10)
         cls.server_log.flush()
         cls.server_log.close()
-        diagnostics=[line for line in cls.server_log_path.read_text(encoding='utf-8',errors='replace').splitlines()
-            if 'Internal request error' in line]
-        if diagnostics:
-            print('HTTP test server diagnostics:\n'+'\n'.join(diagnostics),file=sys.stderr)
+        if server_exit is not None or cls.server_diagnostics_requested:
+            diagnostics=cls.server_log_path.read_text(encoding='utf-8',errors='replace')
+            print(f'HTTP test server exited before teardown with code {server_exit}.\n'
+                f'Full HTTP test server stderr:\n{diagnostics}',file=sys.stderr)
         cls.tmp.cleanup()
     def request(self,path,data=None,token=True,headers=None):
         hdr=headers or {}
@@ -65,6 +67,9 @@ class HttpTests(unittest.TestCase):
             diagnostic=urllib.error.HTTPError(exc.url,exc.code,exc.msg,exc.hdrs,io.BytesIO(body))
             diagnostic.add_note('HTTP response body: '+body.decode('utf-8',errors='replace'))
             raise diagnostic from None
+        except (OSError,urllib.error.URLError):
+            self.__class__.server_diagnostics_requested=True
+            raise
     def test_page_and_local_assets(self):
         for path in ('/','/app.js','/style.css'):
             with self.request(path) as response:
