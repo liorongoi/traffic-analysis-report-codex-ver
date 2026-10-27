@@ -1,4 +1,4 @@
-"""Loopback development host with an opt-in TLS-protected, single-user LAN mode."""
+"""Local road-traffic review host with an opt-in TLS-protected LAN mode."""
 import csv
 import io
 import json
@@ -7,9 +7,7 @@ import re
 import secrets
 import ssl
 import threading
-import time
 import webbrowser
-from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -19,17 +17,15 @@ from . import source_reconciliation
 
 
 def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
-        public_host=None, tls_cert=None, tls_key=None, access_code=None):
+        public_host=None, tls_cert=None, tls_key=None):
     loopback=host in ('127.0.0.1','localhost','::1')
     if not loopback:
         if not public_host or not re.fullmatch(r'[A-Za-z0-9.-]+',public_host):
             raise ValueError('LAN mode requires --public-host with the exact DNS name or IPv4 address used by browsers')
         if not tls_cert or not tls_key or not Path(tls_cert).is_file() or not Path(tls_key).is_file():
             raise ValueError('LAN mode requires an existing TLS certificate and private key')
-        if not isinstance(access_code,str) or len(access_code)<16:
-            raise ValueError('Set TRAFFIC_ACCESS_CODE to a secret of at least 16 characters before enabling LAN mode')
-    elif any((public_host,tls_cert,tls_key,access_code)):
-        raise ValueError('LAN host, TLS and access-code settings can only be used with a non-loopback bind address')
+    elif any((public_host,tls_cert,tls_key)):
+        raise ValueError('LAN host and TLS settings can only be used with a non-loopback bind address')
     library = Library(workspace)
     library.reconcile_exports()
     from .monitor import SourceMonitor
@@ -44,7 +40,6 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
     video_clips.reconcile_exports(library)
     video_event_exports.reconcile_exports(library)
     token = secrets.token_urlsafe(32)
-    session_state={'active':None,'failed':{},'lock':threading.Lock()}
     class Handler(BaseHTTPRequestHandler):
         def reply(self, status, data, content='application/json; charset=utf-8'):
             if not isinstance(data, bytes):
@@ -69,73 +64,6 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
             origins=(allowed,) if allowed else (f'http://127.0.0.1:{self.server.server_port}',
                 f'http://localhost:{self.server.server_port}')
             return self.headers.get('Origin') in origins
-
-        def session_id(self):
-            if loopback:return None
-            try:
-                cookie=SimpleCookie();cookie.load(self.headers.get('Cookie',''))
-                value=cookie.get('traffic_session')
-                candidate=value.value if value else None
-            except Exception:
-                candidate=None
-            with session_state['lock']:
-                active=session_state['active']
-                if not active or candidate!=active['id'] or time.time()-active['created_at']>12*60*60:
-                    if active and time.time()-active['created_at']>12*60*60:session_state['active']=None
-                    return None
-            return candidate
-
-        def login_page(self):
-            preferences=[]
-            for index,item in enumerate(self.headers.get('Accept-Language','').split(',')):
-                language,*parameters=item.strip().lower().split(';')
-                quality=1.0
-                for parameter in parameters:
-                    if parameter.strip().startswith('q='):
-                        try:quality=float(parameter.strip()[2:])
-                        except ValueError:quality=0.0
-                preferences.append((-quality,index,language))
-            hebrew=bool(preferences and sorted(preferences)[0][2].startswith('he'))
-            if hebrew:
-                body='''<!doctype html><html lang="he" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ניתוח תנועה · כניסה</title><body><main><h1>ניתוח תנועה</h1><p>הזינו את קוד הגישה שקיבלתם ממפעיל העמדה.</p><form method="post" action="/api/login"><label for="code">קוד גישה</label><input id="code" name="code" type="password" minlength="16" autocomplete="current-password" required><button type="submit">כניסה</button></form><p id="error" role="alert"></p><script src="/login.js"></script></main></body></html>'''.encode('utf-8')
-            else:
-                body=b'''<!doctype html><html lang="en" dir="ltr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Traffic Analysis Sign In</title><body><main><h1>Traffic Analysis</h1><p>Enter the access code provided by the workstation operator.</p><form method="post" action="/api/login"><label for="code">Access code</label><input id="code" name="code" type="password" minlength="16" autocomplete="current-password" required><button type="submit">Sign in</button></form><p id="error" role="alert"></p><script src="/login.js"></script></main></body></html>'''
-            self.reply(200,body,'text/html; charset=utf-8')
-
-        def login(self):
-            if not self.valid_origin() or self.headers.get('Content-Type','').split(';',1)[0].strip().lower()!='application/x-www-form-urlencoded':
-                return self.reply(403,{'error':'Sign-in requires the configured HTTPS origin'})
-            remote=self.client_address[0]
-            now=time.time()
-            with session_state['lock']:
-                attempts=session_state['failed'].get(remote,{'count':0,'until':0})
-                if attempts['until']>now:
-                    return self.reply(429,{'error':'Too many sign-in attempts; wait before retrying'})
-            try:length=int(self.headers.get('Content-Length','0'))
-            except ValueError:length=0
-            if not 0<length<=4096:return self.reply(413,{'error':'Sign-in request is invalid'})
-            fields=parse_qs(self.rfile.read(length).decode('utf-8','replace'),keep_blank_values=True)
-            supplied=fields.get('code',[''])[0]
-            if not secrets.compare_digest(supplied,access_code):
-                with session_state['lock']:
-                    attempt=session_state['failed'].setdefault(remote,{'count':0,'until':0})
-                    attempt['count']+=1
-                    if attempt['count']>=5:attempt.update(count=0,until=now+60)
-                return self.reply(401,{'error':'Access code is incorrect'})
-            session=secrets.token_urlsafe(32)
-            with session_state['lock']:
-                session_state['active']={'id':session,'created_at':now}
-                session_state['failed'].pop(remote,None)
-            self.send_response(303)
-            self.send_header('Location','/')
-            self.send_header('Set-Cookie',f'traffic_session={session}; Path=/; Max-Age=43200; HttpOnly; Secure; SameSite=Strict')
-            self.send_header('Cache-Control','no-store')
-            self.send_header('Content-Length','0')
-            self.end_headers()
-
-        def login_script(self):
-            body=b"document.querySelector('form').addEventListener('submit',async e=>{e.preventDefault();const button=e.currentTarget.querySelector('button');button.disabled=true;try{const response=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(new FormData(e.currentTarget))});if(response.redirected||response.ok)location.assign('/');else{const result=await response.json();document.querySelector('#error').textContent=result.error||'Sign in failed';}}catch(error){document.querySelector('#error').textContent='Sign in failed';}finally{button.disabled=false;}});"
-            self.reply(200,body,'text/javascript; charset=utf-8')
 
         def stream_video(self, query):
             path = video_store.source_path(library, query['mission'][0], query['source'][0])
@@ -229,17 +157,10 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 return self.reply(403, {'error': 'Configured host required'})
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
-            if not loopback:
-                if parsed.path in ('/', '/login') and not self.session_id():
-                    return self.login_page()
-                if parsed.path == '/login.js':
-                    return self.login_script()
-                if not self.session_id():
-                    return self.reply(401, {'error':'Sign in to access this workstation'})
             try:
                 if parsed.path == '/api/session':
                     return self.reply(200, {'token': token, 'missions': library.missions(),
-                        'mode': 'loopback-development' if loopback else 'authenticated-lan'})
+                        'mode': 'loopback-development' if loopback else 'lan'})
                 if parsed.path == '/api/hardware':
                     from .hardware import inventory
                     return self.reply(200, inventory(library.root))
@@ -354,7 +275,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 files = {'/':'index.html','/app.js':'app.js','/style.css':'style.css',
                     '/timezone-countries.json':'data/timezone-countries.json',
                     '/timezone-zones.json':'data/timezone-zones.json',
-                    '/timezone-cities.json':'data/timezone-cities.json'}
+                    '/timezone-cities.json':'data/timezone-cities.json','/roadloom.svg':'roadloom.svg','/roadloom.ico':'roadloom.ico'}
                 if parsed.path in files:
                     path = Path(web) / files[parsed.path]
                     return self.reply(200, path.read_bytes(), mimetypes.guess_type(path.name)[0]+'; charset=utf-8')
@@ -365,20 +286,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
         def do_POST(self):
             if not self.valid_host():
                 return self.reply(403, {'error':'Configured host required'})
-            if not loopback and self.path == '/api/login':
-                return self.login()
-            if not loopback and self.path == '/api/logout':
-                if not self.session_id() or not self.valid_origin():
-                    return self.reply(403, {'error':'Authenticated same-origin session required'})
-                with session_state['lock']:
-                    session_state['active']=None
-                self.send_response(303)
-                self.send_header('Location','/')
-                self.send_header('Set-Cookie','traffic_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict')
-                self.send_header('Content-Length','0')
-                self.end_headers()
-                return
-            if (not loopback and not self.session_id()) or self.headers.get('X-Session-Token') != token:
+            if self.headers.get('X-Session-Token') != token:
                 return self.reply(403, {'error':'Session token required'})
             if (self.headers.get('Origin') is not None and not self.valid_origin()) or (not loopback and not self.valid_origin()):
                 return self.reply(403, {'error':'Invalid origin'})
@@ -564,7 +472,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
         server.socket=context.wrap_socket(server.socket,server_side=True)
     scheme='http' if loopback else 'https'
     display_host='127.0.0.1' if loopback else public_host
-    print(f'Traffic Analysis {"development" if loopback else "authenticated LAN"} host: {scheme}://{display_host}:{server.server_port}', flush=True)
+    print(f'RoadLoom {"local" if loopback else "LAN"} host: {scheme}://{display_host}:{server.server_port}', flush=True)
     print('Local YOLOX-S inference available when the verified model pack and runtime are installed. No external assets.', flush=True)
     if open_browser:
         threading.Thread(target=webbrowser.open, args=(f'{scheme}://{display_host}:{server.server_port}',), daemon=True).start()

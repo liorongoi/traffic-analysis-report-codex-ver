@@ -30,3 +30,21 @@ fieldset{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:
 .capability-list{padding-inline-start:1.2rem}.capability-list>li{padding:9px 0;border-top:1px solid var(--line)}.capability-list p{margin:5px 0;font-size:12px;overflow-wrap:anywhere}.capability-list ul{margin:2px 0;padding-inline-start:1.2rem}
 
 .video-event-preview-button{display:block;width:max-content;max-width:100%;padding:0;border:1px solid transparent;background:transparent}.video-event-preview-button:hover{border-color:var(--accent)}.video-event-preview-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* RoadLoom visual identity: calm dark workspace with a subtle route-map glow. */
+:root { --bg:#08111f; --panel:#122137; --line:#2b405a; --muted:#a5b6ca; --accent:#58e0c1; }
+body { background:radial-gradient(ellipse at 82% -8%,rgba(82,132,204,.27),transparent 36rem),radial-gradient(ellipse at 8% 72%,rgba(42,141,131,.14),transparent 34rem),linear-gradient(142deg,#08111f,#0c1929 60%,#0c1c2c); }
+body::before { content:"";position:fixed;inset:0;pointer-events:none;opacity:.12;background:repeating-linear-gradient(132deg,transparent 0 100px,rgba(157,193,226,.11) 101px,transparent 103px 210px);mask-image:linear-gradient(to bottom,#000,transparent 84%); }
+header { position:sticky;top:0;z-index:5;background:rgba(8,17,31,.84);backdrop-filter:blur(14px);border-color:rgba(135,170,207,.17); }
+.brand-logo { width:46px;height:46px;filter:drop-shadow(0 5px 14px rgba(88,224,193,.16)); }
+.brand .mark { display:none; }
+.brand strong { letter-spacing:.02em; }
+.brand small { text-transform:uppercase;letter-spacing:.07em;font-size:10px; }
+aside { background:rgba(11,23,38,.75);border-color:rgba(135,170,207,.16); }
+.content { position:relative; }
+.stats>div,.viewer,.annotations,.video-card,.mission-card { box-shadow:0 14px 38px rgba(0,0,0,.13); }
+button,input,select,textarea { border-radius:9px; }
+button { transition:transform .14s ease,border-color .14s ease,background-color .14s ease; }
+button:hover:not(:disabled) { transform:translateY(-1px); }
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible { outline:2px solid var(--accent);outline-offset:3px; }
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important; } }

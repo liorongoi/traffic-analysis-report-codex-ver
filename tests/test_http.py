@@ -116,7 +116,8 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(len(json.load(response)['cities']),34188)
         with self.request('/') as response:
             page=response.read().decode('utf-8')
-            self.assertIn('id="lanLogout"',page)
+            self.assertIn('RoadLoom',page)
+            self.assertNotIn('lanLogout',page)
             self.assertIn('name="resource_profile"',page)
             self.assertIn('id="helpPanel"',page)
             self.assertIn('id="videoWorkflow"',page)
@@ -138,6 +139,9 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="sourceLinkCandidates"',page)
             self.assertIn('id="evaluateNightTest"',page)
             self.assertIn('id="videoClipExports"',page)
+        with self.request('/roadloom.svg') as response:
+            self.assertEqual(response.status,200)
+            self.assertIn('<svg',response.read().decode('utf-8'))
             self.assertIn('id="hardwareReport"',page)
             self.assertIn('id="learningReport"',page)
             self.assertIn('id="plateWorkflow"',page)

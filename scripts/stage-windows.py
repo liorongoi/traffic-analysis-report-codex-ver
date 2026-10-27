@@ -162,7 +162,7 @@ def stage(project, runtime):
             'Plate handling locates regions, saves chips, and proposes Latin and Arabic/Persian letters with digits with local OCR. '
             'Operators separately approve/correct/reject text; Persian digit recognition and target-country accuracy are unvalidated.\n'
             'Vehicle and plate detector accuracy, Windows execution, offline install/update, '
-            'LAN authentication, GPU support, and target-hardware performance are not accepted.\n'
+            'LAN deployment, GPU support, and target-hardware performance are not accepted.\n'
             'The application includes still-image monitoring, CSV/XLSX export, video event review, '
             'and plate crop review. See docs/ for current limits and open decisions.\n',
             encoding='utf-8')

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-labelledby="title">
+  <title id="title">RoadLoom mark</title>
+  <defs>
+    <linearGradient id="road" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#58e0c1"/><stop offset="1" stop-color="#69a7ff"/></linearGradient>
+  </defs>
+  <rect x="4" y="4" width="72" height="72" rx="22" fill="#101d31" stroke="#3b5877" stroke-width="2"/>
+  <path d="M25 67 36 14M55 67 44 14" fill="none" stroke="#7088a7" stroke-linecap="round" stroke-width="5"/>
+  <path d="m40 62 1.5-8m3-12 1.5-8m3-12 1.5-8" fill="none" stroke="#d5e5ff" stroke-linecap="round" stroke-width="3"/>
+  <path d="M12 51h18l7-11 8 13 7-9h16" fill="none" stroke="url(#road)" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/>
+  <circle cx="68" cy="44" r="3" fill="#ffc76b"/>
+</svg>

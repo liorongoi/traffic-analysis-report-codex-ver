@@ -1,4 +1,3 @@
-import http.cookiejar
 import json
 import os
 from pathlib import Path
@@ -11,7 +10,6 @@ import tempfile
 import time
 import unittest
 import urllib.error
-import urllib.parse
 import urllib.request
 
 
@@ -34,24 +32,21 @@ class LanSecurityTests(unittest.TestCase):
         cls.base = f'https://127.0.0.1:{cls.port}'
         env = os.environ.copy()
         env['PYTHONPATH'] = str(Path(__file__).resolve().parents[1] / 'src')
-        env['TRAFFIC_ACCESS_CODE'] = 'test-operator-code-0123456789'
         cls.proc = subprocess.Popen([sys.executable, '-m', 'road_traffic', 'serve', '--host', '0.0.0.0',
             '--public-host', '127.0.0.1', '--tls-cert', str(cls.cert), '--tls-key', str(cls.key),
             '--workspace', str(cls.workspace), '--port', str(cls.port)], env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         context = ssl._create_unverified_context()
-        cls.cookies = http.cookiejar.CookieJar()
-        cls.client = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context),
-            urllib.request.HTTPCookieProcessor(cls.cookies))
+        cls.client = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context))
         for _ in range(120):
             if cls.proc.poll() is not None:
                 cls.tmp.cleanup()
                 raise RuntimeError('LAN server exited before becoming ready')
             try:
-                cls.client.open(cls.base + '/api/session', timeout=.25)
+                with cls.client.open(cls.base + '/api/session', timeout=.25) as response:
+                    if response.status == 200:
+                        break
             except urllib.error.HTTPError as exc:
-                if exc.code == 401:
-                    break
                 if exc.code == 403:
                     cls.proc.terminate()
                     cls.tmp.cleanup()
@@ -70,61 +65,53 @@ class LanSecurityTests(unittest.TestCase):
         cls.proc.wait(timeout=10)
         cls.tmp.cleanup()
 
-    def test_access_code_session_protects_api_and_logout_revokes_it(self):
+    def test_lan_works_without_sign_in_and_writes_keep_token_protection(self):
         with self.client.open(self.base + '/', timeout=3) as response:
-            self.assertIn(b'Traffic Analysis Sign In', response.read())
-        with self.assertRaises(urllib.error.HTTPError) as denied:
-            self.client.open(self.base + '/api/session', timeout=3)
-        self.assertEqual(denied.exception.code, 401)
-
-        def sign_in(code):
-            body = urllib.parse.urlencode({'code': code}).encode()
-            request = urllib.request.Request(self.base + '/api/login', data=body,
-                headers={'Origin': self.base, 'Content-Type': 'application/x-www-form-urlencoded'})
-            return self.client.open(request, timeout=3)
-
-        with self.assertRaises(urllib.error.HTTPError) as wrong_code:
-            sign_in('incorrect-operator-code')
-        self.assertEqual(wrong_code.exception.code, 401)
-        with sign_in('test-operator-code-0123456789') as response:
-            self.assertEqual(response.status, 200)
+            page = response.read().decode('utf-8')
+            self.assertIn('RoadLoom', page)
+            self.assertNotIn('lanLogout', page)
+            self.assertNotIn('login', page.lower())
+            self.assertNotIn('password', page.lower())
         with self.client.open(self.base + '/api/session', timeout=3) as response:
             session = json.load(response)
-        self.assertEqual(session['mode'], 'authenticated-lan')
-        with self.client.open(self.base + '/', timeout=3) as response:
-            self.assertIn(b'id="lanLogout"', response.read())
+            self.assertEqual(session['mode'], 'lan')
+            self.assertNotIn('Set-Cookie', response.headers)
+        body = json.dumps({'name': 'Authorized mission', 'country': 'Israel',
+            'zone': 'Asia/Jerusalem'}).encode()
+        request = urllib.request.Request(self.base + '/api/missions', data=body,
+            headers={'Origin': self.base, 'X-Session-Token': session['token'],
+                'Content-Type': 'application/json'})
+        with self.client.open(request, timeout=3) as response:
+            self.assertEqual(response.status, 200)
 
-        body = json.dumps({'name': 'Unauthorized mutation', 'country': 'Israel',
+    def test_unknown_host_and_mutations_without_token_are_rejected(self):
+        request = urllib.request.Request(self.base + '/', headers={'Host': 'attacker.invalid'})
+        with self.assertRaises(urllib.error.HTTPError) as rejected_host:
+            self.client.open(request, timeout=3)
+        self.assertEqual(rejected_host.exception.code, 403)
+        body = json.dumps({'name': 'Unauthorized mission', 'country': 'Israel',
             'zone': 'Asia/Jerusalem'}).encode()
         request = urllib.request.Request(self.base + '/api/missions', data=body,
             headers={'Origin': self.base, 'Content-Type': 'application/json'})
-        with self.assertRaises(urllib.error.HTTPError) as missing_token:
+        with self.assertRaises(urllib.error.HTTPError) as rejected_write:
             self.client.open(request, timeout=3)
-        self.assertEqual(missing_token.exception.code, 403)
+        self.assertEqual(rejected_write.exception.code, 403)
 
-        request = urllib.request.Request(self.base + '/api/logout', data=b'',
-            headers={'Origin': self.base, 'X-Session-Token': session['token']})
-        with self.client.open(request, timeout=3) as response:
-            self.assertEqual(response.status, 200)
-        with self.assertRaises(urllib.error.HTTPError) as revoked:
-            self.client.open(self.base + '/api/session', timeout=3)
-        self.assertEqual(revoked.exception.code, 401)
-
-    def test_invalid_origin_cannot_create_a_session(self):
-        body = urllib.parse.urlencode({'code': 'test-operator-code-0123456789'}).encode()
-        request = urllib.request.Request(self.base + '/api/login', data=body,
-            headers={'Origin': 'https://attacker.invalid',
-                'Content-Type': 'application/x-www-form-urlencoded'})
-        with self.assertRaises(urllib.error.HTTPError) as rejected:
+    def test_invalid_origin_and_sign_in_routes_are_rejected(self):
+        with self.client.open(self.base + '/api/session', timeout=3) as response:
+            session = json.load(response)
+        body = json.dumps({'name': 'Rejected mission', 'country': 'Israel',
+            'zone': 'Asia/Jerusalem'}).encode()
+        request = urllib.request.Request(self.base + '/api/missions', data=body,
+            headers={'Origin': 'https://attacker.invalid', 'X-Session-Token': session['token'],
+                'Content-Type': 'application/json'})
+        with self.assertRaises(urllib.error.HTTPError) as rejected_origin:
             self.client.open(request, timeout=3)
-        self.assertEqual(rejected.exception.code, 403)
-
-    def test_hebrew_browser_gets_rtl_sign_in_page(self):
-        request = urllib.request.Request(self.base + '/', headers={'Accept-Language': 'he-IL,he;q=0.9,en;q=0.8'})
-        with self.client.open(request, timeout=3) as response:
-            page = response.read().decode('utf-8')
-        self.assertIn('<html lang="he" dir="rtl">', page)
-        self.assertIn('קוד גישה', page)
+        self.assertEqual(rejected_origin.exception.code, 403)
+        for path in ('/login', '/login.js', '/api/login', '/api/logout'):
+            with self.subTest(path=path), self.assertRaises(urllib.error.HTTPError) as missing:
+                self.client.open(self.base + path, timeout=3)
+            self.assertEqual(missing.exception.code, 404)
 
 
 if __name__ == '__main__':
