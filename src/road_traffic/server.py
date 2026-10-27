@@ -53,11 +53,14 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 self.send_header('Content-Security-Policy', "default-src 'self'; img-src 'self'; connect-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'")
                 self.end_headers()
                 self.wfile.write(data)
-            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            except OSError:
                 # Clients can navigate away or hit their own request timeout
                 # while a bounded local operation is still completing. The
-                # backend must not turn that normal disconnect into a second
-                # failed attempt to write an error response.
+                # socket may already be invalid by the time a worker writes
+                # its response (including WinError 10038 on Windows). Treat
+                # every socket write failure as a disconnect; letting it
+                # reach do_POST's operation-error handler would try to write
+                # a second response to the same dead socket.
                 self.close_connection = True
 
         def valid_host(self):
