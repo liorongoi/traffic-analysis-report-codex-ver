@@ -33,6 +33,8 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertIn("if ((Get-Content -Raw $sentinel) -ne $env:GITHUB_RUN_ID)", workflow)
         self.assertIn('Reinstall changed existing workspace data.', workflow)
         self.assertIn('Uninstall removed existing workspace data.', workflow)
+        self.assertIn('"-o$outputDir" $script', workflow)
+        self.assertNotIn('--output-dir=', workflow)
 
     @staticmethod
     def fake_windows_runtime(runtime, lock_path):
