@@ -21,7 +21,7 @@
 - User supplied Lebanese plate-reference images showing private-vehicle layouts and public/government/service variants, including different colors and commercial/motorcycle examples. Treat them as qualitative guidance for the range of plate appearances whose image chips may need review, not OCR transcriptions or acceptance labels. The app does not infer plate type, town/governorate, or identity; these images are not repository assets.
 - Nighttime candidate sensitivity, definition of a confirmed vehicle, and acceptable false-positive/miss/count-error rates.
 - Target processing latency/throughput and production association thresholds remain open. Video identity correction semantics are settled: corrected identities, with merges forming one logical event, splits producing child events, original detections retained, and event exports using corrected identities. Clip context is explicitly entered per export (0–600 seconds before/after); no unstated default is applied.
-- Training evidence thresholds, dataset reuse policy and model-promotion criteria. No inherited SpectraScope thresholds.
+- Training evidence thresholds and model-promotion criteria remain open; no inherited SpectraScope thresholds. The user directed that the supplied Global License Plate Dataset be used for learning and explicitly asked that reuse-rights research not delay implementation. The supplied file is a research paper; the image archive itself is not present in the workspace.
 
 ## Proposed engineering choices (not business facts)
 

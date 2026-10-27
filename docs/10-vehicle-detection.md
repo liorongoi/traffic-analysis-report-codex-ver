@@ -4,7 +4,7 @@ Current night separation and correction-head capabilities are documented in [the
 
 ## What is running
 
-A real COCO-pretrained YOLOX-S ONNX model from the official OpenCV Zoo distribution, served by a separate CPU worker. The directory declares Apache-2.0 licensing; the staged pack includes its LICENSE and upstream README. No model or package downloads occur in the inference adapter. The model SHA-256 is `c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063`.
+A real COCO-pretrained YOLOX-S ONNX model from the official OpenCV Zoo distribution, served by a separate worker. Windows selects DirectML when available and falls back to CPU; macOS uses CPU. The directory declares Apache-2.0 licensing; the staged pack includes its LICENSE and upstream README. No model or package downloads occur in the inference adapter. The model SHA-256 is `c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063`.
 
 Vehicle labels: car, truck, bus, motorcycle, bicycle. They are **unconfirmed model proposals**, not human ground truth. Detector scores are not calibrated accuracy. Threshold 0.18 is a review-oriented engineering setting, not an accuracy guarantee. The full frame and overlapping native-resolution crops feed the same model, followed by cross-class vehicle NMS; separate overlapping passes are not independent votes.
 

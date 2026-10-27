@@ -6,7 +6,7 @@ _CAPABILITIES = [
     {
         'id': 'vehicle-detector.yolox-s-coco',
         'name': 'YOLOX-S vehicle proposal detector',
-        'role': 'local CPU detector; unconfirmed vehicle proposals',
+        'role': 'local ONNX detector with automatic Windows DirectML/CPU fallback; unconfirmed vehicle proposals',
         'methods': {
             'fine_tuning': 'not_implemented',
             'full_retraining': 'not_implemented',
