@@ -40,20 +40,18 @@ def execute(library,mission,run,pack):
             heldout={r[0] for r in conn.execute("SELECT DISTINCT image_id FROM reviews WHERE role IN ('validation','test')")}
             completed={r[0] for r in conn.execute('SELECT image_id FROM predictions WHERE inference_id=?',(run,))}
         pending_inputs=[row for row in inputs if row['id'] not in completed]
-        if head and any(json.loads(r['provenance']).get('preset')!='fintraffic' or Path(r['name']).stem.split('_')[0]!=head.data.get('view') for r in inputs):
-            raise ValueError('Selected light correction head does not match every source view; use an appropriate mission/view or select None')
-        def load(row):
-            with Image.open(library.image_path(mission,row['id'])) as image:
-                if image.width*image.height>24_000_000:raise ValueError('Image exceeds this adapter pixel budget')
-                return np.asarray(image.convert('RGB'))
-        # Background references stay in separate manual/source camera views.
         def row_view_key(row):
             if row.get('view_id'):
                 return 'manual:'+row['view_id']
             provenance=json.loads(row['provenance'])
             if provenance.get('preset')=='fintraffic':
-                return 'fintraffic:'+Path(row['name']).stem.split('_')[0]
+                return Path(row['name']).stem.split('_')[0]
             return None
+        def load(row):
+            with Image.open(library.image_path(mission,row['id'])) as image:
+                if image.width*image.height>24_000_000:raise ValueError('Image exceeds this adapter pixel budget')
+                return np.asarray(image.convert('RGB'))
+        # Background references stay in separate manual/source camera views.
         with library.connect(mission) as conn:
             if conn.execute("SELECT status FROM inference_runs WHERE id=?",(run,)).fetchone()['status']!='running':return
             conn.execute("UPDATE inference_runs SET stage='building_light_background' WHERE id=?",(run,))
@@ -125,11 +123,14 @@ def execute(library,mission,run,pack):
                             novelty=(gray.astype(np.float32)-base_median)>=np.maximum(25,3*base_mad)
                             persistent[~novelty]=1
                             light_context={'frequency':local.astype(np.float32)/n,'novelty':novelty}
-                    lights,light_details=propose(rgb,light_context,predictions,head)
+                    view_head=head if head and row_view_key(row)==head.data.get('view') else None
+                    lights,light_details=propose(rgb,light_context,predictions,view_head)
                     predictions.extend(lights);details['lights']=light_details
                     details['lights']['background_used']=light_context is not None
-                    details['night_head_id']=config.get('night_head_id')
-                    details['night_head_hash']=config.get('night_head_hash')
+                    details['night_head_id']=config.get('night_head_id') if view_head else None
+                    details['night_head_hash']=config.get('night_head_hash') if view_head else None
+                    if head and view_head is None:
+                        details['night_head_skipped_reason']='Selected correction head is bound to a different or unassigned camera view.'
                     details['lights']['view_similarity']=similarity
                     details['lights']['leave_out_image_id']=row['id'] if row['id'] in refindex else None
                 view_regions=config.get('view_regions_snapshot',{}).get(row.get('view_id') or '',[])

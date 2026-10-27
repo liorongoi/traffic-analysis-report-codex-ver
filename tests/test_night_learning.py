@@ -97,6 +97,29 @@ class LightLearningTests(unittest.TestCase):
         self.assertEqual(train(self.lib,self.m)['id'],result['id'])
         other=self.lib.create('Other','Latvia','Europe/Riga')
         with self.assertRaises(ValueError):load_head(self.lib,other,result['id'])
+    def test_operator_assigned_camera_view_enables_mission_local_fitting(self):
+        view=self.lib.create_view(self.m,'North approach','Reviewer')
+        for row in self.rows:
+            self.lib.assign_view(self.m,row['id'],view['id'],'Reviewer')
+        for row in self.rows[:2]:
+            self.lib.review(self.m,row['id'],0,self.labels(),'Reviewer',role='training')
+        self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Reviewer',role='test')
+        data=inventory(self.lib,self.m)
+        self.assertEqual({row['view'] for row in data['training']},{'manual:'+view['id']})
+        candidate=train(self.lib,self.m)
+        self.assertEqual(candidate['status'],'completed')
+        head,_=load_head(self.lib,self.m,candidate['id'])
+        self.assertEqual(head.data['view'],'manual:'+view['id'])
+    def test_validation_camera_view_must_match_training_view(self):
+        first=self.lib.create_view(self.m,'North approach','Reviewer')
+        second=self.lib.create_view(self.m,'South approach','Reviewer')
+        for row in self.rows[:2]:self.lib.assign_view(self.m,row['id'],first['id'],'Reviewer')
+        self.lib.assign_view(self.m,self.rows[2]['id'],second['id'],'Reviewer')
+        for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Reviewer',role='training')
+        self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Reviewer',role='validation')
+        with self.assertRaisesRegex(ValueError,'same verified camera view'):
+            train(self.lib,self.m)
+        self.assertEqual(candidates(self.lib,self.m),[])
     def test_independent_test_evaluation_is_recorded_once_without_training_side_effects(self):
         for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Synthetic test',role='training')
         self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Synthetic test',role='test')
@@ -211,15 +234,23 @@ class LightLearningTests(unittest.TestCase):
         from road_traffic.worker import execute
         pack=Path(__file__).resolve().parents[1]/'model-packs'/'yolox-s'
         if not (pack/'model.onnx').is_file():self.skipTest('Real model pack not staged')
+        view=self.lib.create_view(self.m,'North approach','Reviewer')
+        other_view=self.lib.create_view(self.m,'South approach','Reviewer')
+        for row in self.rows[:2]:self.lib.assign_view(self.m,row['id'],view['id'],'Reviewer')
+        self.lib.assign_view(self.m,self.rows[2]['id'],other_view['id'],'Reviewer')
         for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Synthetic test',role='training')
         result=train(self.lib,self.m);head,head_hash=load_head(self.lib,self.m,result['id']);_,sha=model_pack(pack)
         run=create_run(self.lib,self.m,{'adapter':VERSION,'threshold':.18,'tiled':False,'night_lights':True,
             'model_sha256':sha,'night_head_id':result['id'],'night_head_hash':head_hash})
         execute(self.lib,self.m,run,pack)
-        predictions=[a for row in self.lib.images(self.m,run) for a in row['predictions'] if a['kind']=='light']
-        self.assertTrue(predictions)
-        self.assertTrue(all(a['correction_head']['model_id']==result['id'] for a in predictions))
-        self.assertTrue(all(a['kind']=='light' for a in predictions))
+        rows={row['id']:row for row in self.lib.images(self.m,run)}
+        for source in self.rows[:2]:
+            lights=[a for a in rows[source['id']]['predictions'] if a['kind']=='light']
+            self.assertTrue(lights)
+            self.assertTrue(all(a['correction_head']['model_id']==result['id'] for a in lights))
+        other_lights=[a for a in rows[self.rows[2]['id']]['predictions'] if a['kind']=='light']
+        self.assertTrue(other_lights)
+        self.assertTrue(all('correction_head' not in a for a in other_lights))
 
     def test_checkpoint_tampering_is_rejected(self):
         for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Synthetic test',role='training')

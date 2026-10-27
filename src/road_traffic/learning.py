@@ -59,10 +59,22 @@ def prepare(library,mission):
 def inventory(library,mission):
     """Only explicit human classes from latest revisions; protect hashes and adjacent hour groups."""
     with library.connect(mission) as c:
-        rows=[dict(r) for r in c.execute('''SELECT reviews.*,images.sha256,images.name,images.capture_utc,images.provenance FROM reviews
-          JOIN images ON images.id=reviews.image_id WHERE reviews.revision=(SELECT MAX(r.revision) FROM reviews r WHERE r.image_id=reviews.image_id)''')]
-        protected=[dict(r) for r in c.execute("SELECT DISTINCT images.sha256,images.name,images.capture_utc,images.provenance FROM reviews JOIN images ON images.id=reviews.image_id WHERE role IN ('validation','test')")]
-    def group(r):return (Path(r['name']).name.split('_')[0] if '_' in r['name'] else 'unknown-view',r['capture_utc'][:13])
+        rows=[dict(r) for r in c.execute('''SELECT reviews.*,images.sha256,images.name,images.capture_utc,images.provenance,
+          COALESCE((SELECT h.view_id FROM image_view_history h WHERE h.mission_id=?
+            AND h.image_id=images.id ORDER BY h.revision DESC LIMIT 1),'') assigned_view_id
+          FROM reviews JOIN images ON images.id=reviews.image_id
+          WHERE reviews.revision=(SELECT MAX(r.revision) FROM reviews r WHERE r.image_id=reviews.image_id)''',(mission,))]
+        protected=[dict(r) for r in c.execute('''SELECT DISTINCT images.sha256,images.name,images.capture_utc,images.provenance,
+          COALESCE((SELECT h.view_id FROM image_view_history h WHERE h.mission_id=?
+            AND h.image_id=images.id ORDER BY h.revision DESC LIMIT 1),'') assigned_view_id
+          FROM reviews JOIN images ON images.id=reviews.image_id WHERE role IN ('validation','test')''',(mission,))]
+    def view_key(r):
+        if r.get('assigned_view_id'):
+            return 'manual:'+r['assigned_view_id']
+        if json.loads(r['provenance']).get('preset')=='fintraffic':
+            return Path(r['name']).stem.split('_')[0]
+        return None
+    def group(r):return (view_key(r) or 'unknown-view',r['capture_utc'][:13])
     hashes={r['sha256'] for r in protected};groups={group(r) for r in protected}
     result={'training':[],'validation':[],'test':[],'excluded':[],'review_count':len(rows),'source':'current mission only'}
     for r in rows:
@@ -75,7 +87,7 @@ def inventory(library,mission):
             label=a.get('night_class')
             if label not in NIGHT_CLASSES or not a.get('reviewed') or a.get('rejected') or a.get('review_confidence',0)<3:continue
             candidate={'review_id':r['id'],'revision':r['revision'],'image_id':r['image_id'],'sha256':r['sha256'],
-                'view':Path(r['name']).name.split('_')[0] if json.loads(r['provenance']).get('preset')=='fintraffic' else None,
+                'view':view_key(r),
                 'annotation_index':i,'class':label,'box':a['box'],'role':r['role'],'review_status':r['status'],
                 'prediction_id':a.get('prediction_id'),
                 'base_rule_class':BASE_SUBTYPE_CLASSES.get(a.get('light_subtype'))
@@ -345,7 +357,9 @@ def train(library,mission):
     if len(data['validation'])>NIGHT_TRAINING_PROFILE['max_validation_regions']:
         raise ValueError('Validation set exceeds this small-head budget; no labels were silently dropped')
     views={r['view'] for r in data['training']}
-    if None in views or len(views)!=1:raise ValueError('Assign a verified single camera view before fitting; only explicit Fintraffic views are currently supported')
+    if None in views or len(views)!=1:raise ValueError('Assign a verified single camera view to every training image before fitting')
+    if any(row['view'] not in views for row in data['validation']):
+        raise ValueError('Validation images must use the same verified camera view as training images')
     for m in library.missions():
         with library.connect(m['id']) as c:
             exists=c.execute("SELECT 1 FROM sqlite_master WHERE name='inference_runs'").fetchone()
