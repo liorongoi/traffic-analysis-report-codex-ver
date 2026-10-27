@@ -289,3 +289,8 @@ Night-head training now derives a stable camera-view key from the latest append-
 ## Relative calendar-day search — 2026-10-27
 
 Offline object search now accepts English and Hebrew today/yesterday/tomorrow phrases. Interpretation requires the selected saved run's IANA time zone and resolves the relative phrase immediately to an explicit local date in the saved search spec, so later execution does not shift as the calendar changes. Tests freeze a UTC clock near midnight to verify that the local date—not UTC date—drives yesterday, and check missing-zone and conflicting explicit-date errors. `tests.test_object_search` passed 31 tests locally. Broad free-form date language and regional idioms remain unsupported.
+
+
+## Windows preview package — 2026-10-27
+
+GitHub Actions run [`40574265539`](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/40574265539), commit `c20ba07`, completed successfully. Its Windows 2025 job passed all 246 Python tests in 206.917 seconds, staged the offline payload, compiled the single RoadLoom installer, installed and reinstalled into the same per-user directory, verified the payload receipt after reinstall, and confirmed a workspace sentinel survived both reinstall and uninstall. The preview artifact ZIP is 186,150,472 bytes, digest `sha256:9200d01772f38f1c418fa4cbefcf93bb6347ff10e5cbaa79c25a58e18626ac98`, and expires 2026-11-03. This is CI runner evidence, not acceptance on the user's disconnected workstation or LAN.
