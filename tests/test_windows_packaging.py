@@ -75,7 +75,12 @@ class WindowsPackagingTests(unittest.TestCase):
             for name in ('LICENSE', 'NOTICE', 'README.md'):
                 (pack / name).write_text(name, encoding='utf-8')
             ocr_assets = {}
-            for name, content in (('plate_ocr_arabic_ppocrv3_mobile.onnx', b'ocr model'), ('plate_ocr_arabic_dict.json', b'[]')):
+            for name, content in (
+                    ('plate_ocr_arabic_ppocrv3_mobile.onnx', b'ocr model'),
+                    ('plate_ocr_arabic_dict.json', b'[]'),
+                    ('plate_ocr_global_cct_s_v2.onnx', b'global ocr model'),
+                    ('plate_ocr_global_cct_s_v2_plate_config.yaml', b'alphabet: config'),
+                    ('plate_ocr_global_cct_s_v2_model_config.yaml', b'model: cct')):
                 (pack / name).write_bytes(content)
                 ocr_assets[name] = {'sha256': hashlib.sha256(content).hexdigest(), 'bytes': len(content)}
             manifest = {'model': 'plate_yolox_tiny_640.onnx',
@@ -89,6 +94,7 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertIn('model.onnx', vehicle['files'])
         self.assertIs(plate['ocr_assets_included'], True)
         self.assertIn('plate_ocr_arabic_ppocrv3_mobile.onnx', plate['ocr_artifacts'])
+        self.assertIn('plate_ocr_global_cct_s_v2.onnx', plate['ocr_artifacts'])
 
     def test_plate_pack_refuses_manifest_missing_recognition_assets(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -100,9 +100,11 @@ def validate_model_pack(pack, kind):
         model_name = manifest.get('model')
         ocr = manifest.get('ocr_artifacts')
         if model_name != 'plate_yolox_tiny_640.onnx' or manifest.get('ocr_assets_included') is not True or not isinstance(ocr, dict):
-            raise ValueError('Plate model manifest must include the detector and matched OCR model/dictionary')
+            raise ValueError('Plate model manifest must include the detector and matched OCR models/configurations')
         expected = {model_name: {'sha256': manifest.get('sha256'), 'bytes': manifest.get('bytes')}, **ocr}
-        required = (model_name, 'plate_ocr_arabic_ppocrv3_mobile.onnx', 'plate_ocr_arabic_dict.json', 'LICENSE', 'NOTICE', 'README.md')
+        required = (model_name, 'plate_ocr_arabic_ppocrv3_mobile.onnx', 'plate_ocr_arabic_dict.json',
+            'plate_ocr_global_cct_s_v2.onnx', 'plate_ocr_global_cct_s_v2_plate_config.yaml',
+            'plate_ocr_global_cct_s_v2_model_config.yaml', 'LICENSE', 'NOTICE', 'README.md')
     else:
         raise ValueError('Unknown model pack kind')
     for name in required:
@@ -160,7 +162,7 @@ def stage(project, runtime):
         shutil.copytree(plate_pack, output / 'model-packs' / 'license-plate-yolox')
         (output / 'PREVIEW-LIMITATIONS.txt').write_text(
             'This is a preview build, not an accepted production deployment.\n'
-            'Plate handling locates regions, saves chips, and proposes Latin and Arabic/Persian letters with digits with local OCR. '
+            'Plate handling locates regions, saves chips, and shows primary Arabic/Persian+Latin OCR alongside an optional Latin-only global OCR suggestion. '
             'Operators separately approve/correct/reject text; Persian digit recognition and target-country accuracy are unvalidated.\n'
             'Vehicle and plate detector accuracy, Windows execution, offline install/update, '
             'LAN deployment, GPU support, and target-hardware performance are not accepted.\n'

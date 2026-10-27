@@ -31,6 +31,24 @@
       "role": "matched Arabic/Persian and Latin CTC character dictionary",
       "license": "Apache-2.0 PaddleOCR dictionary at pinned source blob 916d421c53bad563dfd980c1b64dcce07a3c9d24",
       "source_url": "https://api.github.com/repos/PaddlePaddle/PaddleOCR/git/blobs/916d421c53bad563dfd980c1b64dcce07a3c9d24"
+    },
+    "plate_ocr_global_cct_s_v2.onnx": {
+      "sha256": "384bbbd2cea3ef54761d3df70822ef3a349ee1a112aeafddbe0e3ba06bc6e47b",
+      "bytes": 5262230,
+      "role": "Latin license-plate OCR plus region-head model",
+      "source_url": "https://github.com/ankandrew/cnn-ocr-lp/releases/download/arg-plates/cct_s_v2_global.onnx"
+    },
+    "plate_ocr_global_cct_s_v2_plate_config.yaml": {
+      "sha256": "0335c74a305173bb6f393efed0fde03cadeaa0b649ed8e19f431016d8232d0a6",
+      "bytes": 1725,
+      "role": "Matched Latin alphabet, region labels, and preprocessing configuration",
+      "source_url": "https://github.com/ankandrew/cnn-ocr-lp/releases/download/arg-plates/cct_s_v2_global_plate_config.yaml"
+    },
+    "plate_ocr_global_cct_s_v2_model_config.yaml": {
+      "sha256": "244c3c712205750e9747bca4707cd553a84005f41959745bff676b0fca8faba3",
+      "bytes": 1171,
+      "role": "Matched CCT v2 model architecture configuration",
+      "source_url": "https://github.com/ankandrew/cnn-ocr-lp/releases/download/arg-plates/cct_s_v2_global_model_config.yaml"
     }
   }
 }

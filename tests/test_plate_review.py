@@ -109,6 +109,7 @@ class PlateCropReviewTests(unittest.TestCase):
         (folder/(self.crop_id+'.jpg')).unlink()
         detector.return_value.sha='b'*64
         detector.return_value.recognizer.read.return_value={'text':'AB1234','confidence':.82,'model_sha256':'d'*64}
+        detector.return_value.global_recognizer.read.return_value={'text':'CD5678','confidence':.97,'model_sha256':'e'*64}
         detector.return_value.detect.return_value=[{'box':[.25,.25,.5,.25],'confidence':.91,'model_sha256':'b'*64}]
         rows=propose(self.lib,self.mission,self.image['id'],Path('model-packs/license-plate-yolox'))
         self.assertEqual(len(rows),1)
@@ -116,6 +117,11 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertEqual(rows[0]['source_name'],self.image['name'])
         self.assertTrue(crop_file(self.lib,self.mission,rows[0]['id']).is_file())
         self.assertEqual(rows[0]['ocr_text'],'AB1234');self.assertEqual(rows[0]['ocr_confidence'],.82)
+        self.assertEqual(rows[0]['ocr_alternative_text'],'CD5678')
+        self.assertEqual(rows[0]['ocr_alternative_confidence'],.97)
+        self.assertEqual(rows[0]['ocr_alternative_model_sha256'],'e'*64)
+        self.assertEqual(rows[0]['ocr_alternative_search_text'],'cd5678')
+        self.assertEqual(list_crops(self.lib,self.mission,search='CD-5678')[0]['ocr_alternative_text'],'CD5678')
         self.assertEqual(rows[0]['ocr_search_text'],'ab1234')
         self.assertEqual(rows[0]['text_decision'],None)
         repeated=propose(self.lib,self.mission,self.image['id'],Path('model-packs/license-plate-yolox'))
@@ -163,6 +169,7 @@ class PlateCropReviewTests(unittest.TestCase):
             sha='c'*64
             calls=0
             recognizer=Recognizer()
+            global_recognizer=Recognizer()
             def detect(self,image):
                 self.calls+=1
                 return [{'box':[.25,.25,.5,.25],'confidence':.9,'model_sha256':self.sha}]

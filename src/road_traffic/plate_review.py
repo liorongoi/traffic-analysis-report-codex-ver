@@ -22,6 +22,12 @@ OCR_MODEL_NAME = 'plate_ocr_arabic_ppocrv3_mobile.onnx'
 OCR_DICT_NAME = 'plate_ocr_arabic_dict.json'
 OCR_MODEL_SHA256 = '0394ca6c66c72d882b199aaeff34b3b448328592e14a0f95b36a398a339b2142'
 OCR_DICT_SHA256 = '45cb8e46aded3f9680d1b382676d17ea163ef8072da93b2d3fd349cf68520fb5'
+OCR_GLOBAL_MODEL_NAME = 'plate_ocr_global_cct_s_v2.onnx'
+OCR_GLOBAL_PLATE_CONFIG_NAME = 'plate_ocr_global_cct_s_v2_plate_config.yaml'
+OCR_GLOBAL_MODEL_CONFIG_NAME = 'plate_ocr_global_cct_s_v2_model_config.yaml'
+OCR_GLOBAL_MODEL_SHA256 = '384bbbd2cea3ef54761d3df70822ef3a349ee1a112aeafddbe0e3ba06bc6e47b'
+OCR_GLOBAL_PLATE_CONFIG_SHA256 = '0335c74a305173bb6f393efed0fde03cadeaa0b649ed8e19f431016d8232d0a6'
+OCR_GLOBAL_MODEL_CONFIG_SHA256 = '244c3c712205750e9747bca4707cd553a84005f41959745bff676b0fca8faba3'
 
 _PLATE_DIGITS = str.maketrans({
     **{chr(0x0660 + i): str(i) for i in range(10)},
@@ -40,6 +46,12 @@ def normalize_plate_text(value):
     normalized = unicodedata.normalize('NFKC', value).translate(_PLATE_DIGITS).casefold()
     return ''.join(char for char in normalized
         if unicodedata.category(char) not in ('Cf', 'Cc') and char.isalnum())
+
+
+def _global_latin_ocr_applicable(country):
+    """Avoid presenting a Latin-only alternative as useful for Iranian-script plates."""
+    value=unicodedata.normalize('NFKC',str(country or '')).strip().casefold()
+    return value not in ('iran','ir','irn','ایران','إيران')
 
 
 def _sha(path):
@@ -114,7 +126,11 @@ def _open_connection(db):
             ('time_base_den','INTEGER'), ('capture_utc','TEXT'), ('context_file','TEXT'),
             ('ocr_text', "TEXT NOT NULL DEFAULT ''"), ('ocr_confidence','REAL NOT NULL DEFAULT 0'),
             ('ocr_model_sha256', "TEXT NOT NULL DEFAULT ''"),
-            ('ocr_search_text', "TEXT NOT NULL DEFAULT ''")):
+            ('ocr_search_text', "TEXT NOT NULL DEFAULT ''"),
+            ('ocr_alternative_text', "TEXT NOT NULL DEFAULT ''"),
+            ('ocr_alternative_confidence', 'REAL NOT NULL DEFAULT 0'),
+            ('ocr_alternative_model_sha256', "TEXT NOT NULL DEFAULT ''"),
+            ('ocr_alternative_search_text', "TEXT NOT NULL DEFAULT ''")):
             if name not in columns:conn.execute(f'ALTER TABLE crops ADD COLUMN {name} {declaration}')
         text_columns={row['name'] for row in conn.execute('PRAGMA table_info(text_reviews)')}
         if 'normalized_text' not in text_columns:
@@ -130,7 +146,11 @@ def _open_connection(db):
         for row in conn.execute("SELECT id,ocr_text FROM crops WHERE ocr_search_text='' AND ocr_text<>''").fetchall():
             conn.execute('UPDATE crops SET ocr_search_text=? WHERE id=?',
                 (normalize_plate_text(row['ocr_text']),row['id']))
+        for row in conn.execute("SELECT id,ocr_alternative_text FROM crops WHERE ocr_alternative_search_text='' AND ocr_alternative_text<>''").fetchall():
+            conn.execute('UPDATE crops SET ocr_alternative_search_text=? WHERE id=?',
+                (normalize_plate_text(row['ocr_alternative_text']),row['id']))
         conn.execute('CREATE INDEX IF NOT EXISTS crops_ocr_search ON crops(ocr_search_text)')
+        conn.execute('CREATE INDEX IF NOT EXISTS crops_ocr_alternative_search ON crops(ocr_alternative_search_text)')
         return conn
     except BaseException:
         conn.close()
@@ -223,6 +243,68 @@ class PlateTextRecognizer:
         return { 'text':text, 'confidence':float(sum(confidence)/len(confidence)) if confidence else 0.0, 'model_sha256':self.sha }
 
 
+class GlobalPlateTextRecognizer:
+    """Latin-script global plate OCR candidate; output remains an unverified suggestion."""
+    alphabet='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_'
+    max_slots=10
+
+    def __init__(self,pack):
+        import cv2
+        import numpy as np
+        import onnxruntime as ort
+        pack=Path(pack).resolve(strict=True)
+        model=pack/OCR_GLOBAL_MODEL_NAME
+        plate_config=pack/OCR_GLOBAL_PLATE_CONFIG_NAME
+        model_config=pack/OCR_GLOBAL_MODEL_CONFIG_NAME
+        expected={
+            OCR_GLOBAL_MODEL_NAME:OCR_GLOBAL_MODEL_SHA256,
+            OCR_GLOBAL_PLATE_CONFIG_NAME:OCR_GLOBAL_PLATE_CONFIG_SHA256,
+            OCR_GLOBAL_MODEL_CONFIG_NAME:OCR_GLOBAL_MODEL_CONFIG_SHA256,
+        }
+        manifest=json.loads((pack/'manifest.json').read_text(encoding='utf-8'))
+        artifacts=manifest.get('ocr_artifacts',{})
+        for name,sha in expected.items():
+            entry=artifacts.get(name,{})
+            if entry.get('sha256')!=sha or _sha(pack/name)!=sha:
+                raise ValueError(f'Global plate OCR artifact checksum mismatch: {name}')
+        plate_text=plate_config.read_text(encoding='utf-8')
+        if ("alphabet: '"+self.alphabet+"'") not in plate_text or not all(
+            token in plate_text for token in ('max_plate_slots: 10','img_height: 64',
+                'img_width: 128','keep_aspect_ratio: false','image_color_mode: rgb')):
+            raise ValueError('Global plate OCR preprocessing or alphabet configuration is unexpected')
+        if 'model: cct' not in model_config.read_text(encoding='utf-8'):
+            raise ValueError('Global plate OCR architecture configuration is unexpected')
+        self.cv=cv2;self.np=np;self.sha=OCR_GLOBAL_MODEL_SHA256
+        self.session=create_session(ort,model,2)
+        inputs=self.session.get_inputs();outputs={item.name:item for item in self.session.get_outputs()}
+        if len(inputs)!=1 or inputs[0].name!='input' or inputs[0].shape[1:]!=[64,128,3]:
+            raise ValueError('Unexpected global plate OCR input schema')
+        if 'plate' not in outputs or outputs['plate'].shape[1:]!=[10,len(self.alphabet)]:
+            raise ValueError('Unexpected global plate OCR output schema')
+        self.input=inputs[0].name;self.output='plate'
+
+    def read(self,image):
+        if hasattr(image,'convert'):
+            image=self.np.asarray(image.convert('RGB'))
+        if not isinstance(image,self.np.ndarray) or image.ndim!=3 or image.shape[2]!=3 or not image.size:
+            raise ValueError('Global plate OCR requires a non-empty RGB plate image')
+        tensor=self.cv.resize(image,(128,64),interpolation=self.cv.INTER_LINEAR)[None]
+        raw=self.np.asarray(self.session.run([self.output],{self.input:tensor})[0],dtype=self.np.float32)
+        if raw.shape!=(1,self.max_slots,len(self.alphabet)) or not self.np.isfinite(raw).all():
+            raise ValueError(f'Unexpected global plate OCR output schema: {raw.shape}')
+        probs=raw[0]
+        if not (self.np.all(probs>=-1e-5) and self.np.all(probs<=1.00001)
+                and self.np.allclose(probs.sum(axis=-1),1,atol=1e-3)):
+            shifted=probs-probs.max(axis=-1,keepdims=True)
+            exp=self.np.exp(shifted);probs=exp/exp.sum(axis=-1,keepdims=True)
+        indices=probs.argmax(axis=-1);scores=probs.max(axis=-1)
+        chars=[self.alphabet[int(i)] for i in indices]
+        kept=[(char,float(score)) for char,score in zip(chars,scores) if char!='_']
+        text=''.join(char for char,_ in kept)
+        confidence=sum(score for _,score in kept)/len(kept) if kept else 0.0
+        return {'text':text,'confidence':float(confidence),'model_sha256':self.sha}
+
+
 class PlateDetector:
     def __init__(self,pack,threshold=.3):
         import cv2
@@ -235,6 +317,7 @@ class PlateDetector:
         self.input=self.session.get_inputs()[0].name
         self.threshold=threshold
         self.recognizer=PlateTextRecognizer(pack)
+        self.global_recognizer=GlobalPlateTextRecognizer(pack)
         self.grids=[]
         for stride in (8,16,32):
             y,x=np.meshgrid(np.arange(640//stride),np.arange(640//stride),indexing='ij')
@@ -284,6 +367,7 @@ def _iou(a,b):
 def propose(library,mission,image_id,pack,threshold=.3):
     from PIL import Image
     source=library.image_path(mission,image_id)
+    global_ocr_enabled=_global_latin_ocr_applicable(library.settings(mission).get('country'))
     with library.connect(mission) as conn:
         row=conn.execute('SELECT name,sha256 FROM images WHERE id=?',(image_id,)).fetchone()
     if not row:raise ValueError('Image not found in mission')
@@ -299,9 +383,11 @@ def propose(library,mission,image_id,pack,threshold=.3):
             if coords[2]<=coords[0] or coords[3]<=coords[1]:continue
             filename=f'{crop_id}.jpg';target=folder/filename;tmp=folder/(filename+'.tmp')
             ocr=detector.recognizer.read(im.crop(coords))
+            alternative=detector.global_recognizer.read(im.crop(coords)) if global_ocr_enabled else {
+                'text':'','confidence':0.0,'model_sha256':''}
             im.crop(coords).save(tmp,format='JPEG',quality=95)
             tmp.replace(target)
-            crops.append((crop_id,filename,target,item,coords,ocr))
+            crops.append((crop_id,filename,target,item,coords,ocr,alternative))
     created=datetime.now(timezone.utc).isoformat()
     inserted=[]
     try:
@@ -310,17 +396,20 @@ def propose(library,mission,image_id,pack,threshold=.3):
             if existing:
                 for item in crops:(folder/item[1]).unlink(missing_ok=True)
                 return list_crops(library,mission,image_id)
-            for crop_id,filename,path,item,coords,ocr in crops:
+            for crop_id,filename,path,item,coords,ocr,alternative in crops:
                 box=item['box']
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
                     crop_sha256,bbox,confidence,model_sha256,created,ocr_text,ocr_confidence,ocr_model_sha256,
-                    ocr_search_text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
+                    ocr_search_text,ocr_alternative_text,ocr_alternative_confidence,ocr_alternative_model_sha256,
+                    ocr_alternative_search_text)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],'height':coords[3]-coords[1]}),
                     item['confidence'],detector.sha,created,ocr['text'],ocr['confidence'],ocr['model_sha256'],
-                    normalize_plate_text(ocr['text'])))
+                    normalize_plate_text(ocr['text']),alternative['text'],alternative['confidence'],alternative['model_sha256'],
+                    normalize_plate_text(alternative['text'])) )
                 inserted.append(crop_id)
     except Exception:
-        for crop_id,filename,path,item,coords,ocr in crops:path.unlink(missing_ok=True)
+        for crop_id,filename,path,item,coords,ocr,alternative in crops:path.unlink(missing_ok=True)
         raise
     return list_crops(library,mission,image_id)
 
@@ -332,6 +421,7 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
     import numpy as np
     _,folder,db=_paths(library,mission)
     source=video_store.source_detail(library,mission,source_id)
+    global_ocr_enabled=_global_latin_ocr_applicable(library.settings(mission).get('country'))
     image_id=f"video:{source_id}:{decoded.index}"
     with _connect(db) as conn:
         existing=conn.execute('''SELECT id FROM crops WHERE source_kind='video'
@@ -354,24 +444,29 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
                 crop_name=f'{crop_id}.jpg';context_name=f'{crop_id}-context.jpg'
                 crop_path=folder/crop_name;context_path=folder/context_name
                 ocr=detector.recognizer.read(image.crop(coords))
+                alternative=detector.global_recognizer.read(image.crop(coords)) if global_ocr_enabled else {
+                    'text':'','confidence':0.0,'model_sha256':''}
                 image.crop(coords).save(crop_path,format='JPEG',quality=95)
                 image.save(context_path,format='JPEG',quality=88)
-                saved.append((crop_id,crop_name,context_name,crop_path,context_path,item,coords,ocr))
+                saved.append((crop_id,crop_name,context_name,crop_path,context_path,item,coords,ocr,alternative))
         with _connect(db) as conn:
-            for crop_id,crop_name,context_name,crop_path,context_path,item,coords,ocr in saved:
+            for crop_id,crop_name,context_name,crop_path,context_path,item,coords,ocr,alternative in saved:
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
                     crop_sha256,bbox,confidence,model_sha256,created,source_kind,video_source_id,
                     frame_index,pts,time_base_num,time_base_den,capture_utc,context_file,
-                    ocr_text,ocr_confidence,ocr_model_sha256,ocr_search_text)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+                    ocr_text,ocr_confidence,ocr_model_sha256,ocr_search_text,ocr_alternative_text,
+                    ocr_alternative_confidence,ocr_alternative_model_sha256,ocr_alternative_search_text)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
                     crop_id,image_id,source['original_name'],source['sha256'],crop_name,_sha(crop_path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],
                         'height':coords[3]-coords[1]}),item['confidence'],detector.sha,created,'video',
                     source_id,decoded.index,decoded.timestamp.pts,decoded.timestamp.time_base_num,
                     decoded.timestamp.time_base_den,utc.isoformat() if utc else None,context_name,
-                    ocr['text'],ocr['confidence'],ocr['model_sha256'],normalize_plate_text(ocr['text'])))
+                    ocr['text'],ocr['confidence'],ocr['model_sha256'],normalize_plate_text(ocr['text']),
+                    alternative['text'],alternative['confidence'],alternative['model_sha256'],
+                    normalize_plate_text(alternative['text'])))
     except Exception:
-        for _,_,_,crop_path,context_path,_,_,_ in saved:
+        for _,_,_,crop_path,context_path,_,_,_,_ in saved:
             crop_path.unlink(missing_ok=True);context_path.unlink(missing_ok=True)
         raise
     return [crop_id for crop_id,*_ in saved]
@@ -394,8 +489,8 @@ def list_crops(library,mission,image_id=None,search=None):
         if search is not None and search.strip() and not key:
             return []
         if key:
-            conditions.append('(instr(c.ocr_search_text,?)>0 OR instr(tr.normalized_text,?)>0)')
-            params.extend((key,key))
+            conditions.append('(instr(c.ocr_search_text,?)>0 OR instr(c.ocr_alternative_search_text,?)>0 OR instr(tr.normalized_text,?)>0)')
+            params.extend((key,key,key))
         if conditions:sql+=' WHERE '+' AND '.join(conditions)
         sql+=' ORDER BY c.created,c.source_name,c.id'
         return [dict(row) for row in conn.execute(sql,params).fetchall()]
