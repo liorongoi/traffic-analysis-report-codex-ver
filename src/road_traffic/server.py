@@ -211,10 +211,12 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     path=context_file(library,query['mission'][0],query['crop'][0])
                     return self.reply(200,path.read_bytes(),'image/jpeg')
                 if parsed.path == '/api/night-learning':
-                    from .learning import inventory,candidates,evaluation_status,governance_status
+                    from .learning import (inventory,reviewed_evidence_inventory,candidates,
+                        evaluation_status,governance_status)
                     from .learning_capabilities import inventory as capability_inventory
                     m=query['mission'][0]
                     return self.reply(200,{'inventory':inventory(library,m),'candidates':candidates(library,m),
+                        'evidence_inventory':reviewed_evidence_inventory(library,m),
                         'evaluation':evaluation_status(library,m),'governance':governance_status(library,m),
                         'capabilities':capability_inventory()})
                 if parsed.path == '/api/inference':

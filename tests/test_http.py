@@ -246,6 +246,9 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(json.load(response),{'candidates':[],'history':[]})
         with self.request('/api/night-learning?mission='+mission) as response:
             learning=json.load(response)
+        self.assertEqual(learning['evidence_inventory']['source'],'current mission only')
+        self.assertFalse(learning['evidence_inventory']['model_predictions_used_as_labels'])
+        self.assertEqual(learning['evidence_inventory']['roles']['training']['images'],0)
         self.assertEqual(learning['evaluation']['test_regions'],0)
         self.assertFalse(learning['evaluation']['already_evaluated'])
         self.assertIsNone(learning['governance']['promoted_candidate_id'])

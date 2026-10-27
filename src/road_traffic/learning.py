@@ -117,6 +117,85 @@ def inventory(library,mission):
     return result
 
 
+def reviewed_evidence_inventory(library, mission):
+    """Summarize explicit human image labels by saved evidence role.
+
+    This is an inspection report, not a training-data export or a declaration
+    that a detector has a working training adapter. Model predictions, OCR
+    suggestions, bulk approvals, and unmarked content in partial reviews are
+    never counted as labels.
+    """
+    result = {
+        'source': 'current mission only',
+        'purpose': 'evidence inventory; not a training dataset or adapter claim',
+        'model_predictions_used_as_labels': False,
+        'bulk_approvals_used_as_labels': False,
+        'partial_unmarked_regions_used_as_negatives': False,
+        'roles': {role: {
+            'images': 0, 'fully_reviewed_images': 0, 'partially_reviewed_images': 0,
+            'images_with_explicit_human_labels': 0, 'explicit_human_regions': 0,
+            'explicitly_rejected_model_regions': 0, 'regions_by_kind': {}, 'regions_by_label': {},
+            'camera_hour_groups': 0,
+        } for role in ('training', 'validation', 'test')},
+        'cross_role_duplicate_hashes': 0,
+        'cross_role_camera_hour_groups': 0,
+    }
+    by_hash_roles = {}
+    by_view_time_roles = {}
+    label_images = {role: set() for role in ('training', 'validation', 'test')}
+    view_groups = {role: set() for role in ('training', 'validation', 'test')}
+    with library.connect(mission) as conn:
+        rows = conn.execute('''
+            SELECT r.role,r.status,r.annotations,
+                i.id AS image_id,i.sha256,i.capture_utc,i.name,i.provenance,
+                COALESCE((SELECT h.view_id FROM image_view_history h
+                    WHERE h.mission_id=? AND h.image_id=i.id
+                    ORDER BY h.revision DESC LIMIT 1),'') AS assigned_view_id
+            FROM reviews r JOIN images i ON i.id=r.image_id
+            WHERE r.revision=(SELECT MAX(latest.revision) FROM reviews latest
+                WHERE latest.image_id=r.image_id)
+            AND r.role IN ('training','validation','test')
+            ORDER BY r.id
+        ''', (mission,))
+        for raw_row in rows:
+            row = dict(raw_row)
+            role = row['role']
+            counts = result['roles'][role]
+            counts['images'] += 1
+            counts['fully_reviewed_images'] += row['status'] == 'reviewed'
+            counts['partially_reviewed_images'] += row['status'] == 'partial'
+            by_hash_roles.setdefault(row['sha256'], set()).add(role)
+            provenance = json.loads(row['provenance'] or '{}')
+            view = ('manual:' + row['assigned_view_id'] if row['assigned_view_id'] else
+                Path(row['name']).stem.split('_')[0] if provenance.get('preset') == 'fintraffic' else None)
+            if view:
+                hour_group = (view, row['capture_utc'][:13])
+                by_view_time_roles.setdefault(hour_group, set()).add(role)
+                view_groups[role].add(hour_group)
+            for annotation in json.loads(row['annotations'] or '[]'):
+                if (annotation.get('origin') == 'model' and annotation.get('reviewed') is True
+                        and annotation.get('rejected') is True):
+                    counts['explicitly_rejected_model_regions'] += 1
+                    continue
+                if (annotation.get('origin') != 'human' or annotation.get('reviewed') is not True
+                        or annotation.get('rejected') is True):
+                    continue
+                counts['explicit_human_regions'] += 1
+                label_images[role].add(row['image_id'])
+                kind = annotation.get('kind') or 'unknown'
+                label = annotation.get('label') or 'unlabeled'
+                counts['regions_by_kind'][kind] = counts['regions_by_kind'].get(kind, 0) + 1
+                counts['regions_by_label'][label] = counts['regions_by_label'].get(label, 0) + 1
+    for role, counts in result['roles'].items():
+        counts['images_with_explicit_human_labels'] = len(label_images[role])
+        counts['regions_by_kind'] = dict(sorted(counts['regions_by_kind'].items()))
+        counts['regions_by_label'] = dict(sorted(counts['regions_by_label'].items()))
+        counts['camera_hour_groups'] = len(view_groups[role])
+    result['cross_role_duplicate_hashes'] = sum(len(roles) > 1 for roles in by_hash_roles.values())
+    result['cross_role_camera_hour_groups'] = sum(len(roles) > 1 for roles in by_view_time_roles.values())
+    return result
+
+
 class Head:
     def __init__(self,data,identifier):self.data,self.identifier=data,identifier
     def predict(self,features):
