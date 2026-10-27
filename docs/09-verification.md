@@ -304,3 +304,8 @@ Image-batch import now totals the current source snapshot sizes and compares the
 ## Output-directory write validation — 2026-10-27
 
 Mission setup and export now verify output permissions by creating a unique temporary file in the selected output directory, writing bytes, flushing and fsyncing it, and then removing it. If ACLs or network-share behavior make the folder unwritable despite `os.access`, setup/export returns a visible write-check error. `tests.test_foundation` passed 36 tests, including success with no probe-file residue and a simulated ACL failure. This validates current write access only; it does not reserve export space or establish long-term network-share availability.
+
+
+## Windows preview package with camera-view learning — 2026-10-27
+
+GitHub Actions run [`40575069859`](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/40575069859), commit `a3825ac`, completed successfully. Its Windows 2025 job passed all 248 tests in 174.118 seconds; the suite includes fitting the light head from an operator-assigned view and the real-model worker test applying it only to that view during a mixed-view run. It staged the offline payload, compiled the single installer, installed/reinstalled, verified the receipt, and confirmed workspace data survived reinstall and uninstall. The preview artifact ZIP is 186,153,872 bytes, digest `sha256:c57020eef3fdb25649cee0f50ddba299dbbdc968ba907d6c22ab2d0e9b541426`, expiring 2026-11-03. This does not verify relative-date search or storage-preflight changes added after this commit; their Windows runs are still pending.
