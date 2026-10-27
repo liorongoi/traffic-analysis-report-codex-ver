@@ -261,6 +261,7 @@ class Library:
         try:
             with conn:
                 conn.executescript('''
+                BEGIN IMMEDIATE;
                 CREATE TABLE mission(id TEXT PRIMARY KEY,name TEXT,country TEXT,zone TEXT,created TEXT);
                 CREATE TABLE mission_settings(
                     mission_id TEXT PRIMARY KEY REFERENCES mission(id),

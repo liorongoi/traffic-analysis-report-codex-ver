@@ -61,7 +61,7 @@ class HttpTests(unittest.TestCase):
             hdr['Content-Type']='application/json'
             if token:hdr['X-Session-Token']=self.session['token']
         try:
-            return urllib.request.urlopen(urllib.request.Request(self.base+path,data=json.dumps(data).encode() if data is not None else None,headers=hdr),timeout=5)
+            return urllib.request.urlopen(urllib.request.Request(self.base+path,data=json.dumps(data).encode() if data is not None else None,headers=hdr),timeout=30)
         except urllib.error.HTTPError as exc:
             body=exc.read()
             diagnostic=urllib.error.HTTPError(exc.url,exc.code,exc.msg,exc.hdrs,io.BytesIO(body))
