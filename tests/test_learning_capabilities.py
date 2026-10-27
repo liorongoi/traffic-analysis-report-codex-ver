@@ -27,7 +27,9 @@ class LearningCapabilityTests(unittest.TestCase):
         self.assertEqual(by_id['night-background.per-view-reference']['methods'][
             'background_model_refitting'], 'supported')
         self.assertIn('excluded', ' '.join(by_id['night-light.multinomial-correction-head']['limitations']))
-        self.assertIn('recognition', ' '.join(by_id['plate-region.yolox-tiny']['limitations']))
+        plate_limitations = ' '.join(by_id['plate-region.yolox-tiny']['limitations'])
+        self.assertIn('unverified suggestion', plate_limitations)
+        self.assertIn('Identity lookup is excluded', plate_limitations)
 
 
 if __name__ == '__main__':

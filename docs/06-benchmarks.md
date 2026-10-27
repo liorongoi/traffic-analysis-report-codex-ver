@@ -15,6 +15,10 @@ The user-provided Iranian plate reference image shows private, disability, publi
 
 The user-provided Lebanese plate-reference images show private-vehicle examples and public, governmental, and service variants, including differing colors and commercial/motorcycle layouts. Use them as qualitative guidance for collecting authorized samples, not as labeled acceptance data. Local OCR suggestions include Latin and Arabic/Persian letters with digits, but are not validated for Lebanese plate text; the app does not identify plate type or vehicle identity. These images are visual references, not labeled acceptance data, and are not included in the repository.
 
+### Global License Plate Dataset research lead (2026-10-27)
+
+The user-provided [Global License Plate Dataset paper](https://arxiv.org/abs/2405.10949) describes a large multi-country dataset assembled from multiple upstream sources. Its [official project repository](https://github.com/siddagra/Global-License-Plate-Dataset) points to externally hosted data; neither the paper nor repository establishes one blanket reuse license for every source image. Do not download, redistribute, or train on the dataset until each relevant upstream source's terms and provenance are confirmed. Its reported country coverage and aggregate metrics do not establish accuracy for Iran, Lebanon, Israel, or Latvia. Treat it as a research lead only; target-country evaluation still requires authorized, independently labeled and held-out samples.
+
 ## Video integration candidates
 
 - [Open Skoltech Car (OS:Car)](https://newpavlov.github.io/oscar-website/) documents CC BY 4.0 data, frame files named with Unix timestamps in microseconds, and assembled WebM sequences. The site says only a small portion is uploaded. This moving-car winter-road dataset may support a parser/pipeline smoke fixture after inspection of an actually available sequence and verification of frame-to-UTC alignment; it does not satisfy fixed-camera acceptance.

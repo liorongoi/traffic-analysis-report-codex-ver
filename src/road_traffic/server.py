@@ -174,7 +174,8 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     return self.reply(200, library.images(query['mission'][0],query.get('run',[None])[0]))
                 if parsed.path == '/api/plates':
                     from .plate_review import list_crops
-                    return self.reply(200, list_crops(library,query['mission'][0],query.get('image',[None])[0]))
+                    return self.reply(200, list_crops(library,query['mission'][0],
+                        query.get('image',[None])[0],query.get('q',[''])[0]))
                 if parsed.path == '/api/plate-crop':
                     from .plate_review import crop_file
                     path=crop_file(library,query['mission'][0],query['crop'][0])

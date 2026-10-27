@@ -11,6 +11,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
@@ -118,6 +119,7 @@ class HttpTests(unittest.TestCase):
             page=response.read().decode('utf-8')
             self.assertIn('RoadLoom',page)
             self.assertNotIn('lanLogout',page)
+            self.assertIn('id="plateSearch"',page)
             self.assertIn('name="resource_profile"',page)
             self.assertIn('id="helpPanel"',page)
             self.assertIn('id="videoWorkflow"',page)
@@ -178,6 +180,34 @@ class HttpTests(unittest.TestCase):
     def test_write_requires_session_token(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},token=False)
         self.assertEqual(exc.exception.code,403)
+
+    def test_plate_text_search_api_matches_normalized_ocr_and_verified_text(self):
+        from road_traffic.plate_review import _connect, _paths, list_crops, normalize_plate_text
+        from road_traffic.store import Library
+        with tempfile.TemporaryDirectory() as output_dir:
+            with self.request('/api/missions',{'name':'Plate search','country':'Lebanon',
+                    'zone':'Asia/Beirut','input_type':'images','analysis_mode':'license_plate',
+                    'output_root':output_dir}) as response:
+                mission=json.load(response)['id']
+            library=Library(Path(self.tmp.name))
+            _,folder,db=_paths(library,mission)
+            crop_id='00000000-0000-4000-8000-000000000123'
+            crop=folder/(crop_id+'.jpg');crop.write_bytes(b'fixture crop')
+            original='٠٠١٢-ب/34'
+            with _connect(db) as conn:
+                conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
+                    crop_sha256,bbox,confidence,model_sha256,created,ocr_text,ocr_confidence,
+                    ocr_model_sha256,ocr_search_text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+                    crop_id,'image-1','source.jpg','a'*64,crop.name,
+                    __import__('hashlib').sha256(crop.read_bytes()).hexdigest(),'{}',.8,'b'*64,
+                    '2026-10-27T00:00:00+00:00',original,.7,'c'*64,
+                    normalize_plate_text(original)))
+            query=urllib.parse.quote('0012ب34')
+            with self.request(f'/api/plates?mission={mission}&q={query}') as response:
+                rows=json.load(response)
+            self.assertEqual([row['id'] for row in rows],[crop_id])
+            self.assertEqual(rows[0]['ocr_text'],original)
+            self.assertEqual(len(list_crops(library,mission,search='٠٠١٢-ب/34')),1)
     def test_cross_origin_write_rejected(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},headers={'Origin':'http://external.invalid'})
         self.assertEqual(exc.exception.code,403)

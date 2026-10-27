@@ -79,7 +79,8 @@ _CAPABILITIES = [
         },
         'available_controls': ['run-scoped detection threshold'],
         'limitations': ['No project training adapter or country-specific accuracy evidence.',
-            'Plate text recognition, OCR, and identity lookup are excluded.'],
+            'Local OCR text is an unverified suggestion; human review is recorded separately.',
+            'Identity lookup is excluded.'],
     },
     {
         'id': 'video-association.policy-tracker',

@@ -15,6 +15,21 @@ LAUNCHER = runpy.run_path(str(ROOT / 'scripts' / 'launch.py'))
 
 
 class WindowsPackagingTests(unittest.TestCase):
+    def test_single_roadloom_installer_keeps_upgrade_identity_and_branded_icon(self):
+        installers = list((ROOT / 'installer').rglob('*.iss'))
+        self.assertEqual([path.relative_to(ROOT).as_posix() for path in installers],
+            ['installer/windows/traffic-analysis.iss'])
+        script = installers[0].read_text(encoding='utf-8')
+        self.assertIn('AppId=RoadTrafficAnalysisIndependent', script)
+        self.assertIn('AppName=RoadLoom Preview', script)
+        self.assertIn('DefaultDirName={localappdata}\\Programs\\RoadTrafficAnalysis', script)
+        self.assertIn('OutputBaseFilename=RoadLoom-Preview-Setup', script)
+        self.assertIn('SetupIconFile=..\\..\\web\\roadloom.ico', script)
+        self.assertIn('IconFilename: "{app}\\web\\roadloom.ico"', script)
+        workflow = (ROOT / '.github' / 'workflows' / 'windows-preview-package.yml').read_text(encoding='utf-8')
+        self.assertIn('RoadLoom-Preview-Setup.exe', workflow)
+        self.assertNotIn('Traffic-Analysis-Preview-Setup.exe', workflow)
+
     @staticmethod
     def fake_windows_runtime(runtime, lock_path):
         runtime.mkdir(parents=True, exist_ok=True)

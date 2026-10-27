@@ -144,7 +144,7 @@ Still-image runs now build a separate bounded light-reference artifact for each 
 
 Reviewers can merge an event into a same-run target or split a track at a saved analyzed frame with observations on both sides. Merge projection emits one logical event with the combined interval, labels, observation count, and original event IDs. A split emits two child rows with frame-derived timing and preserved parent identity. Review actions are append-only; a later clear action restores the original event projection. Event browsing and representative previews resolve corrected rows, clip exports use corrected bounds, and CSV/XLSX snapshots emit corrected logical rows with original event IDs and linked clip lineage. Tests cover merge, split, undo, event exports and the corrected child clip path. Full suite: 186 tests passed; `node --check web/app.js` and `git diff --check` passed. This does not validate tracker association accuracy or event quality on representative traffic footage.
 
-## Opt-in authenticated LAN host
+## Opt-in LAN host without application sign-in
 
 The loopback development server remains the default. LAN binding requires a non-loopback bind address, exact public hostname/IP, existing TLS certificate and private key. It requires TLS 1.2+, exact Host/Origin matches and the existing process-local token for writes, with no app-level sign-in or cookies. HTTPS integration tests cover direct page/session access, invalid Host/Origin, missing write-token rejection and retired sign-in routes. Native browser-trusted certificate, restrictive host firewall, Windows runtime, and two-computer LAN acceptance remain pending.
 
@@ -241,3 +241,6 @@ Implemented in the working tree: the local CPU pipeline pairs the plate detector
 
 
 RoadLoom sign-in removal and branding check (2026-10-27): `node --check web/app.js`, Python bytecode compilation, and `git diff --check` passed. All 3 HTTPS LAN security integration tests passed, and the focused HTTP page/assets, write-token, and origin tests passed. Broader HTTP suite ran 28 tests; 26 passed and 2 model-dependent tests could not run because this environment lacks `cv2` (OpenCV). The Windows installer was not compiled here.
+
+
+Plate text search normalization (2026-10-27): saved original OCR and human-reviewed strings now have derived search keys that fold Unicode compatibility forms and Arabic/Persian digits, remove separators and invisible direction controls, and preserve character order and leading zeros. Crop search queries both the OCR proposal and the latest accepted/corrected human value. Nine plate-review tests pass, including migration of a legacy database while preserving append-only review history. The focused HTTP search and page tests and the single-installer upgrade-identity test pass; `node --check web/app.js`, Python compilation, and `git diff --check` pass. Target-country layout classification and recognition accuracy remain unvalidated.

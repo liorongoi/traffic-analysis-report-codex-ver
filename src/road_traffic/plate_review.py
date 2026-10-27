@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import sqlite3
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,24 @@ OCR_MODEL_NAME = 'plate_ocr_arabic_ppocrv3_mobile.onnx'
 OCR_DICT_NAME = 'plate_ocr_arabic_dict.json'
 OCR_MODEL_SHA256 = '0394ca6c66c72d882b199aaeff34b3b448328592e14a0f95b36a398a339b2142'
 OCR_DICT_SHA256 = '45cb8e46aded3f9680d1b382676d17ea163ef8072da93b2d3fd349cf68520fb5'
+
+_PLATE_DIGITS = str.maketrans({
+    **{chr(0x0660 + i): str(i) for i in range(10)},
+    **{chr(0x06F0 + i): str(i) for i in range(10)},
+})
+
+
+def normalize_plate_text(value):
+    """Build a comparison key while leaving original OCR and reviewed text untouched.
+
+    Unicode compatibility forms and Arabic/Persian digit shapes are folded for
+    search. Letter order and leading zeros are preserved; separators are omitted.
+    """
+    if not isinstance(value, str):
+        return ''
+    normalized = unicodedata.normalize('NFKC', value).translate(_PLATE_DIGITS).casefold()
+    return ''.join(char for char in normalized
+        if unicodedata.category(char) not in ('Cf', 'Cc') and char.isalnum())
 
 
 def _sha(path):
@@ -64,7 +83,8 @@ def _open_connection(db):
                 crop_sha256 TEXT NOT NULL, bbox TEXT NOT NULL, confidence REAL NOT NULL,
                 model_sha256 TEXT NOT NULL, created TEXT NOT NULL,
                 ocr_text TEXT NOT NULL DEFAULT '', ocr_confidence REAL NOT NULL DEFAULT 0,
-                ocr_model_sha256 TEXT NOT NULL DEFAULT '');
+                ocr_model_sha256 TEXT NOT NULL DEFAULT '',
+                ocr_search_text TEXT NOT NULL DEFAULT '');
             CREATE TABLE IF NOT EXISTS reviews(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, crop_id TEXT NOT NULL REFERENCES crops(id),
                 revision INTEGER NOT NULL, decision TEXT NOT NULL CHECK(decision IN ('approved','rejected')),
@@ -72,7 +92,8 @@ def _open_connection(db):
             CREATE TABLE IF NOT EXISTS text_reviews(
                 id INTEGER PRIMARY KEY AUTOINCREMENT, crop_id TEXT NOT NULL REFERENCES crops(id),
                 revision INTEGER NOT NULL, decision TEXT NOT NULL CHECK(decision IN ('accepted','corrected','rejected','unreadable')),
-                verified_text TEXT NOT NULL DEFAULT '', operator TEXT NOT NULL, created TEXT NOT NULL,
+                verified_text TEXT NOT NULL DEFAULT '', normalized_text TEXT NOT NULL DEFAULT '',
+                operator TEXT NOT NULL, created TEXT NOT NULL,
                 UNIQUE(crop_id,revision));
             CREATE INDEX IF NOT EXISTS text_reviews_latest ON text_reviews(crop_id,revision DESC);
             CREATE TRIGGER IF NOT EXISTS immutable_plate_text_reviews_update BEFORE UPDATE ON text_reviews
@@ -91,8 +112,24 @@ def _open_connection(db):
             ('frame_index','INTEGER'), ('pts','INTEGER'), ('time_base_num','INTEGER'),
             ('time_base_den','INTEGER'), ('capture_utc','TEXT'), ('context_file','TEXT'),
             ('ocr_text', "TEXT NOT NULL DEFAULT ''"), ('ocr_confidence','REAL NOT NULL DEFAULT 0'),
-            ('ocr_model_sha256', "TEXT NOT NULL DEFAULT ''")):
+            ('ocr_model_sha256', "TEXT NOT NULL DEFAULT ''"),
+            ('ocr_search_text', "TEXT NOT NULL DEFAULT ''")):
             if name not in columns:conn.execute(f'ALTER TABLE crops ADD COLUMN {name} {declaration}')
+        text_columns={row['name'] for row in conn.execute('PRAGMA table_info(text_reviews)')}
+        if 'normalized_text' not in text_columns:
+            conn.execute("ALTER TABLE text_reviews ADD COLUMN normalized_text TEXT NOT NULL DEFAULT ''")
+            # This migration adds a derived index only; user decisions and source
+            # text remain unchanged. Recreate the append-only guard around it.
+            conn.execute('DROP TRIGGER IF EXISTS immutable_plate_text_reviews_update')
+            for row in conn.execute('SELECT id,verified_text FROM text_reviews').fetchall():
+                conn.execute('UPDATE text_reviews SET normalized_text=? WHERE id=?',
+                    (normalize_plate_text(row['verified_text']),row['id']))
+            conn.execute('''CREATE TRIGGER immutable_plate_text_reviews_update BEFORE UPDATE ON text_reviews
+                BEGIN SELECT RAISE(ABORT,'plate text reviews are append-only'); END''')
+        for row in conn.execute("SELECT id,ocr_text FROM crops WHERE ocr_search_text='' AND ocr_text<>''").fetchall():
+            conn.execute('UPDATE crops SET ocr_search_text=? WHERE id=?',
+                (normalize_plate_text(row['ocr_text']),row['id']))
+        conn.execute('CREATE INDEX IF NOT EXISTS crops_ocr_search ON crops(ocr_search_text)')
         return conn
     except BaseException:
         conn.close()
@@ -281,10 +318,11 @@ def propose(library,mission,image_id,pack,threshold=.3):
             for crop_id,filename,path,item,coords,ocr in crops:
                 box=item['box']
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
-                    crop_sha256,bbox,confidence,model_sha256,created,ocr_text,ocr_confidence,ocr_model_sha256)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',(crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
+                    crop_sha256,bbox,confidence,model_sha256,created,ocr_text,ocr_confidence,ocr_model_sha256,
+                    ocr_search_text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],'height':coords[3]-coords[1]}),
-                    item['confidence'],detector.sha,created,ocr['text'],ocr['confidence'],ocr['model_sha256']))
+                    item['confidence'],detector.sha,created,ocr['text'],ocr['confidence'],ocr['model_sha256'],
+                    normalize_plate_text(ocr['text'])))
                 inserted.append(crop_id)
     except Exception:
         for crop_id,filename,path,item,coords,ocr in crops:path.unlink(missing_ok=True)
@@ -329,14 +367,14 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
                     crop_sha256,bbox,confidence,model_sha256,created,source_kind,video_source_id,
                     frame_index,pts,time_base_num,time_base_den,capture_utc,context_file,
-                    ocr_text,ocr_confidence,ocr_model_sha256)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+                    ocr_text,ocr_confidence,ocr_model_sha256,ocr_search_text)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
                     crop_id,image_id,source['original_name'],source['sha256'],crop_name,_sha(crop_path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],
                         'height':coords[3]-coords[1]}),item['confidence'],detector.sha,created,'video',
                     source_id,decoded.index,decoded.timestamp.pts,decoded.timestamp.time_base_num,
                     decoded.timestamp.time_base_den,utc.isoformat() if utc else None,context_name,
-                    ocr['text'],ocr['confidence'],ocr['model_sha256']))
+                    ocr['text'],ocr['confidence'],ocr['model_sha256'],normalize_plate_text(ocr['text'])))
     except Exception:
         for _,_,_,crop_path,context_path,_,_,_ in saved:
             crop_path.unlink(missing_ok=True);context_path.unlink(missing_ok=True)
@@ -344,16 +382,26 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
     return [crop_id for crop_id,*_ in saved]
 
 
-def list_crops(library,mission,image_id=None):
+def list_crops(library,mission,image_id=None,search=None):
     root,folder,db=_paths(library,mission)
     with _connect(db) as conn:
         sql='''SELECT c.*,r.decision,r.operator,r.revision,
-            tr.decision AS text_decision,tr.verified_text,tr.revision AS text_revision,tr.operator AS text_operator
+            tr.decision AS text_decision,tr.verified_text,tr.normalized_text,
+            tr.revision AS text_revision,tr.operator AS text_operator
             FROM crops c LEFT JOIN reviews r ON r.id=(
             SELECT id FROM reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)
             LEFT JOIN text_reviews tr ON tr.id=(SELECT id FROM text_reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)'''
-        params=()
-        if image_id:sql+=' WHERE c.image_id=?';params=(image_id,)
+        conditions=[];params=[]
+        if image_id:conditions.append('c.image_id=?');params.append(image_id)
+        if search is not None and (not isinstance(search,str) or len(search)>64):
+            raise ValueError('Plate text search must be a string up to 64 characters')
+        key=normalize_plate_text(search)
+        if search is not None and search.strip() and not key:
+            return []
+        if key:
+            conditions.append('(instr(c.ocr_search_text,?)>0 OR instr(tr.normalized_text,?)>0)')
+            params.extend((key,key))
+        if conditions:sql+=' WHERE '+' AND '.join(conditions)
         sql+=' ORDER BY c.created,c.source_name,c.id'
         return [dict(row) for row in conn.execute(sql,params).fetchall()]
 
@@ -416,6 +464,9 @@ def review_text(library,mission,crop_id,expected_revision,decision,verified_text
         current=row['revision'] if row else 0
         if expected_revision!=current:raise ValueError('Plate text changed since it was opened; reload before reviewing')
         revision=current+1
-        conn.execute('INSERT INTO text_reviews(crop_id,revision,decision,verified_text,operator,created) VALUES (?,?,?,?,?,?)',
-            (crop_id,revision,decision,value,operator.strip(),datetime.now(timezone.utc).isoformat()))
-    return {'crop_id':crop_id,'revision':revision,'decision':decision,'verified_text':value}
+        normalized=normalize_plate_text(value) if decision in ('accepted','corrected') else ''
+        conn.execute('''INSERT INTO text_reviews(crop_id,revision,decision,verified_text,normalized_text,operator,created)
+            VALUES (?,?,?,?,?,?,?)''',
+            (crop_id,revision,decision,value,normalized,operator.strip(),datetime.now(timezone.utc).isoformat()))
+    return {'crop_id':crop_id,'revision':revision,'decision':decision,'verified_text':value,
+        'normalized_text':normalized}

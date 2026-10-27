@@ -4,7 +4,8 @@ import sqlite3
 import tempfile
 import unittest
 from PIL import Image
-from road_traffic.plate_review import _connect, _paths, crop_file, list_crops, review, review_text, _sha, propose
+from road_traffic.plate_review import (_connect, _paths, crop_file, list_crops,
+    normalize_plate_text, review, review_text, _sha, propose)
 from unittest.mock import patch
 from road_traffic.store import Library
 from datetime import datetime, timezone
@@ -14,6 +15,47 @@ from road_traffic.video_decoder import DecodedVideoFrame
 
 
 class PlateCropReviewTests(unittest.TestCase):
+    def test_search_normalization_preserves_order_and_leading_zeroes(self):
+        self.assertEqual(normalize_plate_text('٠٠١٢-ب/34\u200f'), '0012ب34')
+        self.assertEqual(normalize_plate_text('۱۲٣٤'), '1234')
+        self.assertEqual(normalize_plate_text('A-0012'), 'a0012')
+
+    def test_legacy_plate_reviews_gain_search_keys_without_losing_immutable_history(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db=Path(temp)/'legacy.sqlite3'
+            conn=sqlite3.connect(db)
+            conn.executescript('''
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE crops(id TEXT PRIMARY KEY,image_id TEXT NOT NULL,source_name TEXT NOT NULL,
+                    source_sha256 TEXT NOT NULL,crop_file TEXT NOT NULL UNIQUE,crop_sha256 TEXT NOT NULL,
+                    bbox TEXT NOT NULL,confidence REAL NOT NULL,model_sha256 TEXT NOT NULL,created TEXT NOT NULL,
+                    ocr_text TEXT NOT NULL DEFAULT '',ocr_confidence REAL NOT NULL DEFAULT 0,
+                    ocr_model_sha256 TEXT NOT NULL DEFAULT '');
+                CREATE TABLE reviews(id INTEGER PRIMARY KEY AUTOINCREMENT,crop_id TEXT NOT NULL REFERENCES crops(id),
+                    revision INTEGER NOT NULL,decision TEXT NOT NULL,operator TEXT NOT NULL,created TEXT NOT NULL,
+                    UNIQUE(crop_id,revision));
+                CREATE TABLE text_reviews(id INTEGER PRIMARY KEY AUTOINCREMENT,crop_id TEXT NOT NULL REFERENCES crops(id),
+                    revision INTEGER NOT NULL,decision TEXT NOT NULL,verified_text TEXT NOT NULL DEFAULT '',
+                    operator TEXT NOT NULL,created TEXT NOT NULL,UNIQUE(crop_id,revision));
+                CREATE TRIGGER immutable_plate_text_reviews_update BEFORE UPDATE ON text_reviews
+                    BEGIN SELECT RAISE(ABORT,'plate text reviews are append-only'); END;
+                INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,crop_sha256,bbox,
+                    confidence,model_sha256,created,ocr_text) VALUES
+                    ('crop','image','source.jpg','a','crop.jpg','b','{}',.8,'c','2026-01-01','AB-0012');
+                INSERT INTO text_reviews(crop_id,revision,decision,verified_text,operator,created)
+                    VALUES ('crop',1,'corrected','٠٠١٢-ب/34','Operator','2026-01-01');
+            ''')
+            conn.commit();conn.close()
+            with _connect(db) as migrated:
+                row=migrated.execute('SELECT * FROM text_reviews').fetchone()
+                self.assertEqual(row['verified_text'],'٠٠١٢-ب/34')
+                self.assertEqual(row['normalized_text'],'0012ب34')
+                crop=migrated.execute('SELECT ocr_search_text FROM crops WHERE id=?',('crop',)).fetchone()
+                self.assertEqual(crop['ocr_search_text'],'ab0012')
+            with _connect(db) as migrated:
+                with self.assertRaisesRegex(sqlite3.IntegrityError,'append-only'):
+                    migrated.execute('UPDATE text_reviews SET verified_text=? WHERE id=1',('different',))
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();root=Path(self.tmp.name)
         self.output=root/'output';self.output.mkdir()
@@ -74,16 +116,22 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertEqual(rows[0]['source_name'],self.image['name'])
         self.assertTrue(crop_file(self.lib,self.mission,rows[0]['id']).is_file())
         self.assertEqual(rows[0]['ocr_text'],'AB1234');self.assertEqual(rows[0]['ocr_confidence'],.82)
+        self.assertEqual(rows[0]['ocr_search_text'],'ab1234')
         self.assertEqual(rows[0]['text_decision'],None)
         repeated=propose(self.lib,self.mission,self.image['id'],Path('model-packs/license-plate-yolox'))
         self.assertEqual(len(repeated),1)
 
     def test_text_acceptance_and_correction_are_separate_append_only_reviews(self):
-        accepted=review_text(self.lib,self.mission,self.crop_id,0,'accepted','AB1234','Operator A')
-        self.assertEqual(accepted['verified_text'],'AB1234')
+        accepted=review_text(self.lib,self.mission,self.crop_id,0,'accepted','٠٠١٢-ب/34','Operator A')
+        self.assertEqual(accepted['verified_text'],'٠٠١٢-ب/34')
+        self.assertEqual(accepted['normalized_text'],'0012ب34')
+        self.assertEqual(len(list_crops(self.lib,self.mission,search='0012-ب/34')),1)
+        self.assertEqual(len(list_crops(self.lib,self.mission,search='٠٠١٢-ب/34')),1)
         corrected=review_text(self.lib,self.mission,self.crop_id,1,'corrected','AB1284','Operator B')
         row=list_crops(self.lib,self.mission)[0]
         self.assertEqual((row['text_decision'],row['verified_text'],row['text_revision']),('corrected','AB1284',2))
+        self.assertEqual(row['normalized_text'],'ab1284')
+        self.assertEqual(list_crops(self.lib,self.mission,search='ab1284')[0]['verified_text'],'AB1284')
         with self.assertRaisesRegex(ValueError,'changed since it was opened'):
             review_text(self.lib,self.mission,self.crop_id,1,'accepted','AB1284','Operator C')
         _,_,db=_paths(self.lib,self.mission)
