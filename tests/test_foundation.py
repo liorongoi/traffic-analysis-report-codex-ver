@@ -6,6 +6,7 @@ import tempfile
 import threading
 import unittest
 import uuid
+from types import SimpleNamespace
 from unittest.mock import patch
 from road_traffic.domain import capture_time, named_zone, budget
 from road_traffic.store import Library, safe_file
@@ -243,6 +244,14 @@ class StoreTests(unittest.TestCase):
         imported=self.lib.import_folder(mission,self.source,'camera')
         self.assertEqual(imported['images'],1)
         self.assertEqual(self.lib.images(mission)[0]['name'],'17052026-1604-vehicle.jpg')
+
+    def test_image_import_checks_required_free_space_before_creating_a_run(self):
+        with patch('road_traffic.store.shutil.disk_usage',return_value=SimpleNamespace(free=0)):
+            with self.assertRaisesRegex(ValueError,'Image import needs .* bytes are free'):
+                self.lib.import_folder(self.mission,self.source,'camera')
+        with self.lib.connect(self.mission) as connection:
+            self.assertEqual(connection.execute('SELECT COUNT(*) FROM runs').fetchone()[0],1)
+            self.assertEqual(connection.execute('SELECT COUNT(*) FROM images').fetchone()[0],1)
 
     def test_video_mission_rejects_still_image_import(self):
         mission=self.lib.create('Video','Israel','Asia/Jerusalem',{

@@ -954,6 +954,10 @@ class Library:
             entries = [entry for entry in entries if Path(entry[0]).as_posix() in selected]
         if not entries:
             raise ValueError('No images found')
+        required_bytes = sum(safe_file(root, relative).stat().st_size for relative, _, _ in entries)
+        available_bytes = shutil.disk_usage(self.root).free
+        if required_bytes > available_bytes:
+            raise ValueError(f'Image import needs {required_bytes:,} bytes but only {available_bytes:,} bytes are free in application storage')
         run = str(uuid.uuid4())
         with self.connect(mission) as conn:
             conn.execute('INSERT INTO runs VALUES (?,?,?,?,?,?)', (run, preset, str(root), 'importing', now(), None))

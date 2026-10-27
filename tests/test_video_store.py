@@ -8,6 +8,8 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from fractions import Fraction
 
 import av
@@ -54,6 +56,15 @@ class VideoStoreTests(unittest.TestCase):
         def infer(self, rgb):
             self.calls += 1
             return [{'label': 'car', 'box': [.2 + self.calls * .002, .2, .1, .1]}]
+
+    def test_video_import_checks_required_free_space_before_copy(self):
+        from road_traffic.video_store import register_video
+        with patch('road_traffic.video_store.shutil.disk_usage',return_value=SimpleNamespace(free=0)):
+            with self.assertRaisesRegex(ValueError,'Video import needs .* bytes are free'):
+                register_video(self.library,self.mission,'clip.mkv')
+        with self.library.connect(self.mission) as connection:
+            self.assertEqual(connection.execute('SELECT COUNT(*) FROM video_sources').fetchone()[0],0)
+        self.assertFalse((self.library.location(self.mission)/'sources'/'videos').exists())
 
     def test_stored_video_tampering_is_detected_even_after_digest_cache(self):
         source = register_video(self.library, self.mission, 'clip.mkv')

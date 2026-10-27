@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import uuid
 from functools import lru_cache
@@ -199,6 +200,10 @@ def register_video(library, mission, relative_path, *, metadata=None,
         raise ValueError('Video metadata must be a mapping')
     metadata_json = _json(metadata)
     origin, provenance = _origin(recording_start_utc, origin_provenance)
+    required_bytes = source.stat().st_size
+    available_bytes = shutil.disk_usage(library.location(mission)).free
+    if required_bytes > available_bytes:
+        raise ValueError(f'Video import needs {required_bytes:,} bytes but only {available_bytes:,} bytes are free in mission storage')
     source_id = str(uuid.uuid4())
     mission_root = library.location(mission)
     original_name = Path(source_relative).name
