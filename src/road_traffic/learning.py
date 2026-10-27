@@ -17,7 +17,7 @@ NIGHT_TRAINING_PROFILE={
     'id':'night-head-cpu-bounded-v1',
     'device':'CPU',
     'workers':1,
-    'concurrent_inference_or_training':False,
+    'concurrent_inference_or_training':'training yields cooperatively at bounded feature and fit-step checkpoints',
     'max_training_regions':5000,
     'max_validation_regions':5000,
     'max_image_pixels':24_000_000,
@@ -77,7 +77,7 @@ def queue_task(library,mission,kind,payload=None):
     return {'id':identifier,'mission_id':mission,'kind':kind,'status':'queued'}
 
 
-def run_task(library,mission,task_id):
+def run_task(library,mission,task_id,yield_checkpoint=None):
     """Run one persisted learning task; progress and the result ledger survive browser closure."""
     prepare(library,mission)
     with library.connect(mission) as c:
@@ -90,9 +90,10 @@ def run_task(library,mission,task_id):
     payload=json.loads(row['payload'])
     try:
         if row['kind']=='train':
-            result=train(library,mission)
+            result=train(library,mission,yield_checkpoint=yield_checkpoint)
         elif row['kind']=='evaluate_test':
-            result=evaluate_test(library,mission,payload.get('candidate_id'),payload.get('operator'))
+            result=evaluate_test(library,mission,payload.get('candidate_id'),payload.get('operator'),
+                yield_checkpoint=yield_checkpoint)
         else:
             raise ValueError('Unsupported learning task')
         with library.connect(mission) as c:
@@ -314,12 +315,13 @@ def _legacy_test_fingerprint(records):
     return hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
 
-def _feature_vectors(library,mission,records):
+def _feature_vectors(library,mission,records,yield_checkpoint=None):
     import numpy as np
     from PIL import Image
     from .night import patch_features
     vectors=[]
     for row in records:
+        if yield_checkpoint:yield_checkpoint()
         with Image.open(library.image_path(mission,row['image_id'])) as image:
             if image.width*image.height>24_000_000:raise ValueError('Evaluation image exceeds adapter pixel budget')
             rgb=np.asarray(image.convert('RGB'))
@@ -420,7 +422,7 @@ def record_model_decision(library,mission,action,candidate_id,operator,reason):
         'evaluation_id':evaluation_id,'operator':operator.strip(),'reason':reason.strip()}
 
 
-def evaluate_test(library,mission,candidate_id,operator):
+def evaluate_test(library,mission,candidate_id,operator,yield_checkpoint=None):
     if not isinstance(operator,str) or not operator.strip() or len(operator.strip())>120:
         raise ValueError('Enter an operator name of up to 120 characters')
     prepare(library,mission)
@@ -443,7 +445,7 @@ def evaluate_test(library,mission,candidate_id,operator):
           test_fingerprint,operator,status,created) VALUES (?,?,?,?,?,?,?,?)''',
           (evaluation_id,mission,candidate_id,candidate_hash,fingerprint,operator.strip(),'running',now()))
     try:
-        vectors=_feature_vectors(library,mission,data['test'])
+        vectors=_feature_vectors(library,mission,data['test'],yield_checkpoint=yield_checkpoint)
         actual=[row['class'] for row in data['test']]
         predicted=[head.predict(vector)[0] for vector in vectors]
         candidate_metrics=_classification_metrics(actual,predicted)
@@ -502,7 +504,7 @@ def evaluate_test(library,mission,candidate_id,operator):
         raise
 
 
-def train(library,mission):
+def train(library,mission,yield_checkpoint=None):
     prepare(library,mission);data=inventory(library,mission)
     # Technical fitting requirements, not an automatic retraining policy or quality guarantee.
     if data['eligible_training_images']<2 or len(data['classes'])<2 or len(data['training'])<4:
@@ -516,10 +518,6 @@ def train(library,mission):
     if None in views or len(views)!=1:raise ValueError('Assign a verified single camera view to every training image before fitting')
     if any(row['view'] not in views for row in data['validation']):
         raise ValueError('Validation images must use the same verified camera view as training images')
-    for m in library.missions():
-        with library.connect(m['id']) as c:
-            exists=c.execute("SELECT 1 FROM sqlite_master WHERE name='inference_runs'").fetchone()
-            if exists and c.execute("SELECT 1 FROM inference_runs WHERE status IN ('queued','running')").fetchone():raise ValueError('Finish active inference before fitting a light head')
     training_plan={'algorithm':'regularized-multinomial-linear-downstream-head',
         'fitter':'linear-600-l2-0.03-v1','feature_schema':FEATURE_SCHEMA,
         'preprocessing_config':{'feature_schema':FEATURE_SCHEMA,'maximum_source_image_pixels':24_000_000},
@@ -542,6 +540,7 @@ def train(library,mission):
         def features(records):
             vectors=[]
             for row in records:
+                if yield_checkpoint:yield_checkpoint()
                 with Image.open(library.image_path(mission,row['image_id'])) as im:
                     if im.width*im.height>24_000_000:raise ValueError('Training image exceeds adapter pixel budget')
                     rgb=np.asarray(im.convert('RGB'))
@@ -551,6 +550,7 @@ def train(library,mission):
         mean=x.mean(axis=0);scale=x.std(axis=0);scale[scale<.001]=1
         z=(x-mean)/scale;weights=np.zeros((x.shape[1],len(classes)));bias=np.zeros(len(classes));targets=np.eye(len(classes))[y]
         for step in range(600):
+            if yield_checkpoint:yield_checkpoint()
             logits=z@weights+bias;logits-=logits.max(axis=1,keepdims=True);p=np.exp(logits);p/=p.sum(axis=1,keepdims=True)
             diff=(p-targets)/len(z);weights-=.05*(z.T@diff+.03*weights);bias-=.05*diff.sum(axis=0)
             if step%60==0:

@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -73,6 +74,32 @@ class LearningTaskTests(unittest.TestCase):
         saved = task_status(self.library, self.mission)[0]
         self.assertEqual(saved['status'], 'failed')
         self.assertIn('No eligible independent test labels', saved['error'])
+
+    def test_operational_worker_can_pause_and_resume_training_at_checkpoint(self):
+        from road_traffic.inference import InferenceService
+        service = InferenceService(self.library, Path(self.temp.name) / 'model-pack')
+        service.training_active = True
+        reached_checkpoint = threading.Event()
+        resumed = threading.Event()
+
+        def training():
+            reached_checkpoint.set()
+            service.training_checkpoint()
+            resumed.set()
+
+        worker = threading.Thread(target=training)
+        worker.start()
+        self.assertTrue(reached_checkpoint.wait(2))
+        with service.lock:
+            yielded = service._claim_worker_slot()
+        self.assertTrue(yielded)
+        self.assertTrue(service.training_paused.is_set())
+        self.assertFalse(resumed.is_set())
+        with service.lock:
+            service._resume_training_after_worker()
+        worker.join(2)
+        self.assertTrue(resumed.is_set())
+        self.assertFalse(service.training_paused.is_set())
 
 
 if __name__ == '__main__':

@@ -45,6 +45,7 @@ class VideoInferenceService:
                     '--run', run_id, '--pack', str(self.pack)],
                     stdout=log, stderr=subprocess.STDOUT)
             self.inference.processes[(mission, run_id)] = process
+            self.inference._watch_worker(process)
             video_store.set_worker_pid(self.library, mission, run_id, process.pid)
             return process
         except Exception as exc:
@@ -88,13 +89,14 @@ class VideoInferenceService:
             'device': resources['device'], 'cpu_threads':resources['cpu_threads'],
             'resource_profile':resources, 'human_confirmation': True}}
         with self.inference.lock:
-            if self.inference.training_active:
-                raise VideoInferenceBusy('Finish correction-head training before starting analysis')
-            if self.inference._has_active_worker():
-                raise VideoInferenceBusy('Another local processing worker is active')
-            run = video_store.create_run(self.library, mission, source_id,
-                {**config, 'tracker_policy': tracker_policy})
-            self._spawn(mission, run['id'])
+            yielded=self.inference._claim_worker_slot()
+            try:
+                run = video_store.create_run(self.library, mission, source_id,
+                    {**config, 'tracker_policy': tracker_policy})
+                self._spawn(mission, run['id'])
+            except Exception:
+                if yielded:self.inference._resume_training_after_worker()
+                raise
         return {'run': run['id'], 'status': 'queued', 'config': run['config']}
 
     def save_continuous_policy(self, mission, *, tracker_policy, threshold, tiled, target_labels, resource_profile='auto'):
@@ -146,37 +148,40 @@ class VideoInferenceService:
             'minimum_iou':0,'max_center_distance':1,'association_margin':0,
             'compatible_label_groups':[]}}
         with self.inference.lock:
-            if self.inference.training_active:raise ValueError('Finish correction-head training before starting analysis')
-            if self.inference._has_active_worker():raise ValueError('Another local processing worker is active')
-            run=video_store.create_run(self.library,mission,source_id,config)
-            self._spawn(mission,run['id'])
+            yielded=self.inference._claim_worker_slot()
+            try:
+                run=video_store.create_run(self.library,mission,source_id,config)
+                self._spawn(mission,run['id'])
+            except Exception:
+                if yielded:self.inference._resume_training_after_worker()
+                raise
         return {'run':run['id'],'status':'queued','config':run['config']}
 
     def resume(self, mission, run_id):
         with self.inference.lock:
-            if self.inference.training_active:
-                raise ValueError('Finish correction-head training before resuming analysis')
-            if self.inference._has_active_worker():
-                raise ValueError('Another local processing worker is active')
-            job = video_store.run_detail(self.library, mission, run_id)
-            if job['status'] not in ('failed', 'cancelled'):
-                raise ValueError('Only failed or cancelled video runs can be resumed')
-            if self.inference._pid_alive(job['worker_pid']):
-                raise ValueError('The previous video worker is still stopping; retry in a moment')
-            # Revalidate the stored source and frozen detector identity before resuming.
-            if job['config'].get('task')=='license_plate':
-                from .plate_review import _model_pack
-                _,sha=_model_pack(self.plate_pack)
-                detector=job['config'].get('plate_detector',{})
-                if detector.get('sha256')!=sha:raise ValueError('Plate detector changed since this run; create a new video run')
-            else:
-                from .detector import model_pack, VERSION
-                _, sha = model_pack(self.pack)
-                detector = job['config'].get('detector', {})
-                if detector.get('version') != VERSION or detector.get('sha256') != sha:
-                    raise ValueError('Detector changed since this run; create a new video run')
-            video_store.transition(self.library, mission, run_id, 'queued')
-            self._spawn(mission, run_id)
+            yielded=self.inference._claim_worker_slot()
+            try:
+                job = video_store.run_detail(self.library, mission, run_id)
+                if job['status'] not in ('failed', 'cancelled'):
+                    raise ValueError('Only failed or cancelled video runs can be resumed')
+                if self.inference._pid_alive(job['worker_pid']):
+                    raise ValueError('The previous video worker is still stopping; retry in a moment')
+                if job['config'].get('task')=='license_plate':
+                    from .plate_review import _model_pack
+                    _,sha=_model_pack(self.plate_pack)
+                    detector=job['config'].get('plate_detector',{})
+                    if detector.get('sha256')!=sha:raise ValueError('Plate detector changed since this run; create a new video run')
+                else:
+                    from .detector import model_pack, VERSION
+                    _, sha = model_pack(self.pack)
+                    detector = job['config'].get('detector', {})
+                    if detector.get('version') != VERSION or detector.get('sha256') != sha:
+                        raise ValueError('Detector changed since this run; create a new video run')
+                video_store.transition(self.library, mission, run_id, 'queued')
+                self._spawn(mission, run_id)
+            except Exception:
+                if yielded:self.inference._resume_training_after_worker()
+                raise
         return {'run': run_id, 'status': 'queued', 'frames_done': job['frames_done']}
 
     def cancel(self, mission, run_id):

@@ -53,12 +53,11 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
             inference.training_active=True
         def worker():
             try:
-                learning.run_task(library,mission,task['id'])
+                learning.run_task(library,mission,task['id'],yield_checkpoint=inference.training_checkpoint)
             except Exception as exc:
                 traceback.print_exc()
             finally:
-                with inference.lock:
-                    inference.training_active=False
+                inference.training_active=False
         thread=threading.Thread(target=worker,name=f'roadloom-learning-{kind}',daemon=True)
         try:
             thread.start()
@@ -264,10 +263,13 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         evaluation_status,governance_status,task_status)
                     from .learning_capabilities import inventory as capability_inventory
                     m=query['mission'][0]
+                    tasks=task_status(library,m)
+                    for task in tasks:
+                        task['yielded_to_inference']=bool(task['status']=='running' and inference.training_yielded)
                     return self.reply(200,{'inventory':inventory(library,m),'candidates':candidates(library,m),
                         'evidence_inventory':reviewed_evidence_inventory(library,m),
                         'evaluation':evaluation_status(library,m),'governance':governance_status(library,m),
-                        'tasks':task_status(library,m),
+                        'tasks':tasks,
                         'capabilities':capability_inventory()})
                 if parsed.path == '/api/learning/dataset':
                     return self.download_learning_dataset(query)

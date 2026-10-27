@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 from . import inference_store
 from .store import now
 
@@ -19,7 +20,52 @@ class InferenceService:
     def __init__(self,library,pack):
         self.library,self.pack=library,Path(pack).resolve()
         self.lock=threading.Lock();self.processes={};self.training_active=False
+        self.training_pause_requested=threading.Event();self.training_paused=threading.Event()
+        self.training_resume=threading.Event();self.training_resume.set();self.training_yielded=False
         self.recover_after_restart()
+
+    def training_checkpoint(self):
+        """Pause fitting at a safe boundary while a higher-priority worker runs."""
+        if self.training_pause_requested.is_set():
+            self.training_paused.set()
+            self.training_resume.wait()
+            self.training_paused.clear()
+
+    def _pause_training_for_worker(self):
+        if not self.training_active:return False
+        if self.training_yielded:return False
+        self.training_pause_requested.set();self.training_resume.clear()
+        deadline=time.monotonic()+30
+        while self.training_active and not self.training_paused.wait(timeout=.05):
+            if time.monotonic()>=deadline:
+                self.training_pause_requested.clear();self.training_resume.set()
+                raise InferenceBusy('Learning has not reached a safe pause point yet; retry shortly')
+        if not self.training_active:
+            self.training_pause_requested.clear();self.training_resume.set()
+            return False
+        self.training_yielded=True
+        return True
+
+    def _resume_training_after_worker(self):
+        if self.training_yielded:
+            self.training_pause_requested.clear();self.training_resume.set()
+            self.training_yielded=False
+
+    def _claim_worker_slot(self):
+        """Caller holds lock; learning yields before inference is spawned."""
+        yielded=self._pause_training_for_worker()
+        try:
+            if self._has_active_worker():raise InferenceBusy('Another local processing worker is already running')
+            return yielded
+        except Exception:
+            if yielded:self._resume_training_after_worker()
+            raise
+
+    def _watch_worker(self,process):
+        def watch():
+            process.wait()
+            with self.lock:self._resume_training_after_worker()
+        threading.Thread(target=watch,name='roadloom-worker-reaper',daemon=True).start()
 
     @staticmethod
     def _pid_alive(pid):
@@ -64,6 +110,7 @@ class InferenceService:
                 process=subprocess.Popen([sys.executable,str(Path(__file__).resolve().parents[2]/'scripts'/'run-inference.py'),'--workspace',str(self.library.root),
                     '--mission',mission,'--run',run,'--pack',str(self.pack)],stdout=log,stderr=subprocess.STDOUT)
             self.processes[(mission,run)]=process
+            self._watch_worker(process)
         except Exception as exc:
             with self.library.connect(mission) as conn:
                 conn.execute("UPDATE inference_runs SET status='failed',stage='failed',error=?,finished=? WHERE id=?",(str(exc),now(),run))
@@ -112,11 +159,13 @@ class InferenceService:
             _,head_hash=load_head(self.library,mission,night_head_id)
             config.update(night_head_id=night_head_id,night_head_hash=head_hash)
         with self.lock:
-            if self.training_active:raise ValueError('Finish correction-head training before starting inference')
-            # Only one local worker at a time; avoid contention on 16 GB machines.
-            if self._has_active_worker():raise InferenceBusy('An inference worker is already running')
-            run=inference_store.create_run(self.library,mission,config,source_run)
-            self._spawn(mission,run)
+            yielded=self._claim_worker_slot()
+            try:
+                run=inference_store.create_run(self.library,mission,config,source_run)
+                self._spawn(mission,run)
+            except Exception:
+                if yielded:self._resume_training_after_worker()
+                raise
         return {'run':run,'config':config}
 
     def rerun_roi(self,mission,run,operator):
@@ -125,23 +174,27 @@ class InferenceService:
         if settings['input_type']!='images' or settings['analysis_mode']!='general_traffic':
             raise ValueError('ROI reruns currently support still-image General Traffic missions only')
         with self.lock:
-            if self.training_active:raise ValueError('Finish correction-head training before starting inference')
-            inference_store.prepare(self.library,mission)
-            with self.library.connect(mission) as conn:
-                row=conn.execute('SELECT config FROM inference_runs WHERE id=?',(run,)).fetchone()
-            if not row:raise ValueError('Inference run not found')
-            if self._has_active_worker():raise InferenceBusy('An inference worker is already running')
-            config=json.loads(row['config'])
-            _,sha=model_pack(self.pack)
-            if config.get('adapter')!=VERSION or config.get('model_sha256')!=sha:
-                raise ValueError('The source model changed; start a new run to apply the current ROI')
-            if config.get('night_head_id'):
-                from .learning import load_head
-                _,head_hash=load_head(self.library,mission,config['night_head_id'])
-                if head_hash!=config.get('night_head_hash'):
-                    raise ValueError('The source correction head changed; start a new run to apply the current ROI')
-            result=inference_store.create_roi_rerun(self.library,mission,run,operator)
-            self._spawn(mission,result['run'])
+            yielded=self._pause_training_for_worker()
+            try:
+                inference_store.prepare(self.library,mission)
+                with self.library.connect(mission) as conn:
+                    row=conn.execute('SELECT config FROM inference_runs WHERE id=?',(run,)).fetchone()
+                if not row:raise ValueError('Inference run not found')
+                if self._has_active_worker():raise InferenceBusy('An inference worker is already running')
+                config=json.loads(row['config'])
+                _,sha=model_pack(self.pack)
+                if config.get('adapter')!=VERSION or config.get('model_sha256')!=sha:
+                    raise ValueError('The source model changed; start a new run to apply the current ROI')
+                if config.get('night_head_id'):
+                    from .learning import load_head
+                    _,head_hash=load_head(self.library,mission,config['night_head_id'])
+                    if head_hash!=config.get('night_head_hash'):
+                        raise ValueError('The source correction head changed; start a new run to apply the current ROI')
+                result=inference_store.create_roi_rerun(self.library,mission,run,operator)
+                self._spawn(mission,result['run'])
+            except Exception:
+                if yielded:self._resume_training_after_worker()
+                raise
         return result
 
     def start_continuous_batch(self,mission,source_run):
@@ -169,23 +222,26 @@ class InferenceService:
     def resume(self,mission,run):
         from .detector import model_pack,VERSION
         with self.lock:
-            if self.training_active:raise ValueError('Finish correction-head training before resuming inference')
-            if self._has_active_worker():raise InferenceBusy('An inference worker is already running')
-            inference_store.prepare(self.library,mission)
-            with self.library.connect(mission) as conn:
-                job=conn.execute('SELECT * FROM inference_runs WHERE id=?',(run,)).fetchone()
-                if not job:raise ValueError('Inference run not found')
-                if job['status'] not in ('failed','cancelled'):raise ValueError('Only failed or stopped runs can be resumed')
-                if self._pid_alive(job['worker_pid']):raise ValueError('The previous worker is still stopping; retry in a moment')
-                config=json.loads(job['config'])
-                if config.get('adapter')!=VERSION:raise ValueError('Adapter version changed; start a new run')
-                _,sha=model_pack(self.pack)
-                if sha!=config.get('model_sha256'):raise ValueError('Model changed since this run; start a new run')
-                completed=conn.execute('SELECT COUNT(*) FROM predictions WHERE inference_id=?',(run,)).fetchone()[0]
-                if completed>=job['total']:raise ValueError('This run has no unfinished image inputs')
-                conn.execute("UPDATE inference_runs SET status='queued',stage='queued',done=?,stop_requested=0,error=NULL,finished=NULL,worker_pid=NULL WHERE id=?",
-                    (completed,run))
-            self._spawn(mission,run)
+            yielded=self._claim_worker_slot()
+            try:
+                inference_store.prepare(self.library,mission)
+                with self.library.connect(mission) as conn:
+                    job=conn.execute('SELECT * FROM inference_runs WHERE id=?',(run,)).fetchone()
+                    if not job:raise ValueError('Inference run not found')
+                    if job['status'] not in ('failed','cancelled'):raise ValueError('Only failed or stopped runs can be resumed')
+                    if self._pid_alive(job['worker_pid']):raise ValueError('The previous worker is still stopping; retry in a moment')
+                    config=json.loads(job['config'])
+                    if config.get('adapter')!=VERSION:raise ValueError('Adapter version changed; start a new run')
+                    _,sha=model_pack(self.pack)
+                    if sha!=config.get('model_sha256'):raise ValueError('Model changed since this run; start a new run')
+                    completed=conn.execute('SELECT COUNT(*) FROM predictions WHERE inference_id=?',(run,)).fetchone()[0]
+                    if completed>=job['total']:raise ValueError('This run has no unfinished image inputs')
+                    conn.execute("UPDATE inference_runs SET status='queued',stage='queued',done=?,stop_requested=0,error=NULL,finished=NULL,worker_pid=NULL WHERE id=?",
+                        (completed,run))
+                self._spawn(mission,run)
+            except Exception:
+                if yielded:self._resume_training_after_worker()
+                raise
         return {'run':run,'status':'queued','remaining':job['total']-completed}
 
     def status(self,mission):
