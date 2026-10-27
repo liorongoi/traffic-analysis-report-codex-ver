@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from PIL import Image
 
@@ -335,6 +336,23 @@ class ObjectSearchTests(unittest.TestCase):
             mission_id='mission', run_id='run-1', scope_snapshot=scope)
         self.assertEqual(spec['schedule_filter']['start_date'], '2026-05-17')
         self.assertEqual(spec['schedule_filter']['end_date'], '2026-05-19')
+
+    def test_relative_calendar_days_use_the_saved_run_timezone_and_freeze_to_dates(self):
+        scope={'run_id':'run-1','schedule':{'timezone':'Asia/Jerusalem'},
+            'view_assignments':[],'regions_by_view':{}}
+        class FrozenDateTime:
+            @classmethod
+            def now(cls,zone):
+                return datetime(2026,5,17,21,30,tzinfo=timezone.utc).astimezone(zone)
+        with patch('road_traffic.object_search.datetime',FrozenDateTime):
+            english=interpret('Find cars yesterday',run_id='run-1',scope_snapshot=scope)
+            hebrew=interpret('מצא מכוניות אתמול',run_id='run-1',scope_snapshot=scope)
+        self.assertEqual(english['schedule_filter'],{'start_date':'2026-05-17','end_date':'2026-05-17'})
+        self.assertEqual(hebrew['schedule_filter'],english['schedule_filter'])
+        with self.assertRaisesRegex(ValueError,'saved run with a recorded IANA time zone'):
+            interpret('Find cars tomorrow')
+        with self.assertRaisesRegex(ValueError,'either a relative calendar day'):
+            interpret('Find cars yesterday and 2026-05-17',run_id='run-1',scope_snapshot=scope)
 
     def test_named_dayparts_are_local_time_filters_in_english_and_hebrew(self):
         scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},

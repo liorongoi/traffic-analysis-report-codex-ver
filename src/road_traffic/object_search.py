@@ -84,6 +84,9 @@ _DAYPART_FORMS = {
 _DAYPART_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _DAYPART_FORMS), key=len, reverse=True)) + r')(?!\w)', re.I)
 _DATE_RANGE_PATTERN = re.compile(r'(?<!\w)(?:between|from)\s*(20\d{2}-\d{2}-\d{2})\s*(?:and|to|through)\s*(20\d{2}-\d{2}-\d{2})(?!\w)', re.I)
 _DATE_PATTERN = re.compile(r'(?<!\w)(20\d{2}-\d{2}-\d{2})(?!\w)')
+_RELATIVE_DATE_OFFSETS = {'today': 0, 'yesterday': -1, 'tomorrow': 1,
+    'היום': 0, 'אתמול': -1, 'מחר': 1}
+_RELATIVE_DATE_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _RELATIVE_DATE_OFFSETS), key=len, reverse=True)) + r')(?!\w)', re.I)
 
 
 def _parse_time(value):
@@ -94,9 +97,19 @@ def _parse_time(value):
         raise ValueError('Use a valid 24-hour time such as 17:30') from None
 
 
-def _extract_temporal_filter(query):
+def _extract_temporal_filter(query, relative_today=None):
     text = query.casefold()
     result = {}
+    relative_matches = list(_RELATIVE_DATE_PATTERN.finditer(text))
+    if len(relative_matches) > 1:
+        raise ValueError('Use one relative calendar day per search')
+    relative_day = None
+    if relative_matches:
+        if relative_today is None:
+            raise ValueError('A saved run time zone is required for relative calendar days')
+        relative_day = relative_today + timedelta(days=_RELATIVE_DATE_OFFSETS[relative_matches[0].group(1).casefold()])
+        match = relative_matches[0]
+        text = text[:match.start()] + ' ' + text[match.end():]
     daypart_matches = list(_DAYPART_PATTERN.finditer(text))
     if len(daypart_matches) > 4:
         raise ValueError('A search can include at most four local-time periods')
@@ -164,6 +177,8 @@ def _extract_temporal_filter(query):
 
     date_match = _DATE_RANGE_PATTERN.search(text)
     if date_match:
+        if relative_day is not None:
+            raise ValueError('Use either a relative calendar day or an explicit date range')
         start_date = date.fromisoformat(date_match.group(1))
         end_date = date.fromisoformat(date_match.group(2))
         if end_date < start_date:
@@ -176,9 +191,13 @@ def _extract_temporal_filter(query):
         if len(matches) > 1:
             raise ValueError('Use one date or an explicit between/from date range')
         if matches:
+            if relative_day is not None:
+                raise ValueError('Use either a relative calendar day or an explicit date')
             requested = date.fromisoformat(matches[0].group(1)).isoformat()
             result['start_date'] = result['end_date'] = requested
             text = text[:matches[0].start()] + ' ' + text[matches[0].end():]
+    if relative_day is not None:
+        result['start_date'] = result['end_date'] = relative_day.isoformat()
 
     weekdays = set()
     for match in _WEEKDAY_GROUP_PATTERN.finditer(text):
@@ -344,7 +363,9 @@ def interpret(query: str, *, mission_id: str | None = None, view_id: str | None 
         raise ValueError('Select a saved video run before interpreting a search')
     if not isinstance(query, str) or not 1 <= len(query.strip()) <= 500:
         raise ValueError('Describe an object in 1–500 characters')
-    query_without_time, schedule_filter = _extract_temporal_filter(query)
+    relative_day_requested = bool(_RELATIVE_DATE_PATTERN.search(query.casefold()))
+    relative_today = datetime.now(_scope_timezone(scope_snapshot)).date() if relative_day_requested else None
+    query_without_time, schedule_filter = _extract_temporal_filter(query, relative_today)
     query_without_scope, requested_view = _extract_view_filter(query_without_time, scope_snapshot, view_id)
     query_without_scope, requested_region, requested_view = _extract_region_filter(
         query_without_scope, scope_snapshot, requested_view)
