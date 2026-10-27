@@ -19,7 +19,8 @@ from PIL import Image
 from road_traffic.store import Library
 from road_traffic.tracking import TrackerPolicy, VideoTrackManager
 from road_traffic.video_store import (checkpoint, create_run, events, register_video,
-    execute_video_run, event_thumbnail, frame_overlay, review_event, run_detail, source_path, transition)
+    execute_video_run, event_thumbnail, frame_overlay, review_event, run_detail, runs,
+    source_path, transition, update_runtime_details)
 from road_traffic.video_timeline import VideoTimestamp
 
 
@@ -85,6 +86,22 @@ class VideoStoreTests(unittest.TestCase):
         self.assertEqual((probe['metadata']['width'], probe['metadata']['height']), (64, 48))
         self.assertIsNone(source['recording_start_utc'])
         self.assertIsNone(source['origin_provenance'])
+
+    def test_execution_provider_details_are_durable_and_separate_from_immutable_config(self):
+        source=register_video(self.library,self.mission,'clip.mkv')
+        run=create_run(self.library,self.mission,source['id'],self.config())
+        details={'requested_device':'auto','execution_provider':'DmlExecutionProvider',
+            'fallback_reason':None,'cpu_threads':2}
+        update_runtime_details(self.library,self.mission,run['id'],details)
+        saved=run_detail(self.library,self.mission,run['id'])
+        self.assertEqual(saved['runtime_details'],details)
+        self.assertEqual(saved['config']['detector']['sha256'],'abc')
+        listing=next(item for item in runs(self.library,self.mission) if item['id']==run['id'])
+        self.assertEqual(listing['runtime_details']['execution_provider'],'DmlExecutionProvider')
+        with self.assertRaisesRegex(ValueError,'JSON object'):
+            update_runtime_details(self.library,self.mission,run['id'],['invalid'])
+        with self.assertRaisesRegex(ValueError,'4 KiB'):
+            update_runtime_details(self.library,self.mission,run['id'],{'reason':'x'*5000})
 
     def test_source_snapshot_run_checkpoint_events_and_utc_are_durable(self):
         source = register_video(self.library, self.mission, 'clip.mkv',

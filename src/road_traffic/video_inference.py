@@ -206,14 +206,29 @@ class VideoInferenceService:
 
 class VehicleProposalAdapter:
     """Keep model class labels while exposing only detection geometry to tracking."""
-    def __init__(self, detector, target_labels=None):
+    def __init__(self, detector, target_labels=None, runtime_callback=None):
         self.detector = detector
         self.target_labels=set(target_labels) if target_labels is not None else None
+        self.runtime_callback=runtime_callback
+        self._last_runtime=None
+        self._report_runtime()
+
+    def _report_runtime(self):
+        if not self.runtime_callback:return
+        session=self.detector.session
+        details={'requested_device':'auto','execution_provider':session.provider,
+            'fallback_reason':(session.fallback_reason or '')[:1000] or None,
+            'cpu_threads':self.detector.cpu_threads}
+        if details!=self._last_runtime:
+            self.runtime_callback(details)
+            self._last_runtime=details
 
     def infer(self, rgb_frame):
+        items=self.detector.infer(rgb_frame)
+        self._report_runtime()
         return [{'label': item.get('label') or item.get('suggested_kind') or item.get('kind'),
             'box': item['box'], 'score': item.get('score',item.get('confidence'))}
-            for item in self.detector.infer(rgb_frame)
+            for item in items
             if self.target_labels is None or (item.get('label') or item.get('suggested_kind') or item.get('kind')) in self.target_labels]
 
 
@@ -226,10 +241,22 @@ def execute_worker(library, mission, run_id, pack):
         _,sha=_model_pack(plate_pack)
         if detector_config.get('sha256')!=sha:raise ValueError('Plate detector model hash changed; create a new run')
         plate_detector=PlateDetector(plate_pack,detector_config['threshold'])
+        runtime_state=[None]
+        def report_runtime():
+            details={'requested_device':'auto','plate_detector':{
+                'execution_provider':plate_detector.session.provider,
+                'fallback_reason':(plate_detector.session.fallback_reason or '')[:1000] or None},
+                'plate_ocr':{'execution_provider':plate_detector.recognizer.session.provider,
+                'fallback_reason':(plate_detector.recognizer.session.fallback_reason or '')[:1000] or None}}
+            if details!=runtime_state[0]:
+                video_store.update_runtime_details(library,mission,run_id,details)
+                runtime_state[0]=details
+        report_runtime()
         class EmptyDetector:
             def infer(self,rgb_frame):return []
         def save_frame(decoded):
-            propose_video_frame(library,mission,run['source_id'],decoded,plate_detector)
+            try:propose_video_frame(library,mission,run['source_id'],decoded,plate_detector)
+            finally:report_runtime()
         try:
             return video_store.execute_video_run(library,mission,run_id,EmptyDetector(),
                 should_cancel=lambda:_video_cancel_requested(library,mission,run_id),frame_callback=save_frame)
@@ -250,9 +277,12 @@ def execute_worker(library, mission, run_id, pack):
 
     def should_cancel():return _video_cancel_requested(library,mission,run_id)
 
+    def report_runtime(details):
+        video_store.update_runtime_details(library,mission,run_id,details)
+
     try:
         return video_store.execute_video_run(library, mission, run_id,
-            VehicleProposalAdapter(detector,detector_config.get('target_labels')),
+            VehicleProposalAdapter(detector,detector_config.get('target_labels'),report_runtime),
             should_cancel=should_cancel)
     except Exception as exc:
         with library.connect(mission) as conn:

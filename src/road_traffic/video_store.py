@@ -33,7 +33,8 @@ def schema(conn):
       current_pts INTEGER,current_time_base_num INTEGER,current_time_base_den INTEGER,
       tracker_checkpoint TEXT NOT NULL,last_frame_fingerprint TEXT,config TEXT NOT NULL,created TEXT NOT NULL,
       updated TEXT NOT NULL,finished TEXT,error TEXT,worker_pid INTEGER,cancel_requested INTEGER NOT NULL DEFAULT 0,
-      progress_elapsed_seconds REAL,estimated_remaining_seconds REAL);
+      progress_elapsed_seconds REAL,estimated_remaining_seconds REAL,
+      runtime_details TEXT NOT NULL DEFAULT '{}');
     CREATE INDEX IF NOT EXISTS video_runs_mission_idx ON video_runs(mission_id,created,id);
     CREATE UNIQUE INDEX IF NOT EXISTS one_active_video_run ON video_runs(mission_id)
       WHERE status IN ('queued','running','paused');
@@ -103,6 +104,8 @@ def schema(conn):
         conn.execute('ALTER TABLE video_runs ADD COLUMN progress_elapsed_seconds REAL')
     if 'estimated_remaining_seconds' not in columns:
         conn.execute('ALTER TABLE video_runs ADD COLUMN estimated_remaining_seconds REAL')
+    if 'runtime_details' not in columns:
+        conn.execute("ALTER TABLE video_runs ADD COLUMN runtime_details TEXT NOT NULL DEFAULT '{}'")
     event_columns = {row['name'] for row in conn.execute('PRAGMA table_info(video_events)')}
     if 'representative_box' not in event_columns:
         conn.execute('ALTER TABLE video_events ADD COLUMN representative_box TEXT')
@@ -668,7 +671,24 @@ def run_detail(library, mission, run_id):
     result = dict(row)
     result['tracker_checkpoint'] = json.loads(result['tracker_checkpoint'])
     result['config'] = json.loads(result['config'])
+    result['runtime_details'] = json.loads(result.get('runtime_details') or '{}')
     return result
+
+
+def update_runtime_details(library, mission, run_id, details):
+    """Persist actual execution-provider telemetry separately from immutable run config."""
+    if not isinstance(details, dict):
+        raise ValueError('Runtime details must be a JSON object')
+    encoded = _json(details)
+    if len(encoded.encode('utf-8')) > 4096:
+        raise ValueError('Runtime details exceed the 4 KiB limit')
+    prepare(library, mission)
+    with library.connect(mission) as conn:
+        cursor = conn.execute('''UPDATE video_runs SET runtime_details=?,updated=?
+            WHERE mission_id=? AND id=?''', (encoded, now(), mission, run_id))
+        if cursor.rowcount != 1:
+            raise ValueError('Video run not found')
+    return details
 
 
 def sources(library, mission):
@@ -687,9 +707,12 @@ def sources(library, mission):
 def runs(library, mission):
     prepare(library, mission)
     with library.connect(mission) as conn:
-        rows = conn.execute('SELECT id,mission_id,source_id,status,stage,total_frames,frames_done,progress_elapsed_seconds,estimated_remaining_seconds,created,updated,finished,error,worker_pid,cancel_requested FROM video_runs WHERE mission_id=? ORDER BY created DESC,id',
+        rows = conn.execute('SELECT id,mission_id,source_id,status,stage,total_frames,frames_done,progress_elapsed_seconds,estimated_remaining_seconds,runtime_details,created,updated,finished,error,worker_pid,cancel_requested FROM video_runs WHERE mission_id=? ORDER BY created DESC,id',
             (mission,)).fetchall()
-    return [dict(row) for row in rows]
+    result = [dict(row) for row in rows]
+    for row in result:
+        row['runtime_details'] = json.loads(row['runtime_details'] or '{}')
+    return result
 
 
 def set_worker_pid(library, mission, run_id, pid):

@@ -1,6 +1,7 @@
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from road_traffic.inference import InferenceService
@@ -42,6 +43,25 @@ class VideoInferenceServiceTests(unittest.TestCase):
 
     def source(self):
         return register_video(self.library, self.mission, 'clip.mp4')
+
+    def test_video_adapter_persists_provider_fallback_only_when_state_changes(self):
+        from road_traffic.video_inference import VehicleProposalAdapter
+        class Detector:
+            cpu_threads=2
+            def __init__(self):
+                self.session=SimpleNamespace(provider='DmlExecutionProvider',fallback_reason=None)
+            def infer(self,frame):
+                return [{'label':'car','box':[0,0,1,1],'score':.5}]
+        detector=Detector();reported=[]
+        adapter=VehicleProposalAdapter(detector,['car'],reported.append)
+        self.assertEqual(len(reported),1)
+        adapter.infer(None)
+        self.assertEqual(len(reported),1)
+        detector.session.provider='CPUExecutionProvider'
+        detector.session.fallback_reason='DirectML execution failed'
+        self.assertEqual(adapter.infer(None)[0]['label'],'car')
+        self.assertEqual(reported[-1]['execution_provider'],'CPUExecutionProvider')
+        self.assertEqual(reported[-1]['fallback_reason'],'DirectML execution failed')
 
     def test_supervisor_starts_cancels_recovers_and_resumes_same_run(self):
         source = self.source()
