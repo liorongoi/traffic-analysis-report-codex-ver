@@ -44,10 +44,12 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
         def reply(self, status, data, content='application/json; charset=utf-8'):
             if not isinstance(data, bytes):
                 data = json.dumps(data, ensure_ascii=False).encode()
+            self.close_connection = True
             try:
                 self.send_response(status)
                 self.send_header('Content-Type', content)
                 self.send_header('Content-Length', str(len(data)))
+                self.send_header('Connection', 'close')
                 self.send_header('Cache-Control', 'no-store')
                 self.send_header('X-Content-Type-Options', 'nosniff')
                 self.send_header('Content-Security-Policy', "default-src 'self'; img-src 'self'; connect-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'")
@@ -62,6 +64,19 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 # reach do_POST's operation-error handler would try to write
                 # a second response to the same dead socket.
                 self.close_connection = True
+
+        def handle(self):
+            try:
+                super().handle()
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                # A caller may close its HTTP/1.1 socket as soon as it has
+                # received the one response this local API supports.
+                self.close_connection = True
+            except OSError as exc:
+                if getattr(exc, 'winerror', None) == 10038:
+                    self.close_connection = True
+                else:
+                    raise
 
         def valid_host(self):
             expected=(f'{public_host}:{self.server.server_port}' if not loopback else None)
