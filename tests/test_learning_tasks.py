@@ -78,14 +78,17 @@ class LearningTaskTests(unittest.TestCase):
     def test_operational_worker_can_pause_and_resume_training_at_checkpoint(self):
         from road_traffic.inference import InferenceService
         service = InferenceService(self.library, Path(self.temp.name) / 'model-pack')
+        service._has_active_worker = lambda: False
         service.training_active = True
         reached_checkpoint = threading.Event()
         resumed = threading.Event()
 
         def training():
             reached_checkpoint.set()
+            service.training_pause_requested.wait(2)
             service.training_checkpoint()
             resumed.set()
+            service.training_active = False
 
         worker = threading.Thread(target=training)
         worker.start()
