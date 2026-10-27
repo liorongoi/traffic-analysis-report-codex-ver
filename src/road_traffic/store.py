@@ -159,6 +159,23 @@ def digest(path):
     return h.hexdigest()
 
 
+def _export_temp_path(target):
+    target = Path(target)
+    return target.with_name(f'.{target.name}.partial')
+
+
+def _fsync_directory(directory):
+    try:
+        directory_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError:
+        # Windows and some network filesystems do not support directory fsync.
+        pass
+
+
 def validate_image_file(path, relative_name):
     """Fully decode supported still-image formats before accepting a source."""
     try:
@@ -858,20 +875,85 @@ class Library:
         return {'id':region_key,'deleted':True,'revision':revision}
 
     def reconcile_exports(self):
-        """Mark exports left in `writing` by a stopped process as incomplete."""
+        """Reconcile interrupted staged exports and roll forward verified publication."""
         reconciled = 0
         for mission_path in self.root.glob('*/mission.sqlite3'):
             mission = mission_path.parent.name
             with self.connect(mission) as conn:
                 rows = [dict(row) for row in conn.execute(
-                    "SELECT id,output_path FROM exports WHERE status='writing' AND mission_id=?", (mission,)
+                    "SELECT id,output_path,snapshot_sha256,row_count,status FROM exports "
+                    "WHERE status IN ('writing','publishing') AND mission_id=?", (mission,)
                 )]
                 for row in rows:
-                    status = 'partial' if Path(row['output_path']).is_file() else 'failed'
+                    target = Path(row['output_path'])
+                    temp_path = _export_temp_path(target)
+                    try:
+                        if row['status'] == 'publishing' and row['snapshot_sha256']:
+                            if target.is_file() and digest(target) == row['snapshot_sha256']:
+                                status, error = 'completed', None
+                            elif (not target.exists() and temp_path.is_file()
+                                    and digest(temp_path) == row['snapshot_sha256']):
+                                os.replace(temp_path, target)
+                                _fsync_directory(target.parent)
+                                status, error = 'completed', None
+                            else:
+                                status, error = 'failed', 'Published export hash did not match its saved snapshot'
+                        else:
+                            # Old releases wrote directly to output_path; preserve those partial files.
+                            status = 'partial' if target.is_file() else 'failed'
+                            error = 'Export process stopped before completion'
+                    except OSError as exc:
+                        status, error = 'failed', f'Export reconciliation failed: {exc}'[:1000]
+                    try:
+                        temp_path.unlink(missing_ok=True)
+                    except OSError as exc:
+                        error = f'{error or "Export completed"}; temporary file cleanup failed: {exc}'[:1000]
                     conn.execute('UPDATE exports SET status=?,finished=?,error=? WHERE id=?',
-                        (status, now(), 'Export process stopped before completion', row['id']))
+                        (status, now(), error, row['id']))
                     reconciled += 1
         return reconciled
+
+    def _publish_export(self, mission, export_id, target, temp_path, row_count, snapshot_hash):
+        with self.connect(mission) as conn:
+            conn.execute("UPDATE exports SET snapshot_sha256=?,row_count=?,status='publishing' WHERE id=?",
+                (snapshot_hash, row_count, export_id))
+        if target.exists():
+            raise FileExistsError('Unique output path already exists')
+        os.replace(temp_path, target)
+        _fsync_directory(target.parent)
+        with self.connect(mission) as conn:
+            conn.execute("UPDATE exports SET status='completed',finished=? WHERE id=?",
+                (now(), export_id))
+
+    def _recover_export_after_error(self, mission, export_id, target, temp_path, row_count, exc):
+        with self.connect(mission) as conn:
+            record = conn.execute('SELECT status,snapshot_sha256 FROM exports WHERE id=?',
+                (export_id,)).fetchone()
+        if (record and record['status'] == 'publishing' and target.is_file() and record['snapshot_sha256']
+                and digest(target) == record['snapshot_sha256']):
+            with self.connect(mission) as conn:
+                conn.execute("UPDATE exports SET status='completed',finished=?,error=NULL WHERE id=?",
+                    (now(), export_id))
+            return True
+        if (record and record['status'] == 'publishing' and record['snapshot_sha256']
+                and not target.exists() and temp_path.is_file()
+                and digest(temp_path) == record['snapshot_sha256']):
+            os.replace(temp_path, target)
+            _fsync_directory(target.parent)
+            with self.connect(mission) as conn:
+                conn.execute("UPDATE exports SET status='completed',finished=?,error=NULL WHERE id=?",
+                    (now(), export_id))
+            return True
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            exc = OSError(f'{exc}; temporary file cleanup failed: {cleanup_error}')
+        status = 'failed'
+        error = str(exc)[:1000]
+        with self.connect(mission) as conn:
+            conn.execute('UPDATE exports SET row_count=?,status=?,finished=?,error=? WHERE id=?',
+                (row_count, status, now(), error, export_id))
+        return False
 
     def export_csv(self, mission, inference_run=None, snapshot_rowid=None, bulk_approval_id=None):
         settings = self.settings(mission)
@@ -893,13 +975,14 @@ class Library:
         rows = self.iter_images(mission, inference_run,snapshot_rowid=snapshot_rowid)
         export_id = str(uuid.uuid4())
         target = Path(output_root) / f'traffic-analysis-{mission[:8]}-{export_id}.csv'
+        temp_path = _export_temp_path(target)
         created = now()
         with self.connect(mission) as conn:
             conn.execute('INSERT INTO exports(id,mission_id,inference_run,format,output_path,row_count,status,created,bulk_approval_id) VALUES (?,?,?,?,?,?,?,?,?)',
                 (export_id, mission, inference_run, 'csv', str(target), 0, 'writing', created,bulk_approval_id))
         row_count = 0
         try:
-            with target.open('x', encoding='utf-8-sig', newline='') as stream:
+            with temp_path.open('x', encoding='utf-8-sig', newline='') as stream:
                 writer = csv.writer(stream)
                 writer.writerow(CSV_EXPORT_HEADERS)
                 for row in rows:
@@ -907,19 +990,21 @@ class Library:
                     row_count += 1
                 stream.flush()
                 os.fsync(stream.fileno())
-            snapshot_hash = digest(target)
-            with self.connect(mission) as conn:
-                conn.execute("UPDATE exports SET snapshot_sha256=?,row_count=?,status='completed',finished=? WHERE id=?",
-                    (snapshot_hash, row_count, now(), export_id))
+            snapshot_hash = digest(temp_path)
+            self._publish_export(mission, export_id, target, temp_path, row_count, snapshot_hash)
             return {'id': export_id, 'path': str(target), 'format': 'csv',
                 'snapshot_sha256': snapshot_hash, 'row_count': row_count, 'status': 'completed'}
         except Exception as exc:
-            status = 'partial' if target.exists() else 'failed'
-            error = str(exc)[:1000]
-            with self.connect(mission) as conn:
-                conn.execute('UPDATE exports SET row_count=?,status=?,finished=?,error=? WHERE id=?',
-                    (row_count, status, now(), error, export_id))
-            raise ValueError(f'Export {export_id} {status}: {error}') from exc
+            try:
+                recovered = self._recover_export_after_error(
+                    mission, export_id, target, temp_path, row_count, exc)
+            except Exception as recovery_exc:
+                raise ValueError(f'Export {export_id} needs startup reconciliation: {recovery_exc}') from exc
+            if recovered:
+                snapshot_hash = digest(target)
+                return {'id': export_id, 'path': str(target), 'format': 'csv',
+                    'snapshot_sha256': snapshot_hash, 'row_count': row_count, 'status': 'completed'}
+            raise ValueError(f'Export {export_id} failed: {str(exc)[:1000]}') from exc
 
     def export_xlsx(self, mission, inference_run=None, snapshot_rowid=None, bulk_approval_id=None):
         """Write a dependency-free, Unicode-safe XLSX snapshot without formula cells."""
@@ -945,12 +1030,13 @@ class Library:
         sheet_count=max(1,(count+max_data_rows-1)//max_data_rows)
         sheet_names=['Traffic' if sheet_count==1 else f'Traffic {number+1}' for number in range(sheet_count)]
         export_id=str(uuid.uuid4());target=Path(output_root)/f'traffic-analysis-{mission[:8]}-{export_id}.xlsx';created=now()
+        temp_path=_export_temp_path(target)
         with self.connect(mission) as conn:
             conn.execute('INSERT INTO exports(id,mission_id,inference_run,format,output_path,row_count,status,created,bulk_approval_id) VALUES (?,?,?,?,?,?,?,?,?)',
                 (export_id,mission,inference_run,'xlsx',str(target),0,'writing',created,bulk_approval_id))
         row_count=0
         try:
-            with zipfile.ZipFile(target,'x',compression=zipfile.ZIP_DEFLATED,allowZip64=True) as archive:
+            with zipfile.ZipFile(temp_path,'x',compression=zipfile.ZIP_DEFLATED,allowZip64=True) as archive:
                 for entry_name, content in _xlsx_metadata_entries(sheet_count, sheet_names):
                     archive.writestr(entry_name, content)
 
@@ -966,19 +1052,22 @@ class Library:
                             content=''.join(_xlsx_cell_xml(_xlsx_column_name(i+1),row_number,value) for i,value in enumerate(values))
                             sheet.write(f'<row r="{row_number}">{content}</row>'.encode('utf-8'));row_count+=1
                         sheet.write(b'</sheetData></worksheet>')
-            with target.open('r+b') as stream:os.fsync(stream.fileno())
-            snapshot_hash=digest(target)
-            with self.connect(mission) as conn:
-                conn.execute("UPDATE exports SET snapshot_sha256=?,row_count=?,status='completed',finished=? WHERE id=?",
-                    (snapshot_hash,row_count,now(),export_id))
+            with temp_path.open('r+b') as stream:os.fsync(stream.fileno())
+            snapshot_hash=digest(temp_path)
+            self._publish_export(mission,export_id,target,temp_path,row_count,snapshot_hash)
             return {'id':export_id,'path':str(target),'format':'xlsx','snapshot_sha256':snapshot_hash,
                 'row_count':row_count,'status':'completed','sheets':sheet_count}
         except Exception as exc:
-            status='partial' if target.exists() else 'failed';error=str(exc)[:1000]
-            with self.connect(mission) as conn:
-                conn.execute('UPDATE exports SET row_count=?,status=?,finished=?,error=? WHERE id=?',
-                    (row_count,status,now(),error,export_id))
-            raise ValueError(f'Export {export_id} {status}: {error}') from exc
+            try:
+                recovered=self._recover_export_after_error(
+                    mission,export_id,target,temp_path,row_count,exc)
+            except Exception as recovery_exc:
+                raise ValueError(f'Export {export_id} needs startup reconciliation: {recovery_exc}') from exc
+            if recovered:
+                snapshot_hash=digest(target)
+                return {'id':export_id,'path':str(target),'format':'xlsx','snapshot_sha256':snapshot_hash,
+                    'row_count':row_count,'status':'completed','sheets':sheet_count}
+            raise ValueError(f'Export {export_id} failed: {str(exc)[:1000]}') from exc
 
     def export_configured(self,mission,inference_run=None,snapshot_rowid=None,bulk_approval_id=None):
         formats=self.settings(mission)['export_formats'];files=[];errors=[]

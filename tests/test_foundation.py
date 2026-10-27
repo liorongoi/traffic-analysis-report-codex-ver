@@ -9,7 +9,8 @@ import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
 from road_traffic.domain import capture_time, named_zone, budget
-from road_traffic.store import Library, safe_file, _estimate_csv_size, _estimate_xlsx_size
+from road_traffic.store import (Library, safe_file, digest, _estimate_csv_size, _estimate_xlsx_size,
+    _image_export_values)
 from PIL import Image
 
 
@@ -313,6 +314,60 @@ class StoreTests(unittest.TestCase):
         self.assertLessEqual(actual['csv'],csv_estimate)
         self.assertLessEqual(actual['xlsx'],xlsx_estimate)
 
+    def test_full_disk_export_failure_removes_staging_file_and_keeps_failure_record(self):
+        original_values=_image_export_values
+        for format_name in ('csv','xlsx'):
+            with self.subTest(format=format_name):
+                output=self.root/f'atomic-output-{format_name}';output.mkdir()
+                mission=self.lib.create(f'Atomic export {format_name}','Israel','Asia/Jerusalem',{
+                    'output_root':str(output),'export_formats':[format_name]})
+                self.lib.import_folder(mission,self.source,'camera')
+                calls=0
+                def fail_during_write(*args,**kwargs):
+                    nonlocal calls
+                    calls+=1
+                    if calls==2:
+                        raise OSError('disk full')
+                    return original_values(*args,**kwargs)
+                method=self.lib.export_csv if format_name=='csv' else self.lib.export_xlsx
+                with patch('road_traffic.store._image_export_values',side_effect=fail_during_write):
+                    with self.assertRaisesRegex(ValueError,'failed: disk full'):
+                        method(mission)
+                with self.lib.connect(mission) as conn:
+                    row=conn.execute('SELECT status,error FROM exports').fetchone()
+                self.assertEqual(row['status'],'failed')
+                self.assertIn('disk full',row['error'])
+                self.assertEqual(list(output.iterdir()),[])
+
+    def test_publishing_export_reconciles_atomically_and_removes_stale_temp(self):
+        mission=self.lib.create('Publishing recovery','Israel','Asia/Jerusalem')
+        target=self.root/'published.csv';target.write_bytes(b'complete export')
+        temp=target.with_name(f'.{target.name}.partial');temp.write_bytes(b'stale partial')
+        with self.lib.connect(mission) as conn:
+            conn.execute('''INSERT INTO exports(id,mission_id,format,output_path,snapshot_sha256,row_count,
+                status,created) VALUES (?,?,?,?,?,?,?,?)''',
+                ('publishing-id',mission,'csv',str(target),digest(target),4,'publishing','2026-01-01'))
+        self.assertEqual(self.lib.reconcile_exports(),1)
+        record={item['id']:item for item in self.lib.exports(mission)}['publishing-id']
+        self.assertEqual(record['status'],'completed')
+        self.assertEqual(record['snapshot_sha256'],digest(target))
+        self.assertFalse(temp.exists())
+
+    def test_publishing_export_recovers_verified_staging_file_before_rename(self):
+        mission=self.lib.create('Staged publish recovery','Israel','Asia/Jerusalem')
+        target=self.root/'staged-recovery.xlsx'
+        temp=target.with_name(f'.{target.name}.partial');temp.write_bytes(b'complete staged export')
+        with self.lib.connect(mission) as conn:
+            conn.execute('''INSERT INTO exports(id,mission_id,format,output_path,snapshot_sha256,row_count,
+                status,created) VALUES (?,?,?,?,?,?,?,?)''',
+                ('staged-id',mission,'xlsx',str(target),digest(temp),2,'publishing','2026-01-01'))
+        self.assertEqual(self.lib.reconcile_exports(),1)
+        record={item['id']:item for item in self.lib.exports(mission)}['staged-id']
+        self.assertEqual(record['status'],'completed')
+        self.assertEqual(target.read_bytes(),b'complete staged export')
+        self.assertEqual(record['snapshot_sha256'],digest(target))
+        self.assertFalse(temp.exists())
+
     def test_legacy_mission_gets_additive_settings_migration(self):
         mission='00000000-0000-4000-8000-000000000001'
         folder=self.lib.location(mission);folder.mkdir()
@@ -332,6 +387,7 @@ class StoreTests(unittest.TestCase):
         mission=self.lib.create('Export recovery','Israel','Asia/Jerusalem')
         partial=self.root/'partial.csv';partial.write_text('partial data')
         missing=self.root/'missing.csv'
+        stale_temp=missing.with_name(f'.{missing.name}.partial');stale_temp.write_text('stale partial')
         with self.lib.connect(mission) as conn:
             conn.execute('INSERT INTO exports(id,mission_id,format,output_path,status,created) VALUES (?,?,?,?,?,?)',
                 ('partial-id',mission,'csv',str(partial),'writing','2026-01-01T00:00:00+00:00'))
@@ -341,6 +397,7 @@ class StoreTests(unittest.TestCase):
         history={row['id']:row for row in self.lib.exports(mission)}
         self.assertEqual(history['partial-id']['status'],'partial')
         self.assertEqual(history['missing-id']['status'],'failed')
+        self.assertFalse(stale_temp.exists())
 
     def test_continuous_monitor_imports_stable_versions_once_and_keeps_replacements(self):
         from road_traffic.monitor import SourceMonitor
