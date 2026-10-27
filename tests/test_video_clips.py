@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from road_traffic.store import Library, now
 from road_traffic.video_clips import export_event_clip, export_file, exports
+from road_traffic.video_clip_worker import MIN_FREE_BYTES, ensure_output_space
 from road_traffic.video_store import create_run, events, register_video, review_event
 
 
@@ -100,6 +101,14 @@ print(json.dumps(timestamps))
         with self.assertRaisesRegex(ValueError,'between 0 and 600'):
             export_event_clip(self.library,self.mission,self.event_id,601,.2,'Operator')
 
+    def test_clip_export_requires_output_reserve_before_creating_ledger_or_file(self):
+        with patch('road_traffic.video_clip_worker.shutil.disk_usage',
+                   return_value=type('Usage',(),{'free':MIN_FREE_BYTES-1})()):
+            with self.assertRaisesRegex(ValueError,'safety reserve'):
+                export_event_clip(self.library,self.mission,self.event_id,.2,.2,'Operator')
+        self.assertEqual(exports(self.library,self.mission),[])
+        self.assertEqual(list(self.output_root.iterdir()),[])
+
     def test_clip_export_uses_saved_timing_correction_after_review(self):
         with self.library.connect(self.mission) as conn:
             for frame_index in (8,12):
@@ -142,3 +151,17 @@ print(json.dumps(timestamps))
         Path(clip['output_path']).write_bytes(b'tampered')
         with self.assertRaisesRegex(ValueError,'SHA-256 check'):
             export_file(self.library,self.mission,clip['id'])
+
+
+class VideoClipSpaceGuardTests(unittest.TestCase):
+    def test_clip_space_guard_reports_low_space_and_unavailable_volume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'clip.mp4'
+            with patch('road_traffic.video_clip_worker.shutil.disk_usage',
+                       return_value=type('Usage',(),{'free':MIN_FREE_BYTES-1})()):
+                with self.assertRaisesRegex(ValueError,'safety reserve'):
+                    ensure_output_space(path)
+            with patch('road_traffic.video_clip_worker.shutil.disk_usage',
+                       side_effect=OSError('volume unavailable')):
+                with self.assertRaisesRegex(ValueError,'Cannot check free space'):
+                    ensure_output_space(path)

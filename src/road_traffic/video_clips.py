@@ -12,6 +12,7 @@ import uuid
 
 from . import video_store
 from .store import now
+from .video_clip_worker import ensure_output_space
 
 
 def _seconds(value, label):
@@ -87,6 +88,7 @@ def export_event_clip(library, mission, event_id, pre_seconds, post_seconds, ope
     if not output_text:
         raise ValueError('Set an output directory in the mission settings before exporting a clip')
     output_root = Path(output_text)
+    ensure_output_space(output_root / '.traffic-event-capacity-check')
     workspace = library.root.resolve()
     if output_root.is_relative_to(workspace) or workspace.is_relative_to(output_root):
         raise ValueError('Choose an output outside application-managed storage')
