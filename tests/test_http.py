@@ -70,6 +70,8 @@ class HttpTests(unittest.TestCase):
             return urllib.request.urlopen(urllib.request.Request(self.base+path,data=json.dumps(data).encode() if data is not None else None,headers=hdr),timeout=30)
         except urllib.error.HTTPError as exc:
             body=exc.read()
+            if exc.code >= 500:
+                self.__class__.server_diagnostics_requested=True
             diagnostic=urllib.error.HTTPError(exc.url,exc.code,exc.msg,exc.hdrs,io.BytesIO(body))
             diagnostic.add_note('HTTP response body: '+body.decode('utf-8',errors='replace'))
             raise diagnostic from None

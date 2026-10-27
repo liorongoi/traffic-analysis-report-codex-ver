@@ -7,6 +7,7 @@ import re
 import secrets
 import ssl
 import threading
+import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -506,6 +507,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 self.reply(400,{'error':str(exc)})
             except Exception as exc:
                 self.log_error('Internal request error (%s): %s', type(exc).__name__, exc)
+                traceback.print_exc()
                 self.reply(500,{'error':'Operation failed; inspect local diagnostics'})
     server = ThreadingHTTPServer((host,port), Handler)
     if not loopback:
