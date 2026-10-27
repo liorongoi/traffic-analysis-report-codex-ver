@@ -89,8 +89,19 @@ jobs:
           }
           $uninstaller = Join-Path $install 'unins000.exe'
           if (-not (Test-Path $uninstaller)) { throw 'Current-user uninstall entry point is missing.' }
+
+          $workspace = Join-Path $env:LOCALAPPDATA 'RoadTrafficAnalysis\Workspace'
+          New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+          $sentinel = Join-Path $workspace 'upgrade-preservation-check.txt'
+          Set-Content -Path $sentinel -Value $env:GITHUB_RUN_ID -NoNewline
+          $reinstall = Start-Process -FilePath $setup -ArgumentList ("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=$install") -Wait -PassThru
+          if ($reinstall.ExitCode -ne 0) { throw "Reinstall exited with code $($reinstall.ExitCode)." }
+          if (-not (Test-Path $receipt)) { throw 'Reinstall removed the verified payload receipt.' }
+          if ((Get-Content -Raw $sentinel) -ne $env:GITHUB_RUN_ID) { throw 'Reinstall changed existing workspace data.' }
+
           $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with code $($uninstall.ExitCode)." }
+          if ((Get-Content -Raw $sentinel) -ne $env:GITHUB_RUN_ID) { throw 'Uninstall removed existing workspace data.' }
 
       - name: Upload short-lived preview installer
         uses: actions/upload-artifact@v7

@@ -29,6 +29,10 @@ class WindowsPackagingTests(unittest.TestCase):
         workflow = (ROOT / '.github' / 'workflows' / 'windows-preview-package.yml').read_text(encoding='utf-8')
         self.assertIn('RoadLoom-Preview-Setup.exe', workflow)
         self.assertNotIn('Traffic-Analysis-Preview-Setup.exe', workflow)
+        self.assertIn("'upgrade-preservation-check.txt'", workflow)
+        self.assertIn("if ((Get-Content -Raw $sentinel) -ne $env:GITHUB_RUN_ID)", workflow)
+        self.assertIn('Reinstall changed existing workspace data.', workflow)
+        self.assertIn('Uninstall removed existing workspace data.', workflow)
 
     @staticmethod
     def fake_windows_runtime(runtime, lock_path):
