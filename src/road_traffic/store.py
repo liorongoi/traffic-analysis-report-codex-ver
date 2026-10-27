@@ -252,13 +252,16 @@ class Library:
             raise ValueError('Source and output directories must not overlap')
         mission = str(uuid.uuid4())
         folder = self.location(mission)
-        folder.mkdir()
-        sources = folder / 'sources'
-        sources.mkdir()
-        final_database = folder / 'mission.sqlite3'
-        initializing_database = folder / 'mission.sqlite3.initializing'
-        conn = sqlite3.connect(initializing_database)
+        staging_root = self.root / '.mission-initializing'
+        staging_root.mkdir(exist_ok=True)
+        staging = staging_root / mission
+        staging.mkdir()
+        sources = staging / 'sources'
+        database = staging / 'mission.sqlite3'
+        conn = None
         try:
+            sources.mkdir()
+            conn = sqlite3.connect(database)
             with conn:
                 conn.executescript('''
                 BEGIN IMMEDIATE;
@@ -345,12 +348,20 @@ class Library:
                      int(settings.get('include_subdirectories', True)), processing_mode,
                      output_root, json.dumps(export_formats), '', resource_profile))
             conn.close()
-            initializing_database.replace(final_database)
-        except BaseException:
-            conn.close()
-            initializing_database.unlink(missing_ok=True)
-            sources.rmdir()
-            folder.rmdir()
+            conn = None
+            staging.replace(folder)
+        except BaseException as exc:
+            if conn is not None:
+                try:
+                    conn.close()
+                except sqlite3.Error as close_error:
+                    exc.add_note(f'Closing the unpublished mission database also failed: {close_error}')
+            try:
+                shutil.rmtree(staging)
+            except FileNotFoundError:
+                pass
+            except OSError as cleanup_error:
+                exc.add_note(f'Could not remove unpublished mission staging data at {staging}: {cleanup_error}')
             raise
         return mission
 

@@ -71,7 +71,7 @@ class StoreTests(unittest.TestCase):
         opened=threading.Event();finish=threading.Event();result={}
         def delayed_connect(database,*args,**kwargs):
             connection=real_connect(database,*args,**kwargs)
-            if Path(database).name=='mission.sqlite3.initializing':
+            if Path(database).name=='mission.sqlite3' and Path(database).parent.parent.name=='.mission-initializing':
                 opened.set()
                 if not finish.wait(5):raise TimeoutError('test did not release mission creation')
             return connection
@@ -90,6 +90,19 @@ class StoreTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertNotIn('error',result)
         self.assertIn(result['mission'],[row['id'] for row in self.lib.missions()])
+
+    def test_failed_mission_publication_cleans_staging_without_masking_error(self):
+        replace=Path.replace
+        def fail_publication(path,target):
+            if path.parent.name=='.mission-initializing':
+                raise OSError('injected publication failure')
+            return replace(path,target)
+        with patch.object(Path,'replace',fail_publication):
+            with self.assertRaisesRegex(OSError,'injected publication failure'):
+                self.lib.create('Unpublished mission','Israel','Asia/Jerusalem')
+        staging=self.lib.root/'.mission-initializing'
+        self.assertFalse(any(staging.iterdir()))
+        self.assertEqual([row['id'] for row in self.lib.missions()],[self.mission])
 
 
     def save(self,revision=0,role='none'):
