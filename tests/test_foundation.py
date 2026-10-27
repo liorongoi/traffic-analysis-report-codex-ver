@@ -79,6 +79,20 @@ class StoreTests(unittest.TestCase):
             self.lib.create('Different mission','Lebanon','Asia/Beirut',request_id=request_id)
         self.assertEqual([row['id'] for row in self.lib.missions()].count(request_id),1)
 
+    def test_mission_creation_retries_transient_sqlite_disk_io(self):
+        request_id=str(uuid.uuid4())
+        with patch.object(self.lib,'_create_locked',side_effect=[
+                sqlite3.OperationalError('disk I/O error'),request_id]) as create:
+            self.assertEqual(self.lib.create('Retry transient I/O','Lebanon','Asia/Beirut',
+                request_id=request_id),request_id)
+        self.assertEqual(create.call_count,2)
+
+    def test_mission_creation_does_not_retry_other_sqlite_errors(self):
+        with patch.object(self.lib,'_create_locked',side_effect=sqlite3.OperationalError('database is locked')) as create:
+            with self.assertRaisesRegex(sqlite3.OperationalError,'database is locked'):
+                self.lib.create('Do not retry','Lebanon','Asia/Beirut')
+        self.assertEqual(create.call_count,1)
+
     def test_monitor_mission_listing_cannot_see_half_created_database(self):
         real_connect=sqlite3.connect
         opened=threading.Event();finish=threading.Event();result={}

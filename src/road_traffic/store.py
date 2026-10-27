@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
 import zlib
@@ -358,7 +359,17 @@ class Library:
 
     def create(self, name, country, zone, settings=None, request_id=None):
         with self._create_lock:
-            return self._create_locked(name, country, zone, settings, request_id)
+            for attempt in range(3):
+                try:
+                    return self._create_locked(name, country, zone, settings, request_id)
+                except sqlite3.OperationalError as exc:
+                    # A short-lived filesystem stall can interrupt SQLite's final
+                    # commit on Windows. _create_locked removes its
+                    # unpublished staging directory before propagating the error, so
+                    # retrying the same request is safe and remains idempotent.
+                    if 'disk i/o error' not in str(exc).lower() or attempt == 2:
+                        raise
+                    time.sleep(.05 * (attempt + 1))
 
     def _create_locked(self, name, country, zone, settings=None, request_id=None):
         settings = settings or {}
