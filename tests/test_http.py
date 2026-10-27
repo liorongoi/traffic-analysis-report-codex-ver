@@ -263,6 +263,29 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(len(rows),1)
         self.assertEqual(rows[0][0],'image')
 
+    def test_download_reviewed_learning_dataset(self):
+        from road_traffic.store import Library
+        workspace=Library(self.tmp.name)
+        mission=workspace.create('HTTP learning dataset','Israel','Asia/Jerusalem')
+        with tempfile.TemporaryDirectory() as external:
+            source=Path(external)
+            write_test_image(source/'17052026-1604-human.jpg')
+            workspace.import_folder(mission,source,'camera')
+        image=workspace.images(mission)[0]
+        workspace.review(mission,image['id'],0,[{'kind':'vehicle','label':'car',
+            'box':[.1,.1,.2,.2],'origin':'human','reviewed':True}],
+            'HTTP reviewer',role='training',status='reviewed')
+        with self.request('/api/learning/dataset?mission='+mission) as response:
+            self.assertEqual(response.headers['Content-Type'],'application/zip')
+            self.assertIn('RoadLoom-Learning-Dataset.zip',response.headers['Content-Disposition'])
+            package=zipfile.ZipFile(io.BytesIO(response.read()))
+        with package:
+            manifest=json.loads(package.read('dataset-manifest.json'))
+            labels=json.loads(package.read('training/annotations.json'))
+        self.assertEqual(manifest['roles']['training']['images'],1)
+        self.assertEqual(manifest['roles']['training']['annotations'],1)
+        self.assertEqual(labels['categories'][0]['name'],'vehicle:car')
+
     def test_video_source_and_run_status_api(self):
         with tempfile.TemporaryDirectory() as external:
             source_root=Path(external)/'video-api-source'

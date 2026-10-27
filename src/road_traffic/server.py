@@ -178,6 +178,26 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 for block in iter(lambda: stream.read(1024 * 1024), b''):
                     self.wfile.write(block)
 
+        def download_learning_dataset(self, query):
+            temporary = None
+            try:
+                from .dataset_export import build
+                temporary, path = build(library, query['mission'][0])
+                size = path.stat().st_size
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/zip')
+                self.send_header('Content-Length', str(size))
+                self.send_header('Content-Disposition', 'attachment; filename="RoadLoom-Learning-Dataset.zip"')
+                self.send_header('Cache-Control', 'private, no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                with path.open('rb') as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b''):
+                        self.wfile.write(block)
+            finally:
+                if temporary is not None:
+                    temporary.cleanup()
+
         def do_GET(self):
             if not self.valid_host():
                 return self.reply(403, {'error': 'Configured host required'})
@@ -219,6 +239,8 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         'evidence_inventory':reviewed_evidence_inventory(library,m),
                         'evaluation':evaluation_status(library,m),'governance':governance_status(library,m),
                         'capabilities':capability_inventory()})
+                if parsed.path == '/api/learning/dataset':
+                    return self.download_learning_dataset(query)
                 if parsed.path == '/api/inference':
                     return self.reply(200,inference.status(query['mission'][0]))
                 if parsed.path == '/api/video/media':

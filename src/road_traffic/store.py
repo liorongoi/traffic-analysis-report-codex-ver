@@ -1197,14 +1197,16 @@ class Library:
             with self.connect(mission) as conn:
                 query='''SELECT images.*, images.rowid source_rowid, COALESCE(reviews.revision,0) revision,
                     COALESCE(reviews.status,'unreviewed') review_status, COALESCE(reviews.annotations,'[]') annotations,
-                    COALESCE(reviews.role,'none') evidence_role, COALESCE(reviews.operator,'') operator
+                    COALESCE(reviews.role,'none') evidence_role, COALESCE(reviews.operator,'') operator,
+                    COALESCE((SELECT h.view_id FROM image_view_history h WHERE h.mission_id=?
+                        AND h.image_id=images.id ORDER BY h.revision DESC LIMIT 1),'') assigned_view_id
                     FROM images LEFT JOIN reviews ON reviews.image_id=images.id AND reviews.revision=
                     (SELECT MAX(r.revision) FROM reviews r WHERE r.image_id=images.id)
                     WHERE images.rowid<=?'''
                 if last is not None:
                     query+=' AND (capture_utc,name,images.rowid)>(?,?,?)'
-                    parameters=(snapshot_rowid,*last,batch_size)
-                else:parameters=(snapshot_rowid,batch_size)
+                    parameters=(mission,snapshot_rowid,*last,batch_size)
+                else:parameters=(mission,snapshot_rowid,batch_size)
                 rows=conn.execute(query+' ORDER BY capture_utc,name,images.rowid LIMIT ?',parameters).fetchall()
             if not rows:break
             from .inference_store import enrich
