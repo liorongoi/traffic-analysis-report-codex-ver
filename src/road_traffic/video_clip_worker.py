@@ -72,7 +72,7 @@ def encode(source, destination, start_offset, end_offset):
                     ensure_output_space(destination)
             for packet in output.encode(None):
                 outgoing.mux(packet)
-            ensure_output_space(destination)
+        ensure_output_space(destination)
         if not frame_count:
             raise ValueError('The requested clip interval contains no decodable video frames')
     return frame_count
