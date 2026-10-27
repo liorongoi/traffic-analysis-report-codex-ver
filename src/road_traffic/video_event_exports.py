@@ -3,9 +3,12 @@ import csv
 import hashlib
 import json
 import os
+import io
 from pathlib import Path
 import uuid
 import zipfile
+from .store import (_compressed_zip_entry_size, _ensure_export_space,
+    _xlsx_metadata_entries)
 from xml.sax.saxutils import escape
 
 from . import video_store
@@ -224,6 +227,48 @@ def _row_count(conn, mission, run_id):
     return sum(1 for _ in _rows(conn,mission,run_id))
 
 
+def _estimate_csv_size(conn, mission, run_id):
+    stream = io.StringIO(newline='')
+    writer = csv.writer(stream)
+    writer.writerow(HEADERS)
+    required = len(stream.getvalue().encode('utf-8-sig'))
+    for row in _rows(conn, mission, run_id):
+        stream.seek(0)
+        stream.truncate(0)
+        writer.writerow([_cell(value) for value in _values(conn, row,
+            _clips_for_events(conn,row.get('merged_event_ids',[row['source_event_id']])))])
+        required += len(stream.getvalue().encode('utf-8'))
+    return required + 64 * 1024
+
+
+def _estimate_xlsx_size(conn, mission, run_id, count):
+    max_data_rows = 1_048_575
+    sheet_count = max(1, (count + max_data_rows - 1) // max_data_rows)
+    sheet_names = ['Events' if sheet_count == 1 else f'Events {i+1}' for i in range(sheet_count)]
+    total = sum(_compressed_zip_entry_size(name, [content.encode('utf-8')])
+        for name, content in _xlsx_metadata_entries(sheet_count, sheet_names))
+    rows = iter(_rows(conn, mission, run_id))
+    prefix = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+    suffix = b'</sheetData></worksheet>'
+    for sheet_index in range(sheet_count):
+        sheet_rows = min(max_data_rows, max(0, count - sheet_index * max_data_rows))
+        name = f'xl/worksheets/sheet{sheet_index+1}.xml'
+        def chunks():
+            yield prefix
+            header = ''.join(_cell_xml(_column_name(i+1), 1, value) for i, value in enumerate(HEADERS))
+            yield f'<row r="1">{header}</row>'.encode('utf-8')
+            for row_number in range(2, sheet_rows + 2):
+                row = next(rows)
+                values = _values(conn, row,
+                    _clips_for_events(conn,row.get('merged_event_ids',[row['source_event_id']])))
+                content = ''.join(_cell_xml(_column_name(i+1), row_number, value)
+                    for i, value in enumerate(values))
+                yield f'<row r="{row_number}">{content}</row>'.encode('utf-8')
+            yield suffix
+        total += _compressed_zip_entry_size(name, chunks())
+    return total + 64 * 1024
+
+
 def _export_detail(library, mission, export_id):
     _prepare(library, mission)
     with library.connect(mission) as conn:
@@ -251,6 +296,12 @@ def _export_format(library, mission, run_id, operator, format_name):
     target = output / f'traffic-video-events-{mission[:8]}-{run_id[:8]}-{export_id[:8]}.{extension}'
     temp_name = str(output / f'.traffic-video-events-{export_id}.{extension}.partial')
     created = now()
+    with library.connect(mission) as conn:
+        conn.execute('BEGIN')
+        count = _row_count(conn, mission, run_id)
+        estimated_bytes = (_estimate_csv_size(conn, mission, run_id) if format_name == 'csv'
+            else _estimate_xlsx_size(conn, mission, run_id, count))
+    _ensure_export_space(output, estimated_bytes)
     with library.connect(mission) as conn:
         conn.execute('''INSERT INTO video_event_table_exports(id,mission_id,run_id,operator,format,
             output_root,output_path,temp_path,row_count,status,created) VALUES (?,?,?,?,?,?,?,?,?,?,?)''',

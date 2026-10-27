@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
+from types import SimpleNamespace
 from xml.etree import ElementTree
 from unittest.mock import patch
 
@@ -61,11 +62,19 @@ class VideoEventExportTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_csv_and_xlsx_snapshot_keep_event_lineage_reviews_unicode_and_clip_links(self):
+        with self.library.connect(self.mission) as conn:
+            count=video_event_exports._row_count(conn,self.mission,self.run['id'])
+            csv_estimate=video_event_exports._estimate_csv_size(conn,self.mission,self.run['id'])
+            xlsx_estimate=video_event_exports._estimate_xlsx_size(conn,self.mission,self.run['id'],count)
         result = export_run(self.library, self.mission, self.run['id'], 'בּוֹדֵק')
         self.assertEqual(result['status'], 'completed')
         self.assertEqual({item['format'] for item in result['files']}, {'csv', 'xlsx'})
         self.assertTrue(all(item['row_count'] == 1 and item['status'] == 'completed'
             for item in result['files']))
+        self.assertLessEqual(Path(next(item['output_path'] for item in result['files']
+            if item['format']=='csv')).stat().st_size,csv_estimate)
+        self.assertLessEqual(Path(next(item['output_path'] for item in result['files']
+            if item['format']=='xlsx')).stat().st_size,xlsx_estimate)
         csv_export = next(item for item in result['files'] if item['format'] == 'csv')
         with export_file(self.library, self.mission, csv_export['id']).open(encoding='utf-8-sig', newline='') as stream:
             rows = list(csv.DictReader(stream))
@@ -98,6 +107,15 @@ class VideoEventExportTests(unittest.TestCase):
         self.assertIn(self.clip_id, row['clip_exports'])
         self.assertEqual(hashlib.sha256(xlsx_path.read_bytes()).hexdigest(), xlsx_export['snapshot_sha256'])
         self.assertEqual(len(exports(self.library, self.mission, self.run['id'])), 2)
+
+    def test_event_export_rejects_low_space_before_ledger_or_file_creation(self):
+        with patch('road_traffic.store.shutil.disk_usage',return_value=SimpleNamespace(free=0)):
+            result=export_run(self.library,self.mission,self.run['id'],'Operator')
+        self.assertEqual(result['status'],'failed')
+        self.assertEqual(len(result['errors']),2)
+        self.assertTrue(all('Export needs approximately' in error for error in result['errors']))
+        self.assertEqual(exports(self.library,self.mission,self.run['id']),[])
+        self.assertEqual(list(self.output_root.iterdir()),[])
 
     def test_export_is_a_fixed_run_snapshot_and_download_detects_tampering(self):
         result = export_run(self.library, self.mission, self.run['id'], 'Operator')
