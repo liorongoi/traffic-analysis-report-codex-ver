@@ -267,6 +267,15 @@ class StoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'unavailable'):
             self.lib.create('Missing','Israel','Asia/Jerusalem',{'output_root':str(self.root/'missing')})
 
+    def test_output_directory_is_write_probed_and_probe_file_is_removed(self):
+        output=self.root/'write-probe-output';output.mkdir()
+        mission=self.lib.create('Writable output','Israel','Asia/Jerusalem',{'output_root':str(output)})
+        self.assertTrue(self.lib.settings(mission)['output_root'])
+        self.assertEqual(list(output.iterdir()),[])
+        with patch('road_traffic.store.tempfile.NamedTemporaryFile',side_effect=PermissionError('ACL denies create')):
+            with self.assertRaisesRegex(ValueError,'Output directory failed a write check'):
+                self.lib.create('Read-only output','Israel','Asia/Jerusalem',{'output_root':str(output)})
+
     def test_legacy_mission_gets_additive_settings_migration(self):
         mission='00000000-0000-4000-8000-000000000001'
         folder=self.lib.location(mission);folder.mkdir()

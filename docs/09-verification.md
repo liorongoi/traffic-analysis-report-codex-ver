@@ -299,3 +299,8 @@ GitHub Actions run [`40574265539`](https://github.com/liorongoi/traffic-analysis
 ## Media import free-space preflight — 2026-10-27
 
 Image-batch import now totals the current source snapshot sizes and compares them with free bytes on the application storage volume before creating the import run or copying files. Video registration performs the same check for its source file against mission storage before making the destination directory. Both return an actionable required-versus-available error and avoid starting the copy when space is insufficient. `tests.test_foundation` passed 35 tests, including a check that a rejected image batch leaves run/image counts unchanged; the video preflight test passed with a stubbed PyAV import because PyAV is unavailable in this Mac runtime. The Windows full-suite workflow will exercise both tests with packaged dependencies. This preflight cannot reserve disk space, so another process can still consume it during a copy; output-export capacity is also not estimated before export.
+
+
+## Output-directory write validation — 2026-10-27
+
+Mission setup and export now verify output permissions by creating a unique temporary file in the selected output directory, writing bytes, flushing and fsyncing it, and then removing it. If ACLs or network-share behavior make the folder unwritable despite `os.access`, setup/export returns a visible write-check error. `tests.test_foundation` passed 36 tests, including success with no probe-file residue and a simulated ACL failure. This validates current write access only; it does not reserve export space or establish long-term network-share availability.

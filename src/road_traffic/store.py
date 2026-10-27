@@ -413,6 +413,16 @@ class Library:
             raise ValueError(f'{label.title()} directory is not readable')
         if writable and not os.access(path, os.W_OK):
             raise ValueError(f'{label.title()} directory is not writable')
+        if writable:
+            try:
+                with tempfile.NamedTemporaryFile(mode='wb', prefix='.roadloom-write-check-',
+                        dir=path, delete=True) as probe:
+                    probe.write(b'RoadLoom output permission check')
+                    probe.flush()
+                    os.fsync(probe.fileno())
+            except OSError as exc:
+                detail=exc.strerror or str(exc)
+                raise ValueError(f'{label.title()} directory failed a write check: {detail}') from exc
         return str(path)
 
     def settings(self, mission):
