@@ -71,6 +71,17 @@ _WEEKDAY_OVERNIGHT_PATTERN = re.compile(
     r'(?P<end_time>\d{1,2}:\d{2})(?!\w)', re.I)
 _TIME_RANGE_PATTERN = re.compile(r'(?<!\w)(?:between|from|בין)\s*(\d{1,2}:\d{2})\s*(?:and|to|through|ל|עד|-)\s*(\d{1,2}:\d{2})(?!\w)', re.I)
 _SINGLE_TIME_BOUND_PATTERN = re.compile(r'(?<!\w)(after|before|אחרי|לפני)\s*(\d{1,2}:\d{2})(?!\w)', re.I)
+_DAYPART_FORMS = {
+    'morning': ('05:00', '12:00'), 'mornings': ('05:00', '12:00'),
+    'afternoon': ('12:00', '17:00'), 'afternoons': ('12:00', '17:00'),
+    'evening': ('17:00', '21:00'), 'evenings': ('17:00', '21:00'),
+    'night': ('21:00', '05:00'), 'nights': ('21:00', '05:00'),
+    'בבוקר': ('05:00', '12:00'), 'בוקר': ('05:00', '12:00'),
+    'בצהריים': ('12:00', '17:00'), 'צהריים': ('12:00', '17:00'),
+    'בערב': ('17:00', '21:00'), 'ערב': ('17:00', '21:00'),
+    'בלילה': ('21:00', '05:00'), 'לילה': ('21:00', '05:00'),
+}
+_DAYPART_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _DAYPART_FORMS), key=len, reverse=True)) + r')(?!\w)', re.I)
 _DATE_RANGE_PATTERN = re.compile(r'(?<!\w)(?:between|from)\s*(20\d{2}-\d{2}-\d{2})\s*(?:and|to|through)\s*(20\d{2}-\d{2}-\d{2})(?!\w)', re.I)
 _DATE_PATTERN = re.compile(r'(?<!\w)(20\d{2}-\d{2}-\d{2})(?!\w)')
 
@@ -86,6 +97,12 @@ def _parse_time(value):
 def _extract_temporal_filter(query):
     text = query.casefold()
     result = {}
+    daypart_matches = list(_DAYPART_PATTERN.finditer(text))
+    if len(daypart_matches) > 4:
+        raise ValueError('A search can include at most four local-time periods')
+    dayparts = [_DAYPART_FORMS[match.group(1).casefold()] for match in daypart_matches]
+    for match in reversed(daypart_matches):
+        text = text[:match.start()] + ' ' + text[match.end():]
     overnight_match = _WEEKDAY_OVERNIGHT_PATTERN.search(text)
     if overnight_match:
         start_day = _WEEKDAY_FORMS[overnight_match.group('start_day').casefold()]
@@ -98,6 +115,8 @@ def _extract_temporal_filter(query):
         text = text[:overnight_match.start()] + ' ' + text[overnight_match.end():]
     time_matches = list(_TIME_RANGE_PATTERN.finditer(text))
     if time_matches:
+        if dayparts:
+            raise ValueError('Use either named local-time periods or one explicit local-time window')
         if result:
             raise ValueError('Use one local-time window per search')
         if len(time_matches) > 4:
@@ -116,7 +135,7 @@ def _extract_temporal_filter(query):
         else:
             result['time_windows'] = windows
     single_time_matches=list(_SINGLE_TIME_BOUND_PATTERN.finditer(text))
-    if len(single_time_matches)>1 or (single_time_matches and time_matches):
+    if len(single_time_matches)>1 or (single_time_matches and (time_matches or dayparts)):
         raise ValueError('Use one local-time bound or one explicit time range')
     if single_time_matches:
         if result:
@@ -134,6 +153,14 @@ def _extract_temporal_filter(query):
             result['start_time']='00:00'
             result['end_time']=boundary.strftime('%H:%M')
         text=text[:match.start()]+' '+text[match.end():]
+    if dayparts:
+        if result:
+            raise ValueError('Use either named local-time periods or one explicit local-time window')
+        windows = [{'start_time': start, 'end_time': end} for start, end in dayparts]
+        if len(windows) == 1:
+            result.update(windows[0])
+        else:
+            result['time_windows'] = windows
 
     date_match = _DATE_RANGE_PATTERN.search(text)
     if date_match:

@@ -336,6 +336,23 @@ class ObjectSearchTests(unittest.TestCase):
         self.assertEqual(spec['schedule_filter']['start_date'], '2026-05-17')
         self.assertEqual(spec['schedule_filter']['end_date'], '2026-05-19')
 
+    def test_named_dayparts_are_local_time_filters_in_english_and_hebrew(self):
+        scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
+            'view_assignments': [], 'regions_by_view': {}}
+        morning = interpret('Find trucks in the morning on Monday', run_id='run-1',
+            scope_snapshot=scope)
+        evening = interpret('מצא משאיות בערב', run_id='run-1', scope_snapshot=scope)
+        night = interpret('Find cars at night', run_id='run-1', scope_snapshot=scope)
+        self.assertEqual(morning['schedule_filter'], {
+            'start_time': '05:00', 'end_time': '12:00', 'weekdays': [0]})
+        self.assertEqual(evening['schedule_filter'], {
+            'start_time': '17:00', 'end_time': '21:00'})
+        self.assertEqual(night['schedule_filter'], {
+            'start_time': '21:00', 'end_time': '05:00'})
+        with self.assertRaisesRegex(ValueError, 'either named'):
+            interpret('Find cars in the morning between 06:00 and 09:00',
+                run_id='run-1', scope_snapshot=scope)
+
     def test_english_after_and_hebrew_before_use_saved_local_timezone(self):
         scope={'run_id':'run-1','schedule':{'timezone':'Europe/Riga'},
             'view_assignments':[], 'regions_by_view':{}}
