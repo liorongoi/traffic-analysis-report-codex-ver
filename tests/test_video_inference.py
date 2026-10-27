@@ -116,7 +116,7 @@ class VideoInferenceServiceTests(unittest.TestCase):
         result=self.service.start_plate_review(mission,source['id'])
         self.assertEqual(result['status'],'queued')
         self.assertEqual(result['config']['task'],'license_plate')
-        self.assertEqual(result['config']['plate_detector']['device'],'CPUExecutionProvider')
+        self.assertEqual(result['config']['plate_detector']['device'],'auto')
         self.assertNotIn('recognition',result['config'])
         self.assertIn((mission,result['run']),self.inference.processes)
 
