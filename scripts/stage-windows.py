@@ -146,7 +146,8 @@ def stage(project, runtime):
         raise ValueError(f'Staging already exists; inspect it before rebuilding: {output}')
     output.mkdir(parents=True)
     try:
-        shutil.copytree(runtime, output / 'runtime')
+        shutil.copytree(runtime, output / 'runtime',
+            ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
         for name in ('src', 'web', 'docs'):
             shutil.copytree(project / name, output / name,
                 ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))

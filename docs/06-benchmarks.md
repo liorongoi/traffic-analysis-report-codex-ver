@@ -35,6 +35,14 @@ The user-provided [Global License Plate Dataset paper](https://arxiv.org/abs/240
 
 These sources do not clear the acceptance gate. Do not download, redistribute, or use them as accuracy evidence until the rights and time provenance are confirmed.
 
+### Additional clip search (2026-10-27)
+
+- The [2K Dashcam Traffic Surveillance Video Corpus](https://huggingface.co/datasets/thundarstrom/traffic-surveillance-video-corpus) page labels the dataset CC BY 4.0 and describes 50-minute drives, but currently reports that the dataset is empty. It is dashcam footage and does not document a UTC-to-video-PTS mapping. No files were available or downloaded.
+- The [TIme Square Intersection dataset](https://personal.ie.cuhk.edu.hk/~ccloy/downloads_qmul_TISI_dataset.html) provides image sequences grouped by GMT-named folders at approximately 10 Hz, rather than video clips. Its page restricts use to research purposes. It is not suitable as a product acceptance fixture.
+- The official [AAU MTID page](https://vap.aau.dk/mtid/) links to a multi-view traffic dataset hosted through Kaggle, but the public page does not state a reuse license or timezone-aware capture/PTS mapping. It is not cleared for use.
+
+This search found no candidate that satisfies the authorized representative-video gate with verified UTC provenance. No media was downloaded.
+
 No candidate has been acquired or accepted. Do not include media in the repository until its exact terms, provenance, and UTC alignment are confirmed.
 
 ## Selection and evidence

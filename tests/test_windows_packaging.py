@@ -147,6 +147,9 @@ class WindowsPackagingTests(unittest.TestCase):
             self.fake_model_pack(project / 'model-packs' / 'license-plate-yolox', 'plate')
             runtime = Path(temp) / 'runtime'
             self.fake_windows_runtime(runtime, lock)
+            cache = runtime / 'Lib' / 'site-packages' / 'onnxruntime' / 'tools' / '__pycache__'
+            cache.mkdir(parents=True)
+            (cache / 'unused.cpython-312.pyc').write_bytes(b'cache')
             staged = STAGER['stage'](project, runtime)
             expected = ('scripts/run-inference.py', 'scripts/run-video-analysis.py',
                 'model-packs/license-plate-yolox/plate_yolox_tiny_640.onnx',
@@ -155,6 +158,7 @@ class WindowsPackagingTests(unittest.TestCase):
                 'web/data/timezone-countries.json', 'web/data/timezone-zones.json')
             for relative in expected:
                 self.assertTrue((staged / relative).is_file(), relative)
+            self.assertFalse((staged / 'runtime/Lib/site-packages/onnxruntime/tools/__pycache__').exists())
             manifest = json.loads((staged / 'payload-manifest.json').read_text(encoding='utf-8'))
             self.assertIn('PREVIEW-LIMITATIONS.txt', manifest)
             self.assertNotIn('payload-manifest.json', manifest)
