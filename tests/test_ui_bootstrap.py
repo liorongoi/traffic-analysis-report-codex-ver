@@ -36,6 +36,12 @@ class UiBootstrapTests(unittest.TestCase):
         first_override = source.index('Object.assign(en,')
         self.assertLess(declaration, first_override)
 
+    def test_plate_ocr_help_describes_suggestions_without_overstating_accuracy(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn('local OCR offers unverified letter/digit suggestions in Latin and Arabic/Persian scripts for human review', source)
+        self.assertIn('real-camera accuracy is not yet validated', source)
+        self.assertNotIn('no validated Persian/Arabic support', source)
+
     def test_mission_configuration_is_a_three_step_wizard(self):
         parser = MissionWizardMarkup()
         parser.feed((ROOT / 'web' / 'index.html').read_text(encoding='utf-8'))
