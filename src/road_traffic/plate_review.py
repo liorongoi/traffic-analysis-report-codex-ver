@@ -496,18 +496,25 @@ def list_crops(library,mission,image_id=None,search=None):
         return [dict(row) for row in conn.execute(sql,params).fetchall()]
 
 
-def _normalized_edit_similarity(actual,predicted):
-    """Return character-level similarity after the same plate-search normalization."""
+def _edit_distance(actual,predicted):
+    """Return Levenshtein distance after the same plate-search normalization."""
     left=normalize_plate_text(actual);right=normalize_plate_text(predicted)
-    if not left:return 1.0 if not right else 0.0
-    if not right:return 0.0
+    if not left:return len(right)
+    if not right:return len(left)
     previous=list(range(len(right)+1))
     for i,a in enumerate(left,1):
         current=[i]
         for j,b in enumerate(right,1):
             current.append(min(current[-1]+1,previous[j]+1,previous[j-1]+(a!=b)))
         previous=current
-    return max(0.0,1.0-previous[-1]/max(len(left),len(right)))
+    return previous[-1]
+
+
+def _normalized_edit_similarity(actual,predicted):
+    """Return character-level similarity after the same plate-search normalization."""
+    left=normalize_plate_text(actual);right=normalize_plate_text(predicted)
+    if not left:return 1.0 if not right else 0.0
+    return max(0.0,1.0-_edit_distance(left,right)/max(len(left),len(right)))
 
 
 def ocr_quality_report(library,mission):
@@ -529,7 +536,7 @@ def ocr_quality_report(library,mission):
         model_hashes=sorted({row.get(hash_field) for row in reviewed if row.get(hash_field)})
         for model_hash in model_hashes:
             rows=[row for row in reviewed if row.get(hash_field)==model_hash]
-            exact=0;covered=0;similarities=[];unique_labels=set()
+            exact=0;covered=0;similarities=[];unique_labels=set();edit_errors=0;reference_characters=0
             for row in rows:
                 actual=row.get('normalized_text') or normalize_plate_text(row.get('verified_text',''))
                 predicted=row.get(text_field) or ''
@@ -537,12 +544,16 @@ def ocr_quality_report(library,mission):
                 if predicted:covered+=1
                 if predicted and normalize_plate_text(predicted)==actual:exact+=1
                 similarities.append(_normalized_edit_similarity(actual,predicted))
+                edit_errors+=_edit_distance(actual,predicted)
+                reference_characters+=len(actual)
             count=len(rows)
             result['models'].append({'candidate':label,'model_sha256':model_hash,
                 'reviewed_crops':count,'unique_verified_strings':len(unique_labels),
                 'candidate_coverage':covered/count if count else 0.0,
                 'exact_matches':exact,'exact_match_rate':exact/count if count else 0.0,
-                'mean_normalized_edit_similarity':sum(similarities)/count if count else 0.0})
+                'mean_normalized_edit_similarity':sum(similarities)/count if count else 0.0,
+                'character_error_rate':edit_errors/reference_characters if reference_characters else 0.0,
+                'edit_errors':edit_errors,'reference_characters':reference_characters})
     return result
 
 

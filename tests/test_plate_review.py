@@ -6,7 +6,7 @@ import unittest
 from PIL import Image
 from road_traffic.plate_review import (_connect, _paths, crop_file, list_crops,
     normalize_plate_text, review, review_text, _sha, propose, ocr_quality_report,
-    _normalized_edit_similarity)
+    _normalized_edit_similarity, _edit_distance)
 from unittest.mock import patch
 from road_traffic.store import Library
 from datetime import datetime, timezone
@@ -162,7 +162,10 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertEqual((primary['exact_matches'],primary['exact_match_rate']),(1,1.0))
         self.assertEqual(alternate['exact_matches'],0)
         self.assertAlmostEqual(alternate['mean_normalized_edit_similarity'],5/6)
+        self.assertAlmostEqual(alternate['character_error_rate'],1/6)
+        self.assertEqual((alternate['edit_errors'],alternate['reference_characters']),(1,6))
         self.assertAlmostEqual(_normalized_edit_similarity('۱۲-AB','12AC'),.75)
+        self.assertEqual(_edit_distance('A','ABCDEF'),5)
 
     def test_plate_ocr_report_excludes_pending_rejected_or_unreadable_text(self):
         report=ocr_quality_report(self.lib,self.mission)
