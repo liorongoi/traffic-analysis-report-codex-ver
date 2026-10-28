@@ -7,7 +7,7 @@ import unittest
 from PIL import Image
 from road_traffic.plate_review import (_connect, _paths, crop_file, list_crops,
     normalize_plate_text, review, review_text, _sha, propose, ocr_quality_report,
-    _normalized_edit_similarity, _edit_distance, list_crops_page,export_crops_csv)
+    _normalized_edit_similarity, _edit_distance, list_crops_page,export_crops_csv,PlateDetector)
 from unittest.mock import patch
 from road_traffic.store import Library
 from datetime import datetime, timezone
@@ -225,6 +225,11 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertEqual(len(first['sha256']),64)
         second=export_crops_csv(self.lib,self.mission)
         self.assertNotEqual(first['path'],second['path'])
+
+    def test_plate_detector_reports_missing_offline_runtime_dependency_clearly(self):
+        with patch('builtins.__import__',side_effect=ModuleNotFoundError("No module named 'cv2'",name='cv2')):
+            with self.assertRaisesRegex(ValueError,r"offline runtime is missing a required plate-detection dependency \(module 'cv2'\)"):
+                PlateDetector(Path('unused-model-pack'))
 
     def test_reviews_reject_missing_operator_and_invalid_decision(self):
         with self.assertRaisesRegex(ValueError,'Operator'):

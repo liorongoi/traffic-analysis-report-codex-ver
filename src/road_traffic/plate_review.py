@@ -309,9 +309,13 @@ class GlobalPlateTextRecognizer:
 
 class PlateDetector:
     def __init__(self,pack,threshold=.3):
-        import cv2
-        import numpy as np
-        import onnxruntime as ort
+        try:
+            import cv2
+            import numpy as np
+            import onnxruntime as ort
+        except (ImportError,OSError) as exc:
+            missing=f"module '{exc.name}'" if getattr(exc,'name',None) else str(exc)[:160]
+            raise ValueError(f'The offline runtime is missing a required plate-detection dependency ({missing}). Repair or reinstall the app before running plate analysis.') from exc
         if not .01<=threshold<=.9:raise ValueError('Invalid plate detector threshold')
         self.cv,self.np=cv2,np
         self.model,self.sha=_model_pack(pack)
