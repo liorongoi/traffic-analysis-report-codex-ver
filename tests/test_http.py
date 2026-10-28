@@ -237,6 +237,10 @@ class HttpTests(unittest.TestCase):
             primary=next(row for row in metrics['models'] if row['candidate']=='primary')
             self.assertEqual(primary['exact_match_rate'],1)
             self.assertIn('not a protected held-out evaluation',metrics['scope'])
+            with self.request('/api/plates/export',{'mission':mission}) as response:
+                exported=json.load(response)
+            self.assertEqual(exported['row_count'],1)
+            self.assertIn(original,Path(exported['path']).read_text(encoding='utf-8-sig'))
     def test_cross_origin_write_rejected(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},headers={'Origin':'http://external.invalid'})
         self.assertEqual(exc.exception.code,403)

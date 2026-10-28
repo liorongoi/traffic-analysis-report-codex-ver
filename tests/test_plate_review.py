@@ -1,4 +1,5 @@
 import json
+import csv
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -6,7 +7,7 @@ import unittest
 from PIL import Image
 from road_traffic.plate_review import (_connect, _paths, crop_file, list_crops,
     normalize_plate_text, review, review_text, _sha, propose, ocr_quality_report,
-    _normalized_edit_similarity, _edit_distance, list_crops_page)
+    _normalized_edit_similarity, _edit_distance, list_crops_page,export_crops_csv)
 from unittest.mock import patch
 from road_traffic.store import Library
 from datetime import datetime, timezone
@@ -208,6 +209,22 @@ class PlateCropReviewTests(unittest.TestCase):
         report=ocr_quality_report(self.lib,self.mission)
         self.assertEqual(report['reviewed_crops'],0)
         self.assertEqual(report['models'],[])
+
+    def test_plate_review_export_preserves_unicode_and_lineage_in_unique_csv(self):
+        review(self.lib,self.mission,self.crop_id,0,'approved','Reviewer')
+        review_text(self.lib,self.mission,self.crop_id,0,'corrected','٠٠١٢-ب/34','Reviewer')
+        first=export_crops_csv(self.lib,self.mission)
+        with Path(first['path']).open(encoding='utf-8-sig',newline='') as stream:
+            row=next(csv.DictReader(stream))
+        self.assertEqual(first['row_count'],1)
+        self.assertEqual(row['verified_text'],'٠٠١٢-ب/34')
+        self.assertEqual(row['normalized_text'],'0012ب34')
+        self.assertEqual(row['text_decision'],'corrected')
+        self.assertEqual(row['crop_review_operator'],'Reviewer')
+        self.assertEqual(row['crop_sha256'],_sha(Path(self.output)/'plate-crops'/self.mission/(self.crop_id+'.jpg')))
+        self.assertEqual(len(first['sha256']),64)
+        second=export_crops_csv(self.lib,self.mission)
+        self.assertNotEqual(first['path'],second['path'])
 
     def test_reviews_reject_missing_operator_and_invalid_decision(self):
         with self.assertRaisesRegex(ValueError,'Operator'):

@@ -6,8 +6,10 @@ Operators separately accept, correct, reject, or mark suggestions unreadable.
 """
 from __future__ import annotations
 from contextlib import contextmanager
+import csv
 import hashlib
 import json
+import os
 from .ort_session import create_session
 import math
 import sqlite3
@@ -603,6 +605,60 @@ def ocr_quality_report(library,mission):
                 'unique_verified_strings':len(grouped_rows),
                 'string_grouped':_ocr_metrics(grouped_rows,text_field)})
     return result
+
+
+PLATE_EXPORT_FIELDS=('crop_id','source_kind','source_name','source_sha256','image_id','video_source_id',
+    'frame_index','pts','time_base_num','time_base_den','capture_utc','bbox','detector_confidence',
+    'detector_model_sha256','crop_file','crop_sha256','crop_review_decision','crop_review_revision',
+    'crop_review_operator','crop_reviewed_at','ocr_primary_text','ocr_primary_confidence',
+    'ocr_primary_model_sha256','ocr_alternative_text','ocr_alternative_confidence',
+    'ocr_alternative_model_sha256','text_decision','verified_text','normalized_text',
+    'text_review_revision','text_review_operator','text_reviewed_at')
+
+
+def export_crops_csv(library,mission):
+    """Write an atomic, UTF-8 plate-crop review snapshot without overwriting prior exports."""
+    _,folder,db=_paths(library,mission)
+    export_id=str(uuid.uuid4())
+    target=folder/f'plate-review-{mission[:8]}-{export_id}.csv'
+    temporary=folder/f'.{target.name}.tmp'
+    query='''SELECT c.id AS crop_id,c.source_kind,c.source_name,c.source_sha256,c.image_id,c.video_source_id,
+        c.frame_index,c.pts,c.time_base_num,c.time_base_den,c.capture_utc,c.bbox,
+        c.confidence AS detector_confidence,c.model_sha256 AS detector_model_sha256,c.crop_file,c.crop_sha256,
+        r.decision AS crop_review_decision,r.revision AS crop_review_revision,r.operator AS crop_review_operator,
+        r.created AS crop_reviewed_at,c.ocr_text AS ocr_primary_text,c.ocr_confidence AS ocr_primary_confidence,
+        c.ocr_model_sha256 AS ocr_primary_model_sha256,c.ocr_alternative_text,c.ocr_alternative_confidence,
+        c.ocr_alternative_model_sha256,tr.decision AS text_decision,tr.verified_text,tr.normalized_text,
+        tr.revision AS text_review_revision,tr.operator AS text_review_operator,tr.created AS text_reviewed_at
+        FROM crops c LEFT JOIN reviews r ON r.id=(SELECT id FROM reviews x WHERE x.crop_id=c.id
+        ORDER BY x.revision DESC LIMIT 1) LEFT JOIN text_reviews tr ON tr.id=(SELECT id FROM text_reviews x
+        WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1) ORDER BY c.created,c.source_name,c.id'''
+    count=0
+    try:
+        with _connect(db) as conn, temporary.open('x',encoding='utf-8-sig',newline='') as stream:
+            writer=csv.DictWriter(stream,fieldnames=PLATE_EXPORT_FIELDS,extrasaction='ignore')
+            writer.writeheader()
+            for raw in conn.execute(query):
+                row=dict(raw)
+                for key,value in row.items():
+                    if isinstance(value,str) and value.lstrip().startswith(('=','+','-','@')):
+                        row[key]="'"+value
+                writer.writerow(row);count+=1
+            stream.flush();os.fsync(stream.fileno())
+        if target.exists():raise FileExistsError('Plate export filename already exists')
+        os.replace(temporary,target)
+        try:
+            fd=os.open(folder,os.O_RDONLY)
+            try:os.fsync(fd)
+            finally:os.close(fd)
+        except OSError:
+            pass
+        digest=_sha(target)
+        return {'id':export_id,'path':str(target),'row_count':count,'sha256':digest,'format':'csv'}
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+        raise
 
 
 def crop_file(library,mission,crop_id):
