@@ -1,6 +1,6 @@
 """Verified, non-destructive mission backup and restore packages."""
 from __future__ import annotations
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 
 import hashlib
 import json
@@ -17,6 +17,22 @@ from datetime import datetime, timezone
 FORMAT = "roadloom-mission-backup"
 VERSION = 1
 MAX_MANIFEST_BYTES = 8 * 1024 * 1024
+
+
+@contextmanager
+def _database(path, **kwargs):
+    """Use sqlite's transaction context and also close the handle on exit.
+
+    ``sqlite3.Connection``'s context manager commits or rolls back; it does not
+    close the connection. Explicit closure matters on Windows, where open
+    handles prevent temporary backup databases from being removed.
+    """
+    connection = sqlite3.connect(path, **kwargs)
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 def _hash(path: Path) -> str:
@@ -72,7 +88,7 @@ def _copy_file(source: Path, destination: Path, archive_name: str, entries: list
 def _snapshot_database(source_path: Path, destination: Path, archive_name: str, entries: list):
     source = sqlite3.connect(source_path.resolve().as_uri() + "?mode=ro", uri=True)
     try:
-        with sqlite3.connect(destination) as snapshot:
+        with _database(destination) as snapshot:
             source.backup(snapshot)
     finally:
         source.close()
@@ -82,7 +98,7 @@ def _snapshot_database(source_path: Path, destination: Path, archive_name: str, 
 
 def _registered_outputs(database, output_root, mission):
     paths = set()
-    with sqlite3.connect(database) as conn:
+    with _database(database) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         queries = []
         if "exports" in tables:
@@ -174,7 +190,7 @@ def create_backup(library, mission: str, destination):
                     _copy_file(source_path, target_path, archive_name, entries)
             missing_outputs = [item["original_path"] for item in output_paths if not item["exists"]]
 
-        with sqlite3.connect(staged_mission / "mission.sqlite3") as conn:
+        with _database(staged_mission / "mission.sqlite3") as conn:
             mission_row = conn.execute("SELECT name FROM mission WHERE id=?", (mission,)).fetchone()
         if mission_row is None:
             raise ValueError("Mission not found")
@@ -299,7 +315,7 @@ def verify_backup(archive_path):
         database = Path(td) / "mission.sqlite3"
         database.write_bytes(archive.read("mission/mission.sqlite3"))
         try:
-            with sqlite3.connect(database) as conn:
+            with _database(database) as conn:
                 if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                     raise ValueError("Backup mission database failed SQLite integrity check")
                 row = conn.execute("SELECT id,name FROM mission").fetchone()
@@ -333,7 +349,7 @@ def restore_backup(library, archive_path, *, plate_output_root=None):
             with zipfile.ZipFile(archive_path) as archive, tempfile.TemporaryDirectory(prefix="roadloom-restore-db-") as td:
                 db = Path(td) / "mission.sqlite3"
                 db.write_bytes(archive.read("mission/mission.sqlite3"))
-                with sqlite3.connect(db) as conn:
+                with _database(db) as conn:
                     row = conn.execute("SELECT output_root FROM mission_settings WHERE mission_id=?", (mission,)).fetchone()
                     output_root = row[0] if row else ""
         output_root = Path(output_root).expanduser() if output_root else None
@@ -382,7 +398,7 @@ def restore_backup(library, archive_path, *, plate_output_root=None):
                         shutil.copyfileobj(source, output, 1024 * 1024)
 
         db_path = staged_mission / "mission.sqlite3"
-        with sqlite3.connect(db_path) as conn:
+        with _database(db_path) as conn:
             check = conn.execute("PRAGMA quick_check").fetchone()[0]
             identity = conn.execute("SELECT id FROM mission").fetchone()
             if check != "ok" or not identity or identity[0] != mission:
