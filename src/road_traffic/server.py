@@ -504,6 +504,9 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 elif self.path == '/api/night-learning/evaluate-test':
                     result=schedule_learning_task(data['mission'],'evaluate_test',{
                         'candidate_id':data.get('candidate_id'),'operator':data.get('operator')})
+                elif self.path == '/api/night-learning/cancel':
+                    from .learning import cancel_task
+                    result=cancel_task(library,data['mission'],data['task_id'])
                 elif self.path == '/api/night-learning/decision':
                     from .learning import record_model_decision
                     result=record_model_decision(library,data['mission'],data.get('action'),

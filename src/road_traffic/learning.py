@@ -57,7 +57,11 @@ def prepare(library,mission):
         c.execute('''CREATE TABLE IF NOT EXISTS learning_tasks(
           id TEXT PRIMARY KEY,mission_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('train','evaluate_test')),
           payload TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
-          result_id TEXT,result_status TEXT,error TEXT,created TEXT NOT NULL,started TEXT,finished TEXT)''')
+          result_id TEXT,result_status TEXT,error TEXT,created TEXT NOT NULL,started TEXT,finished TEXT,
+          cancel_requested INTEGER NOT NULL DEFAULT 0)''')
+        columns={row['name'] for row in c.execute('PRAGMA table_info(learning_tasks)')}
+        if 'cancel_requested' not in columns:
+            c.execute('ALTER TABLE learning_tasks ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0')
         c.execute('CREATE INDEX IF NOT EXISTS learning_tasks_recent ON learning_tasks(created DESC)')
 
 
@@ -88,23 +92,53 @@ def run_task(library,mission,task_id,yield_checkpoint=None):
     if claimed!=1 or not row or row['status']!='running':
         raise ValueError('Learning task is not queued')
     payload=json.loads(row['payload'])
+    def checkpoint():
+        if yield_checkpoint:yield_checkpoint()
+        with library.connect(mission) as c:
+            state=c.execute('SELECT cancel_requested FROM learning_tasks WHERE id=?',(task_id,)).fetchone()
+        if state and state['cancel_requested']:
+            raise LearningTaskCancelled('Cancelled by operator')
     try:
         if row['kind']=='train':
-            result=train(library,mission,yield_checkpoint=yield_checkpoint)
+            result=train(library,mission,yield_checkpoint=checkpoint)
         elif row['kind']=='evaluate_test':
             result=evaluate_test(library,mission,payload.get('candidate_id'),payload.get('operator'),
-                yield_checkpoint=yield_checkpoint)
+                yield_checkpoint=checkpoint)
         else:
             raise ValueError('Unsupported learning task')
         with library.connect(mission) as c:
             c.execute("UPDATE learning_tasks SET status='completed',result_id=?,result_status=?,finished=? WHERE id=? AND status='running'",
                 (result.get('id'),result.get('status','completed'),now(),task_id))
         return result
+    except LearningTaskCancelled as exc:
+        with library.connect(mission) as c:
+            c.execute("UPDATE learning_tasks SET status='failed',result_status='cancelled',error=?,finished=? WHERE id=? AND status='running'",
+                (str(exc)[:1000],now(),task_id))
+        raise
     except Exception as exc:
         with library.connect(mission) as c:
             c.execute("UPDATE learning_tasks SET status='failed',error=?,finished=? WHERE id=? AND status='running'",
                 (str(exc)[:1000],now(),task_id))
         raise
+
+
+class LearningTaskCancelled(Exception):
+    """Raised at a safe feature or optimizer checkpoint after operator cancellation."""
+
+
+def cancel_task(library,mission,task_id):
+    prepare(library,mission)
+    with library.connect(mission) as c:
+        row=c.execute("SELECT status FROM learning_tasks WHERE id=? AND mission_id=?",
+            (task_id,mission)).fetchone()
+        if not row or row['status'] not in ('queued','running'):
+            raise ValueError('Learning task is no longer active')
+        if row['status']=='queued':
+            c.execute("UPDATE learning_tasks SET status='failed',result_status='cancelled',error='Cancelled by operator',finished=?,cancel_requested=1 WHERE id=?",
+                (now(),task_id))
+        else:
+            c.execute('UPDATE learning_tasks SET cancel_requested=1 WHERE id=?',(task_id,))
+    return {'id':task_id,'mission_id':mission,'cancel_requested':True}
 
 
 def task_status(library,mission):
