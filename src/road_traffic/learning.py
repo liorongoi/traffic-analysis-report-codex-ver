@@ -613,7 +613,12 @@ def train(library,mission,yield_checkpoint=None,resume_checkpoint=None,save_chec
     manifest={'training':data['training'],'validation':data['validation'],**training_plan}
     evidence=json.dumps(manifest,sort_keys=True);fingerprint=hashlib.sha256(evidence.encode()).hexdigest()
     dataset_version=fingerprint
+    saved_evidence_hash=(resume_checkpoint or {}).get('evidence_hash')
     checkpoint_state=(resume_checkpoint or {}) if (resume_checkpoint or {}).get('evidence_hash')==fingerprint else {}
+    if saved_evidence_hash and saved_evidence_hash!=fingerprint:
+        with library.connect(mission) as c:
+            c.execute("UPDATE night_training SET status='failed',finished=?,error=? WHERE evidence_hash=? AND status IN ('running','failed')",
+                (now(),'Training evidence changed; the old checkpoint was discarded.',saved_evidence_hash))
     with library.connect(mission) as c:
         old=c.execute('SELECT * FROM night_training WHERE evidence_hash=?',(fingerprint,)).fetchone()
         if old and old['status']=='completed':return {'status':old['status'],'id':old['id'],'reused_evidence':True}

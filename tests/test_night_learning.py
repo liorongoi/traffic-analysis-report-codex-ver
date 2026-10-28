@@ -117,6 +117,26 @@ class LightLearningTests(unittest.TestCase):
             resumed=train(self.lib,self.m,resume_checkpoint=resume)
         self.assertEqual(resumed['status'],'completed')
         self.assertEqual(resumed['report']['training_regions'],4)
+    def test_changed_training_evidence_discards_old_checkpoint_and_candidate(self):
+        self.lib.review(self.m,self.rows[0]['id'],0,self.labels(),'Synthetic test',role='training',status='partial')
+        self.lib.review(self.m,self.rows[1]['id'],0,self.labels(),'Synthetic test',role='training',status='reviewed')
+        saved=[];calls=0
+        def checkpoint():
+            nonlocal calls
+            calls+=1
+            if calls==167:raise RuntimeError('simulated process interruption')
+        def save(value):saved.append(copy.deepcopy(value))
+        with patch('road_traffic.night.patch_features',return_value=np.linspace(0,1,13)):
+            with self.assertRaisesRegex(RuntimeError,'simulated process interruption'):
+                train(self.lib,self.m,yield_checkpoint=checkpoint,save_checkpoint=save)
+            old_hash=saved[-1]['evidence_hash']
+            changed=self.labels();changed[0]['box']=[.2,.1,.1,.1]
+            self.lib.review(self.m,self.rows[0]['id'],1,changed,'Synthetic test',role='training',status='partial')
+            resumed=train(self.lib,self.m,resume_checkpoint=saved[-1])
+        self.assertEqual(resumed['status'],'completed')
+        stale=next(row for row in candidates(self.lib,self.m) if row['evidence_hash']==old_hash)
+        self.assertEqual(stale['status'],'failed')
+        self.assertIn('evidence changed',stale['error'])
     def test_heldout_evaluation_resumes_cached_features_for_same_candidate_manifest(self):
         for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Reviewer',role='training')
         self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Reviewer',role='test')
