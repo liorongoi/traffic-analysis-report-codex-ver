@@ -518,8 +518,10 @@ def list_crops_page(library,mission,offset=0,limit=40,image_id=None,search=None)
         SELECT id FROM reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)
         LEFT JOIN text_reviews tr ON tr.id=(
         SELECT id FROM text_reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)'''
+    count_joins=''' FROM crops c LEFT JOIN text_reviews tr ON tr.id=(
+        SELECT id FROM text_reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)''' if key else ' FROM crops c'
     with _connect(db) as conn:
-        total=conn.execute('SELECT COUNT(*)'+joins+where,params).fetchone()[0]
+        total=conn.execute('SELECT COUNT(*)'+count_joins+where,params).fetchone()[0]
         sql=('''SELECT c.*,r.decision,r.operator,r.revision,
             tr.decision AS text_decision,tr.verified_text,tr.normalized_text,
             tr.revision AS text_revision,tr.operator AS text_operator''' + joins + where +
