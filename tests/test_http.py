@@ -114,6 +114,8 @@ class HttpTests(unittest.TestCase):
         self.assertIn('candidateValidation',script)
         self.assertIn('review_completion',script)
         self.assertIn('candidateTrainingEvidenceStatus',script)
+        self.assertIn('OCR מקומי מציע אותיות וספרות לא מאומתות לבדיקה אנושית נפרדת',script)
+        self.assertNotIn('לא קוראים טקסט',script)
         self.assertIn("new Option(tr('promotedLearningModel'),'@promoted')",script)
         self.assertIn("night_head_id=choice==='@promoted'?learningInfo?.governance?.promoted_candidate_id",script)
         self.assertIn('function resolveTimezoneSearch()',script)
