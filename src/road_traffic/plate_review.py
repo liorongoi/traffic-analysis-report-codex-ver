@@ -496,6 +496,38 @@ def list_crops(library,mission,image_id=None,search=None):
         return [dict(row) for row in conn.execute(sql,params).fetchall()]
 
 
+def list_crops_page(library,mission,offset=0,limit=40,image_id=None,search=None):
+    """Fetch one bounded crop-review page and its filtered total count."""
+    if isinstance(offset,bool) or not isinstance(offset,int) or offset<0:
+        raise ValueError('Plate page offset must be a nonnegative integer')
+    if isinstance(limit,bool) or not isinstance(limit,int) or not 1<=limit<=100:
+        raise ValueError('Plate page size must be between 1 and 100')
+    root,folder,db=_paths(library,mission)
+    if search is not None and (not isinstance(search,str) or len(search)>64):
+        raise ValueError('Plate text search must be a string up to 64 characters')
+    key=normalize_plate_text(search)
+    if search is not None and search.strip() and not key:
+        return {'items':[],'offset':offset,'limit':limit,'total':0}
+    conditions=[];params=[]
+    if image_id:conditions.append('c.image_id=?');params.append(image_id)
+    if key:
+        conditions.append('(instr(c.ocr_search_text,?)>0 OR instr(c.ocr_alternative_search_text,?)>0 OR instr(tr.normalized_text,?)>0)')
+        params.extend((key,key,key))
+    where=' WHERE '+' AND '.join(conditions) if conditions else ''
+    joins=''' FROM crops c LEFT JOIN reviews r ON r.id=(
+        SELECT id FROM reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)
+        LEFT JOIN text_reviews tr ON tr.id=(
+        SELECT id FROM text_reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)'''
+    with _connect(db) as conn:
+        total=conn.execute('SELECT COUNT(*)'+joins+where,params).fetchone()[0]
+        sql=('''SELECT c.*,r.decision,r.operator,r.revision,
+            tr.decision AS text_decision,tr.verified_text,tr.normalized_text,
+            tr.revision AS text_revision,tr.operator AS text_operator''' + joins + where +
+            ' ORDER BY c.created,c.source_name,c.id LIMIT ? OFFSET ?')
+        items=[dict(row) for row in conn.execute(sql,[*params,limit,offset]).fetchall()]
+    return {'items':items,'offset':offset,'limit':limit,'total':total}
+
+
 def _edit_distance(actual,predicted):
     """Return Levenshtein distance after the same plate-search normalization."""
     left=normalize_plate_text(actual);right=normalize_plate_text(predicted)

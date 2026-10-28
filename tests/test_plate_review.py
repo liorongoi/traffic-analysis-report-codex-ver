@@ -6,7 +6,7 @@ import unittest
 from PIL import Image
 from road_traffic.plate_review import (_connect, _paths, crop_file, list_crops,
     normalize_plate_text, review, review_text, _sha, propose, ocr_quality_report,
-    _normalized_edit_similarity, _edit_distance)
+    _normalized_edit_similarity, _edit_distance, list_crops_page)
 from unittest.mock import patch
 from road_traffic.store import Library
 from datetime import datetime, timezone
@@ -83,6 +83,27 @@ class PlateCropReviewTests(unittest.TestCase):
             self.assertEqual(connection.execute('SELECT 1').fetchone()[0],1)
         with self.assertRaises(sqlite3.ProgrammingError):
             connection.execute('SELECT 1')
+
+    def test_crop_review_pages_are_bounded_stable_and_searchable(self):
+        _,folder,db=_paths(self.lib,self.mission)
+        with _connect(db) as conn:
+            for number in (2,3):
+                crop_id=f'00000000-0000-4000-8000-{number:012d}'
+                path=folder/(crop_id+'.jpg');Image.new('RGB',(12,5),(number,60,90)).save(path,'JPEG')
+                conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
+                    crop_sha256,bbox,confidence,model_sha256,created,ocr_text,ocr_search_text)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',(crop_id,self.image['id'],f'{number}.jpg',
+                    str(number)*64,path.name,_sha(path),'{}',.8,'a'*64,f'2026-10-25T00:00:0{number}+00:00',
+                    'AB0012' if number==2 else 'CD0034','ab0012' if number==2 else 'cd0034'))
+        first=list_crops_page(self.lib,self.mission,offset=0,limit=2)
+        second=list_crops_page(self.lib,self.mission,offset=2,limit=2)
+        self.assertEqual((first['total'],len(first['items']),len(second['items'])),(3,2,1))
+        self.assertEqual([item['id'] for item in first['items']+second['items']],
+            [item['id'] for item in list_crops(self.lib,self.mission)])
+        searched=list_crops_page(self.lib,self.mission,limit=1,search='ab-0012')
+        self.assertEqual((searched['total'],searched['items'][0]['ocr_text']),(1,'AB0012'))
+        with self.assertRaisesRegex(ValueError,'between 1 and 100'):
+            list_crops_page(self.lib,self.mission,limit=101)
 
     def test_crop_is_saved_under_configured_output_and_checksum_verified(self):
         crop=crop_file(self.lib,self.mission,self.crop_id)

@@ -224,6 +224,10 @@ class HttpTests(unittest.TestCase):
             self.assertEqual([row['id'] for row in rows],[crop_id])
             self.assertEqual(rows[0]['ocr_text'],original)
             self.assertEqual(len(list_crops(library,mission,search='٠٠١٢-ب/34')),1)
+            with self.request(f'/api/plates/page?mission={mission}&limit=1&offset=0&q={query}') as response:
+                page=json.load(response)
+            self.assertEqual((page['total'],page['limit'],len(page['items'])),(1,1,1))
+            self.assertEqual(page['items'][0]['id'],crop_id)
             review(library,mission,crop_id,0,'approved','HTTP reviewer')
             review_text(library,mission,crop_id,0,'accepted',original,'HTTP reviewer')
             with self.request(f'/api/plates/metrics?mission={mission}') as response:

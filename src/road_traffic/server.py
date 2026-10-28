@@ -282,6 +282,12 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     from .plate_review import list_crops
                     return self.reply(200, list_crops(library,query['mission'][0],
                         query.get('image',[None])[0],query.get('q',[''])[0]))
+                if parsed.path == '/api/plates/page':
+                    from .plate_review import list_crops_page
+                    return self.reply(200,list_crops_page(library,query['mission'][0],
+                        offset=int(query.get('offset',['0'])[0]),
+                        limit=int(query.get('limit',['40'])[0]),
+                        image_id=query.get('image',[None])[0],search=query.get('q',[''])[0]))
                 if parsed.path == '/api/plates/metrics':
                     from .plate_review import ocr_quality_report
                     return self.reply(200,ocr_quality_report(library,query['mission'][0]))
