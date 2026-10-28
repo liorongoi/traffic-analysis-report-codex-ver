@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from .domain import capture_time, named_zone
 from xml.sax.saxutils import escape
 
+_SCHEMA_MIGRATION_LOCK = threading.RLock()
+
 
 CSV_EXPORT_HEADERS = ['mission_id','inference_run','source_id','source_run_id','source_sha256',
     'filename','capture_utc','timestamp_precision','review_status','revision',
@@ -346,12 +348,16 @@ class Library:
             CREATE TRIGGER IF NOT EXISTS immutable_view_region_history_d BEFORE DELETE ON view_region_history
                 BEGIN SELECT RAISE(ABORT,'view region history is immutable'); END;
         ''')
-        region_columns={row['name'] for row in conn.execute('PRAGMA table_info(view_region_history)')}
-        if 'name' not in region_columns:
-            conn.execute("ALTER TABLE view_region_history ADD COLUMN name TEXT NOT NULL DEFAULT ''")
-        view_columns={row['name'] for row in conn.execute('PRAGMA table_info(views)')}
-        if 'merged_into' not in view_columns:
-            conn.execute('ALTER TABLE views ADD COLUMN merged_into TEXT REFERENCES views(id)')
+        # Multiple request/monitor threads may open the same legacy mission at
+        # once. Serialize these check-then-ALTER migrations so a second opener
+        # re-reads the schema after the first connection adds the column.
+        with _SCHEMA_MIGRATION_LOCK:
+            region_columns={row['name'] for row in conn.execute('PRAGMA table_info(view_region_history)')}
+            if 'name' not in region_columns:
+                conn.execute("ALTER TABLE view_region_history ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+            view_columns={row['name'] for row in conn.execute('PRAGMA table_info(views)')}
+            if 'merged_into' not in view_columns:
+                conn.execute('ALTER TABLE views ADD COLUMN merged_into TEXT REFERENCES views(id)')
         conn.execute('''CREATE TRIGGER IF NOT EXISTS one_way_view_merge BEFORE UPDATE OF merged_into ON views
             WHEN OLD.merged_into IS NOT NULL OR NEW.merged_into IS NULL
             BEGIN SELECT RAISE(ABORT,'camera view merge history cannot be reversed'); END''')

@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
 import unittest
@@ -21,6 +22,20 @@ class CameraViewTests(unittest.TestCase):
                 self.assertIn('merged_into',columns)
                 trigger=conn.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='one_way_view_merge'").fetchone()
                 self.assertIsNotNone(trigger)
+
+    def test_concurrent_legacy_view_openers_serialize_additive_migration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            library=Library(Path(temp)/'workspace')
+            mission=library.create('Legacy views','Israel','Asia/Jerusalem')
+            with library.connect(mission) as conn:
+                conn.execute('DROP TRIGGER one_way_view_merge')
+                conn.execute('ALTER TABLE views DROP COLUMN merged_into')
+            with ThreadPoolExecutor(max_workers=8) as workers:
+                results=list(workers.map(lambda _:library.views(mission),range(16)))
+            self.assertEqual(results,[[]]*16)
+            with library.connect(mission) as conn:
+                columns={row['name'] for row in conn.execute('PRAGMA table_info(views)')}
+                self.assertIn('merged_into',columns)
 
     def test_batch_assignment_is_atomic_and_keeps_per_image_history(self):
         with tempfile.TemporaryDirectory() as temp:
