@@ -185,6 +185,22 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertAlmostEqual(alternate['mean_normalized_edit_similarity'],5/6)
         self.assertAlmostEqual(alternate['character_error_rate'],1/6)
         self.assertEqual((alternate['edit_errors'],alternate['reference_characters']),(1,6))
+        # A second observation of the same plate must not count as another
+        # independent string in the research-inspired grouped summary.
+        with _connect(db) as conn:
+            conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,crop_sha256,bbox,
+                confidence,model_sha256,created,ocr_text,ocr_model_sha256) SELECT ?,image_id,source_name,
+                source_sha256,?, ?,bbox,confidence,model_sha256,created,'WRONG','a'||substr(ocr_model_sha256,2)
+                FROM crops WHERE id=?''',('00000000-0000-4000-8000-000000000002','second.jpg','0'*64,self.crop_id))
+            second='00000000-0000-4000-8000-000000000002'
+            conn.execute("INSERT INTO reviews(crop_id,revision,decision,operator,created) VALUES (?,1,'approved','Reviewer','now')",(second,))
+            conn.execute("INSERT INTO text_reviews(crop_id,revision,decision,verified_text,normalized_text,operator,created) VALUES (?,1,'corrected','AB-0012','ab0012','Reviewer','now')",(second,))
+        report=ocr_quality_report(self.lib,self.mission)
+        primary=next(row for row in report['models'] if row['candidate']=='primary')
+        self.assertEqual(primary['reviewed_crops'],2)
+        self.assertEqual(primary['string_grouped']['reviewed_crops'],1)
+        self.assertEqual(primary['string_grouped']['exact_matches'],0)
+        self.assertEqual(primary['unique_verified_strings'],1)
         self.assertAlmostEqual(_normalized_edit_similarity('۱۲-AB','12AC'),.75)
         self.assertEqual(_edit_distance('A','ABCDEF'),5)
 

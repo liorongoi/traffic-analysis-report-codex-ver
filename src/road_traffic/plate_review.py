@@ -551,18 +551,37 @@ def _normalized_edit_similarity(actual,predicted):
     return max(0.0,1.0-_edit_distance(left,right)/max(len(left),len(right)))
 
 
+def _ocr_metrics(rows,text_field):
+    exact=0;covered=0;similarities=[];edit_errors=0;reference_characters=0
+    for row in rows:
+        actual=row.get('normalized_text') or normalize_plate_text(row.get('verified_text',''))
+        predicted=row.get(text_field) or ''
+        if predicted:covered+=1
+        if predicted and normalize_plate_text(predicted)==actual:exact+=1
+        similarities.append(_normalized_edit_similarity(actual,predicted))
+        edit_errors+=_edit_distance(actual,predicted)
+        reference_characters+=len(actual)
+    count=len(rows)
+    return {'reviewed_crops':count,'candidate_coverage':covered/count if count else 0.0,
+        'exact_matches':exact,'exact_match_rate':exact/count if count else 0.0,
+        'mean_normalized_edit_similarity':sum(similarities)/count if count else 0.0,
+        'character_error_rate':edit_errors/reference_characters if reference_characters else 0.0,
+        'edit_errors':edit_errors,'reference_characters':reference_characters}
+
+
 def ocr_quality_report(library,mission):
     """Compare pinned OCR candidates with explicit human text decisions.
 
-    This is an exploratory report over reviewed crop observations, not a held-out
-    accuracy claim. Repeated views of the same physical plate may be correlated.
+    This is an exploratory report, not a held-out accuracy claim. It reports
+    crop-level metrics and a deterministic one-crop-per-normalized-string view
+    so repeated observations cannot inflate the string-grouped summary.
     """
     with library.connect(mission) as conn:
         mission_row=conn.execute('SELECT country FROM mission WHERE id=?',(mission,)).fetchone()
     reviewed=[row for row in list_crops(library,mission)
         if row.get('decision')=='approved' and row.get('text_decision') in ('accepted','corrected')]
     result={'mission_id':mission,'country':mission_row['country'] if mission_row else None,'reviewed_crops':len(reviewed),
-        'scope':'Exploratory metrics on human-verified approved crop observations; not a protected held-out evaluation. Repeated views of a plate may be correlated.',
+        'scope':'Exploratory metrics on human-verified approved crop observations; not a protected held-out evaluation. Crop-level observations may be correlated. String-grouped metrics use one deterministic crop per normalized verified string; this is not a substitute for a protected split.',
         'models':[]}
     choices=(('primary','ocr_text','ocr_model_sha256'),
         ('global_latin','ocr_alternative_text','ocr_alternative_model_sha256'))
@@ -570,24 +589,19 @@ def ocr_quality_report(library,mission):
         model_hashes=sorted({row.get(hash_field) for row in reviewed if row.get(hash_field)})
         for model_hash in model_hashes:
             rows=[row for row in reviewed if row.get(hash_field)==model_hash]
-            exact=0;covered=0;similarities=[];unique_labels=set();edit_errors=0;reference_characters=0
+            grouped={}
             for row in rows:
                 actual=row.get('normalized_text') or normalize_plate_text(row.get('verified_text',''))
-                predicted=row.get(text_field) or ''
-                unique_labels.add(actual)
-                if predicted:covered+=1
-                if predicted and normalize_plate_text(predicted)==actual:exact+=1
-                similarities.append(_normalized_edit_similarity(actual,predicted))
-                edit_errors+=_edit_distance(actual,predicted)
-                reference_characters+=len(actual)
-            count=len(rows)
+                # Stable selection makes the summary reproducible and prevents a
+                # frequently observed string from receiving extra weight.
+                key=(row.get('crop_sha256') or '',row.get('id') or '')
+                if actual not in grouped or key<(grouped[actual].get('crop_sha256') or '',grouped[actual].get('id') or ''):
+                    grouped[actual]=row
+            grouped_rows=list(grouped.values())
             result['models'].append({'candidate':label,'model_sha256':model_hash,
-                'reviewed_crops':count,'unique_verified_strings':len(unique_labels),
-                'candidate_coverage':covered/count if count else 0.0,
-                'exact_matches':exact,'exact_match_rate':exact/count if count else 0.0,
-                'mean_normalized_edit_similarity':sum(similarities)/count if count else 0.0,
-                'character_error_rate':edit_errors/reference_characters if reference_characters else 0.0,
-                'edit_errors':edit_errors,'reference_characters':reference_characters})
+                **_ocr_metrics(rows,text_field),
+                'unique_verified_strings':len(grouped_rows),
+                'string_grouped':_ocr_metrics(grouped_rows,text_field)})
     return result
 
 
