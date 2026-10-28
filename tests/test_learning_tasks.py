@@ -1,10 +1,12 @@
+import json
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from road_traffic.learning import (
-    queue_task, recover_interrupted_tasks, run_task, task_status,
+    cancel_task, queue_task, recover_interrupted_tasks, run_task, task_status,
 )
 from road_traffic.store import Library
 
@@ -45,7 +47,7 @@ class LearningTaskTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not queued'):
             run_task(self.library, self.mission, task['id'])
 
-    def test_restart_marks_queued_and_running_learning_records_failed(self):
+    def test_restart_requeues_tasks_and_fails_unmatched_candidate_rows(self):
         task = queue_task(self.library, self.mission, 'train')
         with self.library.connect(self.mission) as connection:
             connection.execute("UPDATE learning_tasks SET status='running' WHERE id=?", (task['id'],))
@@ -56,13 +58,68 @@ class LearningTaskTests(unittest.TestCase):
 
         self.assertEqual(recovered, 1)
         saved = task_status(self.library, self.mission)[0]
-        self.assertEqual(saved['status'], 'failed')
-        self.assertIn('Application stopped', saved['error'])
+        self.assertEqual(saved['status'], 'queued')
         with self.library.connect(self.mission) as connection:
             candidate = connection.execute(
                 "SELECT status,error FROM night_training WHERE id='interrupted-candidate'").fetchone()
         self.assertEqual(candidate['status'], 'failed')
-        self.assertIn('Application stopped', candidate['error'])
+        self.assertIn('resumable training task', candidate['error'])
+
+    def test_restart_preserves_checkpoint_and_requeues_matching_training(self):
+        task = queue_task(self.library, self.mission, 'train')
+        checkpoint = {'evidence_hash': 'same-evidence', 'stage': 'fit', 'next_step': 280}
+        with self.library.connect(self.mission) as connection:
+            connection.execute("UPDATE learning_tasks SET status='running',checkpoint=? WHERE id=?",
+                (json.dumps(checkpoint), task['id']))
+            connection.execute('''INSERT INTO night_training(id,status,progress,created,evidence_hash,evidence)
+                VALUES ('candidate','running',40,'2026-10-28T00:00:00Z','same-evidence','{}')''')
+
+        recover_interrupted_tasks(self.library)
+
+        saved = task_status(self.library, self.mission)[0]
+        self.assertEqual(saved['status'], 'queued')
+        self.assertNotIn('checkpoint', saved)
+        with self.library.connect(self.mission) as connection:
+            row = connection.execute('SELECT checkpoint FROM learning_tasks WHERE id=?',(task['id'],)).fetchone()
+            candidate = connection.execute("SELECT status FROM night_training WHERE id='candidate'").fetchone()
+        self.assertEqual(json.loads(row['checkpoint']), checkpoint)
+        self.assertEqual(candidate['status'], 'running')
+
+    def test_requeued_task_receives_its_saved_checkpoint(self):
+        from road_traffic import learning
+        task = queue_task(self.library, self.mission, 'train')
+        checkpoint = {'evidence_hash': 'same-evidence', 'stage': 'fit', 'next_step': 240}
+
+        def interrupted_train(library, mission, *, yield_checkpoint, resume_checkpoint=None, save_checkpoint=None):
+            save_checkpoint(checkpoint)
+            raise RuntimeError('simulated abrupt failure')
+
+        with patch.object(learning, 'train', side_effect=interrupted_train):
+            with self.assertRaisesRegex(RuntimeError, 'simulated abrupt failure'):
+                run_task(self.library, self.mission, task['id'])
+        with self.library.connect(self.mission) as connection:
+            connection.execute("UPDATE learning_tasks SET status='running' WHERE id=?", (task['id'],))
+
+        recover_interrupted_tasks(self.library)
+        resumed_checkpoints = []
+
+        def resumed_train(library, mission, *, yield_checkpoint, resume_checkpoint=None, save_checkpoint=None):
+            resumed_checkpoints.append(resume_checkpoint)
+            return {'id': 'resumed-candidate', 'status': 'completed'}
+
+        with patch.object(learning, 'train', side_effect=resumed_train):
+            result = run_task(self.library, self.mission, task['id'])
+
+        self.assertEqual(result['id'], 'resumed-candidate')
+        self.assertEqual(resumed_checkpoints, [checkpoint])
+
+    def test_queued_learning_task_can_be_cancelled_without_starting(self):
+        task = queue_task(self.library, self.mission, 'train')
+        cancel_task(self.library, self.mission, task['id'])
+        saved = task_status(self.library, self.mission)[0]
+        self.assertEqual(saved['result_status'], 'cancelled')
+        with self.assertRaisesRegex(ValueError, 'not queued'):
+            run_task(self.library, self.mission, task['id'])
 
     def test_failed_task_keeps_its_error_in_the_task_history(self):
         task = queue_task(self.library, self.mission, 'evaluate_test', {

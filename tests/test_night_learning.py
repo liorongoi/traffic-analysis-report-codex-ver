@@ -1,5 +1,6 @@
 import json
 import hashlib
+import copy
 from pathlib import Path
 import tempfile
 import unittest
@@ -97,6 +98,38 @@ class LightLearningTests(unittest.TestCase):
         self.assertEqual(train(self.lib,self.m)['id'],result['id'])
         other=self.lib.create('Other','Latvia','Europe/Riga')
         with self.assertRaises(ValueError):load_head(self.lib,other,result['id'])
+    def test_training_resumes_from_persisted_feature_and_optimizer_checkpoint(self):
+        self.lib.review(self.m,self.rows[0]['id'],0,self.labels(),'Synthetic test',role='training',status='partial')
+        self.lib.review(self.m,self.rows[1]['id'],0,self.labels(),'Synthetic test',role='training',status='reviewed')
+        self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Synthetic test',role='validation')
+        saved=[];calls=0
+        def checkpoint():
+            nonlocal calls
+            calls+=1
+            if calls==167:raise RuntimeError('simulated process interruption')
+        def save(value):saved.append(copy.deepcopy(value))
+        with patch('road_traffic.night.patch_features',return_value=np.linspace(0,1,13)):
+            with self.assertRaisesRegex(RuntimeError,'simulated process interruption'):
+                train(self.lib,self.m,yield_checkpoint=checkpoint,save_checkpoint=save)
+            resume=saved[-1]
+            self.assertEqual(resume['stage'],'fit')
+            self.assertEqual(resume['next_step'],160)
+            resumed=train(self.lib,self.m,resume_checkpoint=resume)
+        self.assertEqual(resumed['status'],'completed')
+        self.assertEqual(resumed['report']['training_regions'],4)
+    def test_heldout_evaluation_resumes_cached_features_for_same_candidate_manifest(self):
+        for row in self.rows[:2]:self.lib.review(self.m,row['id'],0,self.labels(),'Reviewer',role='training')
+        self.lib.review(self.m,self.rows[2]['id'],0,self.labels(),'Reviewer',role='test')
+        checkpoints=[]
+        with patch('road_traffic.night.patch_features',return_value=np.linspace(0,1,13)):
+            candidate=train(self.lib,self.m)
+            with patch('road_traffic.learning._classification_metrics',side_effect=RuntimeError('simulated interruption')):
+                with self.assertRaisesRegex(RuntimeError,'simulated interruption'):
+                    evaluate_test(self.lib,self.m,candidate['id'],'Reviewer',save_checkpoint=lambda item:checkpoints.append(copy.deepcopy(item)))
+            resumed=evaluate_test(self.lib,self.m,candidate['id'],'Reviewer',resume_checkpoint=checkpoints[-1])
+        self.assertEqual(resumed['status'],'completed')
+        self.assertEqual(resumed['report']['regions'],2)
+        self.assertEqual(resumed['test_fingerprint'],evaluation_status(self.lib,self.m)['test_fingerprint'])
     def test_operator_assigned_camera_view_enables_mission_local_fitting(self):
         view=self.lib.create_view(self.m,'North approach','Reviewer')
         for row in self.rows:

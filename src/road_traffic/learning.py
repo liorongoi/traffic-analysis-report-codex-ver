@@ -58,10 +58,12 @@ def prepare(library,mission):
           id TEXT PRIMARY KEY,mission_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('train','evaluate_test')),
           payload TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
           result_id TEXT,result_status TEXT,error TEXT,created TEXT NOT NULL,started TEXT,finished TEXT,
-          cancel_requested INTEGER NOT NULL DEFAULT 0)''')
+          cancel_requested INTEGER NOT NULL DEFAULT 0,checkpoint TEXT)''')
         columns={row['name'] for row in c.execute('PRAGMA table_info(learning_tasks)')}
         if 'cancel_requested' not in columns:
             c.execute('ALTER TABLE learning_tasks ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0')
+        if 'checkpoint' not in columns:
+            c.execute('ALTER TABLE learning_tasks ADD COLUMN checkpoint TEXT')
         c.execute('CREATE INDEX IF NOT EXISTS learning_tasks_recent ON learning_tasks(created DESC)')
 
 
@@ -85,13 +87,18 @@ def run_task(library,mission,task_id,yield_checkpoint=None):
     """Run one persisted learning task; progress and the result ledger survive browser closure."""
     prepare(library,mission)
     with library.connect(mission) as c:
-        c.execute("UPDATE learning_tasks SET status='running',started=? WHERE id=? AND mission_id=? AND status='queued'",
+        c.execute("UPDATE learning_tasks SET status='running',started=?,cancel_requested=0 WHERE id=? AND mission_id=? AND status='queued'",
             (now(),task_id,mission))
         claimed=c.execute('SELECT changes()').fetchone()[0]
         row=c.execute('SELECT * FROM learning_tasks WHERE id=? AND mission_id=?',(task_id,mission)).fetchone()
     if claimed!=1 or not row or row['status']!='running':
         raise ValueError('Learning task is not queued')
     payload=json.loads(row['payload'])
+    resume_checkpoint=json.loads(row['checkpoint']) if row['checkpoint'] else None
+    def save_checkpoint(checkpoint):
+        with library.connect(mission) as c:
+            c.execute("UPDATE learning_tasks SET checkpoint=? WHERE id=? AND status='running'",
+                (json.dumps(checkpoint,separators=(',',':')),task_id))
     def checkpoint():
         if yield_checkpoint:yield_checkpoint()
         with library.connect(mission) as c:
@@ -100,14 +107,16 @@ def run_task(library,mission,task_id,yield_checkpoint=None):
             raise LearningTaskCancelled('Cancelled by operator')
     try:
         if row['kind']=='train':
-            result=train(library,mission,yield_checkpoint=checkpoint)
+            result=train(library,mission,yield_checkpoint=checkpoint,
+                resume_checkpoint=resume_checkpoint,save_checkpoint=save_checkpoint)
         elif row['kind']=='evaluate_test':
             result=evaluate_test(library,mission,payload.get('candidate_id'),payload.get('operator'),
-                yield_checkpoint=checkpoint)
+                yield_checkpoint=checkpoint,resume_checkpoint=resume_checkpoint,
+                save_checkpoint=save_checkpoint)
         else:
             raise ValueError('Unsupported learning task')
         with library.connect(mission) as c:
-            c.execute("UPDATE learning_tasks SET status='completed',result_id=?,result_status=?,finished=? WHERE id=? AND status='running'",
+            c.execute("UPDATE learning_tasks SET status='completed',result_id=?,result_status=?,finished=?,checkpoint=NULL WHERE id=? AND status='running'",
                 (result.get('id'),result.get('status','completed'),now(),task_id))
         return result
     except LearningTaskCancelled as exc:
@@ -144,27 +153,49 @@ def cancel_task(library,mission,task_id):
 def task_status(library,mission):
     prepare(library,mission)
     with library.connect(mission) as c:
-        return [dict(row) for row in c.execute(
+        rows=[dict(row) for row in c.execute(
             'SELECT * FROM learning_tasks WHERE mission_id=? ORDER BY created DESC LIMIT 20',(mission,))]
+    for row in rows:row.pop('checkpoint',None)
+    return rows
 
 
 def recover_interrupted_tasks(library):
-    """Mark work abandoned by a process restart as failed; never imply it resumed."""
+    """Requeue persisted jobs for checkpoint-aware recovery after process restart."""
     recovered=0
     for mission in library.missions():
         prepare(library,mission['id'])
         with library.connect(mission['id']) as c:
             stamp=now()
-            message='Application stopped before this learning task completed; start a new task to retry.'
-            c.execute("UPDATE learning_tasks SET status='failed',error=?,finished=? WHERE status IN ('queued','running')",
-                (message,stamp))
-            recovered+=c.execute("SELECT changes()").fetchone()[0]
+            resumable_hashes=set()
+            resumable_evaluations=set()
+            rows=[dict(row) for row in c.execute("SELECT * FROM learning_tasks WHERE status IN ('queued','running')")]
+            for task in rows:
+                if task['cancel_requested']:
+                    c.execute("UPDATE learning_tasks SET status='failed',result_status='cancelled',error='Cancelled before application restart',finished=? WHERE id=?",
+                        (stamp,task['id']))
+                    continue
+                payload=json.loads(task['payload'] or '{}')
+                checkpoint=json.loads(task['checkpoint']) if task['checkpoint'] else {}
+                if task['kind']=='train' and checkpoint.get('evidence_hash'):
+                    resumable_hashes.add(checkpoint['evidence_hash'])
+                if task['kind']=='evaluate_test' and payload.get('candidate_id'):
+                    current_fingerprint=_test_fingerprint(inventory(library,mission['id'])['test'])
+                    resumable_evaluations.add((payload['candidate_id'],current_fingerprint))
+                c.execute("UPDATE learning_tasks SET status='queued',error=NULL,finished=NULL WHERE id=?",
+                    (task['id'],))
+                recovered+=1
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='night_training'").fetchone():
-                c.execute("UPDATE night_training SET status='failed',finished=?,error=? WHERE status='running'",
-                    (stamp,message))
+                candidates=[dict(row) for row in c.execute("SELECT id,evidence_hash FROM night_training WHERE status='running'")]
+                for candidate in candidates:
+                    if candidate['evidence_hash'] not in resumable_hashes:
+                        c.execute("UPDATE night_training SET status='failed',finished=?,error=? WHERE id=?",
+                            (stamp,'Application stopped before a resumable training task was recorded.',candidate['id']))
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='night_evaluations'").fetchone():
-                c.execute("UPDATE night_evaluations SET status='failed',finished=?,error=? WHERE status='running'",
-                    (stamp,message))
+                evaluations=[dict(row) for row in c.execute("SELECT id,candidate_id,test_fingerprint FROM night_evaluations WHERE status='running'")]
+                for evaluation in evaluations:
+                    if (evaluation['candidate_id'],evaluation['test_fingerprint']) not in resumable_evaluations:
+                        c.execute("UPDATE night_evaluations SET status='failed',finished=?,error=? WHERE id=?",
+                            (stamp,'Application stopped before a resumable held-out evaluation was recorded.',evaluation['id']))
     return recovered
 
 
@@ -349,17 +380,22 @@ def _legacy_test_fingerprint(records):
     return hashlib.sha256(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 
 
-def _feature_vectors(library,mission,records,yield_checkpoint=None):
+def _feature_vectors(library,mission,records,yield_checkpoint=None,*,
+        resume_checkpoint=None,save_checkpoint=None,checkpoint_identity=None):
     import numpy as np
     from PIL import Image
     from .night import patch_features
-    vectors=[]
-    for row in records:
+    resume_checkpoint=resume_checkpoint or {}
+    vectors=list(resume_checkpoint.get('vectors',[])) if resume_checkpoint.get('identity')==checkpoint_identity else []
+    if len(vectors)>len(records):vectors=[]
+    for index,row in enumerate(records[len(vectors):],start=len(vectors)):
         if yield_checkpoint:yield_checkpoint()
         with Image.open(library.image_path(mission,row['image_id'])) as image:
             if image.width*image.height>24_000_000:raise ValueError('Evaluation image exceeds adapter pixel budget')
             rgb=np.asarray(image.convert('RGB'))
-        vectors.append(patch_features(rgb,row['box']))
+        vectors.append(patch_features(rgb,row['box']).tolist())
+        if save_checkpoint and (len(vectors)%16==0 or len(vectors)==len(records)):
+            save_checkpoint({'identity':checkpoint_identity,'vectors':vectors})
     return np.asarray(vectors,dtype=np.float64)
 
 
@@ -456,7 +492,8 @@ def record_model_decision(library,mission,action,candidate_id,operator,reason):
         'evaluation_id':evaluation_id,'operator':operator.strip(),'reason':reason.strip()}
 
 
-def evaluate_test(library,mission,candidate_id,operator,yield_checkpoint=None):
+def evaluate_test(library,mission,candidate_id,operator,yield_checkpoint=None,
+        resume_checkpoint=None,save_checkpoint=None):
     if not isinstance(operator,str) or not operator.strip() or len(operator.strip())>120:
         raise ValueError('Enter an operator name of up to 120 characters')
     prepare(library,mission)
@@ -468,18 +505,32 @@ def evaluate_test(library,mission,candidate_id,operator,yield_checkpoint=None):
     test_views={row['view'] for row in data['test']}
     if test_views!={model.get('view')}:
         raise ValueError('Test examples must match the candidate’s verified camera view')
-    fingerprint=_test_fingerprint(data['test']);legacy_fingerprint=_legacy_test_fingerprint(data['test']);evaluation_id=str(uuid.uuid4())
+    fingerprint=_test_fingerprint(data['test']);legacy_fingerprint=_legacy_test_fingerprint(data['test'])
+    checkpoint_identity=hashlib.sha256(f'{candidate_hash}:{fingerprint}'.encode()).hexdigest()
+    evaluation_id=None
     with library.connect(mission) as c:
         c.execute('BEGIN IMMEDIATE')
         if c.execute('''SELECT 1 FROM night_evaluations WHERE mission_id=?
             AND test_fingerprint IN (?,?) AND status='completed' LIMIT 1''',
                      (mission,fingerprint,legacy_fingerprint)).fetchone():
             raise ValueError('This unchanged test set has already been used for an independent evaluation')
-        c.execute('''INSERT INTO night_evaluations(id,mission_id,candidate_id,candidate_hash,
-          test_fingerprint,operator,status,created) VALUES (?,?,?,?,?,?,?,?)''',
-          (evaluation_id,mission,candidate_id,candidate_hash,fingerprint,operator.strip(),'running',now()))
+        existing=c.execute('''SELECT id FROM night_evaluations WHERE mission_id=? AND candidate_id=?
+          AND candidate_hash=? AND test_fingerprint=? AND status IN ('running','failed')
+          ORDER BY created DESC,id DESC LIMIT 1''',
+          (mission,candidate_id,candidate_hash,fingerprint)).fetchone()
+        if existing:
+            evaluation_id=existing['id']
+            c.execute("UPDATE night_evaluations SET status='running',error=NULL,finished=NULL,operator=? WHERE id=?",
+                (operator.strip(),evaluation_id))
+        else:
+            evaluation_id=str(uuid.uuid4())
+            c.execute('''INSERT INTO night_evaluations(id,mission_id,candidate_id,candidate_hash,
+              test_fingerprint,operator,status,created) VALUES (?,?,?,?,?,?,?,?)''',
+              (evaluation_id,mission,candidate_id,candidate_hash,fingerprint,operator.strip(),'running',now()))
     try:
-        vectors=_feature_vectors(library,mission,data['test'],yield_checkpoint=yield_checkpoint)
+        vectors=_feature_vectors(library,mission,data['test'],yield_checkpoint=yield_checkpoint,
+            resume_checkpoint=resume_checkpoint,save_checkpoint=save_checkpoint,
+            checkpoint_identity=checkpoint_identity)
         actual=[row['class'] for row in data['test']]
         predicted=[head.predict(vector)[0] for vector in vectors]
         candidate_metrics=_classification_metrics(actual,predicted)
@@ -538,7 +589,7 @@ def evaluate_test(library,mission,candidate_id,operator,yield_checkpoint=None):
         raise
 
 
-def train(library,mission,yield_checkpoint=None):
+def train(library,mission,yield_checkpoint=None,resume_checkpoint=None,save_checkpoint=None):
     prepare(library,mission);data=inventory(library,mission)
     # Technical fitting requirements, not an automatic retraining policy or quality guarantee.
     if data['eligible_training_images']<2 or len(data['classes'])<2 or len(data['training'])<4:
@@ -562,33 +613,64 @@ def train(library,mission,yield_checkpoint=None):
     manifest={'training':data['training'],'validation':data['validation'],**training_plan}
     evidence=json.dumps(manifest,sort_keys=True);fingerprint=hashlib.sha256(evidence.encode()).hexdigest()
     dataset_version=fingerprint
+    checkpoint_state=(resume_checkpoint or {}) if (resume_checkpoint or {}).get('evidence_hash')==fingerprint else {}
     with library.connect(mission) as c:
         old=c.execute('SELECT * FROM night_training WHERE evidence_hash=?',(fingerprint,)).fetchone()
-        if old:return {'status':old['status'],'id':old['id'],'reused_evidence':True}
-        identifier=str(uuid.uuid4());c.execute('INSERT INTO night_training(id,status,progress,created,evidence_hash,evidence) VALUES (?,?,?,?,?,?)',
-            (identifier,'running',0,now(),fingerprint,evidence))
+        if old and old['status']=='completed':return {'status':old['status'],'id':old['id'],'reused_evidence':True}
+        if old:
+            identifier=old['id']
+            c.execute("UPDATE night_training SET status='running',error=NULL,finished=NULL WHERE id=?",(identifier,))
+        else:
+            identifier=str(uuid.uuid4());c.execute('INSERT INTO night_training(id,status,progress,created,evidence_hash,evidence) VALUES (?,?,?,?,?,?)',
+                (identifier,'running',0,now(),fingerprint,evidence))
     try:
         import numpy as np
         from PIL import Image
         from .night import patch_features
-        def features(records):
-            vectors=[]
-            for row in records:
+        def features(records,role):
+            vectors=list(checkpoint_state.get(f'{role}_vectors',[]))
+            if len(vectors)>len(records):vectors=[]
+            for index,row in enumerate(records[len(vectors):],start=len(vectors)):
                 if yield_checkpoint:yield_checkpoint()
                 with Image.open(library.image_path(mission,row['image_id'])) as im:
                     if im.width*im.height>24_000_000:raise ValueError('Training image exceeds adapter pixel budget')
                     rgb=np.asarray(im.convert('RGB'))
-                vectors.append(patch_features(rgb,row['box']))
+                vectors.append(patch_features(rgb,row['box']).tolist())
+                if save_checkpoint and (len(vectors)%16==0 or len(vectors)==len(records)):
+                    checkpoint_state[f'{role}_vectors']=vectors
+                    checkpoint_state.update({'evidence_hash':fingerprint,'stage':'features'})
+                    save_checkpoint(checkpoint_state)
             return np.asarray(vectors,dtype=np.float64)
-        x=features(data['training']);classes=data['classes'];y=np.asarray([classes.index(r['class']) for r in data['training']])
-        mean=x.mean(axis=0);scale=x.std(axis=0);scale[scale<.001]=1
-        z=(x-mean)/scale;weights=np.zeros((x.shape[1],len(classes)));bias=np.zeros(len(classes));targets=np.eye(len(classes))[y]
-        for step in range(600):
+        x=features(data['training'],'training')
+        validation_x=features(data['validation'],'validation') if data['validation'] else np.empty((0,x.shape[1]))
+        classes=data['classes'];y=np.asarray([classes.index(r['class']) for r in data['training']])
+        saved_fit=checkpoint_state if checkpoint_state.get('stage') in ('fit','ready') else {}
+        if saved_fit:
+            mean=np.asarray(saved_fit['mean']);scale=np.asarray(saved_fit['scale'])
+            weights=np.asarray(saved_fit['weights']);bias=np.asarray(saved_fit['bias'])
+            start_step=int(saved_fit.get('next_step',600))
+        else:
+            mean=x.mean(axis=0);scale=x.std(axis=0);scale[scale<.001]=1
+            weights=np.zeros((x.shape[1],len(classes)));bias=np.zeros(len(classes));start_step=0
+        z=(x-mean)/scale;targets=np.eye(len(classes))[y]
+        for step in range(start_step,600):
             if yield_checkpoint:yield_checkpoint()
             logits=z@weights+bias;logits-=logits.max(axis=1,keepdims=True);p=np.exp(logits);p/=p.sum(axis=1,keepdims=True)
             diff=(p-targets)/len(z);weights-=.05*(z.T@diff+.03*weights);bias-=.05*diff.sum(axis=0)
             if step%60==0:
                 with library.connect(mission) as c:c.execute('UPDATE night_training SET progress=? WHERE id=?',(int(step/6),identifier))
+            if save_checkpoint and ((step+1)%20==0 or step==599):
+                checkpoint_state.update({'evidence_hash':fingerprint,'stage':'fit',
+                    'training_vectors':x.tolist(),'validation_vectors':validation_x.tolist(),
+                    'mean':mean.tolist(),'scale':scale.tolist(),'weights':weights.tolist(),
+                    'bias':bias.tolist(),'next_step':step+1})
+                save_checkpoint(checkpoint_state)
+        if save_checkpoint:
+            checkpoint_state.update({'evidence_hash':fingerprint,'stage':'ready',
+                'training_vectors':x.tolist(),'validation_vectors':validation_x.tolist(),
+                'mean':mean.tolist(),'scale':scale.tolist(),'weights':weights.tolist(),
+                'bias':bias.tolist(),'next_step':600})
+            save_checkpoint(checkpoint_state)
         model={'feature_schema':FEATURE_SCHEMA,'classes':classes,'mean':mean.tolist(),'scale':scale.tolist(),
                'weights':weights.tolist(),'bias':bias.tolist(),'fitting':'regularized multinomial linear head; YOLOX frozen',
                'evidence_hash':fingerprint,'dataset_version':dataset_version,
@@ -602,7 +684,7 @@ def train(library,mission,yield_checkpoint=None):
             'resource_profile':NIGHT_TRAINING_PROFILE,'review_completion':data['review_completion'],
             'promotion':'candidate only; must be selected explicitly for a new inference run','test_labels_used':False,'validation':None}
         if data['validation']:
-            predicted=[head.predict(v)[0] for v in features(data['validation'])];actual=[r['class'] for r in data['validation']]
+            predicted=[head.predict(v)[0] for v in validation_x];actual=[r['class'] for r in data['validation']]
             metrics={}
             for label in sorted(set(actual)|set(predicted)):
                 tp=sum(a==label and b==label for a,b in zip(actual,predicted));fp=sum(a!=label and b==label for a,b in zip(actual,predicted));fn=sum(a==label and b!=label for a,b in zip(actual,predicted))

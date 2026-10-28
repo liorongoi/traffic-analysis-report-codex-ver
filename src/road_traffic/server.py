@@ -40,35 +40,67 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
         plate_pack=Path(web).parent/'model-packs'/'license-plate-yolox')
     monitor = SourceMonitor(library,on_batch=inference.start_continuous_batch,
         on_video=video_inference.start_continuous_source)
-    monitor.start()
     video_clips.reconcile_exports(library)
     video_event_exports.reconcile_exports(library)
     token = secrets.token_urlsafe(32)
-    def schedule_learning_task(mission,kind,payload=None):
+    learning_dispatch_lock=threading.Lock()
+    def start_claimed_learning_task(task):
         from . import learning
-        with inference.lock:
-            if inference.training_active or inference._has_active_worker():
-                raise ValueError('Finish active processing before starting a learning task')
-            task=learning.queue_task(library,mission,kind,payload)
-            inference.training_active=True
         def worker():
             try:
-                learning.run_task(library,mission,task['id'],yield_checkpoint=inference.training_checkpoint)
-            except Exception as exc:
+                learning.run_task(library,task['mission_id'],task['id'],
+                    yield_checkpoint=inference.training_checkpoint)
+            except Exception:
                 traceback.print_exc()
             finally:
-                inference.training_active=False
-        thread=threading.Thread(target=worker,name=f'roadloom-learning-{kind}',daemon=True)
+                with inference.lock:
+                    inference.training_active=False
+                dispatch_next_learning_task()
+        thread=threading.Thread(target=worker,name=f"roadloom-learning-{task['kind']}",daemon=True)
         try:
             thread.start()
         except Exception as exc:
-            with library.connect(mission) as c:
+            with library.connect(task['mission_id']) as c:
                 c.execute("UPDATE learning_tasks SET status='failed',error=?,finished=? WHERE id=?",
                     (str(exc)[:1000],datetime.now(timezone.utc).isoformat(),task['id']))
             with inference.lock:
                 inference.training_active=False
             raise
+    def dispatch_next_learning_task():
+        from .learning import task_status
+        retry_after_worker=False
+        task_to_start=None
+        with learning_dispatch_lock:
+            with inference.lock:
+                if inference.training_active:return
+                if inference._has_active_worker():
+                    retry_after_worker=True
+                else:
+                    for mission in library.missions():
+                        task_to_start=next((item for item in task_status(library,mission['id'])
+                            if item['status']=='queued'),None)
+                        if task_to_start:
+                            inference.training_active=True
+                            break
+            if task_to_start:
+                start_claimed_learning_task(task_to_start)
+                return
+        if retry_after_worker:
+            retry=threading.Timer(1.0,dispatch_next_learning_task)
+            retry.daemon=True
+            retry.start()
+    def schedule_learning_task(mission,kind,payload=None):
+        from . import learning
+        with learning_dispatch_lock:
+            with inference.lock:
+                if inference.training_active or inference._has_active_worker():
+                    raise ValueError('Finish active processing before starting a learning task')
+                task=learning.queue_task(library,mission,kind,payload)
+                inference.training_active=True
+            start_claimed_learning_task(task)
         return task
+    dispatch_next_learning_task()
+    monitor.start()
     class Handler(BaseHTTPRequestHandler):
         def reply(self, status, data, content='application/json; charset=utf-8'):
             if not isinstance(data, bytes):
