@@ -1,5 +1,6 @@
 """Verified, non-destructive mission backup and restore packages."""
 from __future__ import annotations
+from contextlib import nullcontext
 
 import hashlib
 import json
@@ -351,7 +352,11 @@ def restore_backup(library, archive_path, *, plate_output_root=None):
         if output_required > shutil.disk_usage(output_root).free:
             raise ValueError("Not enough free output space to restore mission exports and plate chips")
 
-    with tempfile.TemporaryDirectory(prefix=f".restore-{mission}-", dir=library.root) as td:
+    if restored_output:
+        output_parent.mkdir(parents=True, exist_ok=True)
+    external_temp = (tempfile.TemporaryDirectory(prefix=f".restore-{mission}-", dir=output_parent)
+        if restored_output else nullcontext(None))
+    with tempfile.TemporaryDirectory(prefix=f".restore-{mission}-", dir=library.root) as td, external_temp as external_td:
         staging = Path(td)
         staged_mission = staging / "mission"
         with zipfile.ZipFile(archive_path, "r") as archive:
@@ -366,8 +371,8 @@ def restore_backup(library, archive_path, *, plate_output_root=None):
 
         output_stage = None
         if restored_output:
-            output_parent.mkdir(parents=True, exist_ok=True)
-            output_stage = Path(tempfile.mkdtemp(prefix=f".restore-{mission}-", dir=output_parent))
+            output_stage = Path(external_td) / "output"
+            output_stage.mkdir()
             with zipfile.ZipFile(archive_path, "r") as archive:
                 for name in output_entries:
                     relative = _safe_relative(name)
@@ -397,11 +402,7 @@ def restore_backup(library, archive_path, *, plate_output_root=None):
                     conn.execute(f"UPDATE {table} SET {column}=? WHERE mission_id=? AND {column}=?",
                         (resolved_path, mission, item.get("original_path")))
         if restored_output:
-            try:
-                os.replace(output_stage, restored_output)
-            except BaseException:
-                shutil.rmtree(output_stage, ignore_errors=True)
-                raise
+            os.replace(output_stage, restored_output)
         try:
             os.replace(staged_mission, target)
         except BaseException:
