@@ -58,12 +58,14 @@ def prepare(library,mission):
           id TEXT PRIMARY KEY,mission_id TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('train','evaluate_test')),
           payload TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
           result_id TEXT,result_status TEXT,error TEXT,created TEXT NOT NULL,started TEXT,finished TEXT,
-          cancel_requested INTEGER NOT NULL DEFAULT 0,checkpoint TEXT)''')
+          cancel_requested INTEGER NOT NULL DEFAULT 0,checkpoint TEXT,checkpoint_features TEXT)''')
         columns={row['name'] for row in c.execute('PRAGMA table_info(learning_tasks)')}
         if 'cancel_requested' not in columns:
             c.execute('ALTER TABLE learning_tasks ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0')
         if 'checkpoint' not in columns:
             c.execute('ALTER TABLE learning_tasks ADD COLUMN checkpoint TEXT')
+        if 'checkpoint_features' not in columns:
+            c.execute('ALTER TABLE learning_tasks ADD COLUMN checkpoint_features TEXT')
         c.execute('CREATE INDEX IF NOT EXISTS learning_tasks_recent ON learning_tasks(created DESC)')
 
 
@@ -94,11 +96,27 @@ def run_task(library,mission,task_id,yield_checkpoint=None):
     if claimed!=1 or not row or row['status']!='running':
         raise ValueError('Learning task is not queued')
     payload=json.loads(row['payload'])
-    resume_checkpoint=json.loads(row['checkpoint']) if row['checkpoint'] else None
+    resume_checkpoint=json.loads(row['checkpoint']) if row['checkpoint'] else {}
+    if row['checkpoint_features']:
+        resume_checkpoint.update(json.loads(row['checkpoint_features']))
     def save_checkpoint(checkpoint):
+        feature_keys=('training_vectors','validation_vectors','vectors')
+        feature_state={key:checkpoint[key] for key in feature_keys if key in checkpoint}
+        control_state={key:value for key,value in checkpoint.items() if key not in feature_keys}
+        encoded=json.dumps(control_state,separators=(',',':'))
         with library.connect(mission) as c:
-            c.execute("UPDATE learning_tasks SET checkpoint=? WHERE id=? AND status='running'",
-                (json.dumps(checkpoint,separators=(',',':')),task_id))
+            if feature_state:
+                encoded_features=json.dumps(feature_state,separators=(',',':'))
+                current=c.execute('SELECT checkpoint_features FROM learning_tasks WHERE id=?',(task_id,)).fetchone()
+                if current and current['checkpoint_features']!=encoded_features:
+                    c.execute("UPDATE learning_tasks SET checkpoint=?,checkpoint_features=? WHERE id=? AND status='running'",
+                        (encoded,encoded_features,task_id))
+                else:
+                    c.execute("UPDATE learning_tasks SET checkpoint=? WHERE id=? AND status='running'",
+                        (encoded,task_id))
+            else:
+                c.execute("UPDATE learning_tasks SET checkpoint=? WHERE id=? AND status='running'",
+                    (encoded,task_id))
     def checkpoint():
         if yield_checkpoint:yield_checkpoint()
         with library.connect(mission) as c:
@@ -116,7 +134,7 @@ def run_task(library,mission,task_id,yield_checkpoint=None):
         else:
             raise ValueError('Unsupported learning task')
         with library.connect(mission) as c:
-            c.execute("UPDATE learning_tasks SET status='completed',result_id=?,result_status=?,finished=?,checkpoint=NULL WHERE id=? AND status='running'",
+            c.execute("UPDATE learning_tasks SET status='completed',result_id=?,result_status=?,finished=?,checkpoint=NULL,checkpoint_features=NULL WHERE id=? AND status='running'",
                 (result.get('id'),result.get('status','completed'),now(),task_id))
         return result
     except LearningTaskCancelled as exc:
@@ -155,7 +173,9 @@ def task_status(library,mission):
     with library.connect(mission) as c:
         rows=[dict(row) for row in c.execute(
             'SELECT * FROM learning_tasks WHERE mission_id=? ORDER BY created DESC LIMIT 20',(mission,))]
-    for row in rows:row.pop('checkpoint',None)
+    for row in rows:
+        row.pop('checkpoint',None)
+        row.pop('checkpoint_features',None)
     return rows
 
 
@@ -394,7 +414,7 @@ def _feature_vectors(library,mission,records,yield_checkpoint=None,*,
             if image.width*image.height>24_000_000:raise ValueError('Evaluation image exceeds adapter pixel budget')
             rgb=np.asarray(image.convert('RGB'))
         vectors.append(patch_features(rgb,row['box']).tolist())
-        if save_checkpoint and (len(vectors)%16==0 or len(vectors)==len(records)):
+        if save_checkpoint and (len(vectors)%64==0 or len(vectors)==len(records)):
             save_checkpoint({'identity':checkpoint_identity,'vectors':vectors})
     return np.asarray(vectors,dtype=np.float64)
 
@@ -641,7 +661,7 @@ def train(library,mission,yield_checkpoint=None,resume_checkpoint=None,save_chec
                     if im.width*im.height>24_000_000:raise ValueError('Training image exceeds adapter pixel budget')
                     rgb=np.asarray(im.convert('RGB'))
                 vectors.append(patch_features(rgb,row['box']).tolist())
-                if save_checkpoint and (len(vectors)%16==0 or len(vectors)==len(records)):
+                if save_checkpoint and (len(vectors)%64==0 or len(vectors)==len(records)):
                     checkpoint_state[f'{role}_vectors']=vectors
                     checkpoint_state.update({'evidence_hash':fingerprint,'stage':'features'})
                     save_checkpoint(checkpoint_state)

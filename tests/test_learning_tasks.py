@@ -88,7 +88,8 @@ class LearningTaskTests(unittest.TestCase):
     def test_requeued_task_receives_its_saved_checkpoint(self):
         from road_traffic import learning
         task = queue_task(self.library, self.mission, 'train')
-        checkpoint = {'evidence_hash': 'same-evidence', 'stage': 'fit', 'next_step': 240}
+        checkpoint = {'evidence_hash': 'same-evidence', 'stage': 'fit', 'next_step': 240,
+            'training_vectors': [[0.25] * 13]}
 
         def interrupted_train(library, mission, *, yield_checkpoint, resume_checkpoint=None, save_checkpoint=None):
             save_checkpoint(checkpoint)
