@@ -399,7 +399,11 @@ class HttpTests(unittest.TestCase):
             with self.request('/api/video/sources?mission='+mission) as response:
                 self.assertEqual(json.load(response)[0]['id'],source['id'])
             with self.request('/api/video/runs?mission='+mission) as response:
-                self.assertEqual(json.load(response),[])
+                runs=json.load(response)
+            self.assertEqual(len(runs),1)
+            self.assertEqual(runs[0]['id'],run['id'])
+            self.assertEqual(runs[0]['status'],'failed')
+            self.assertIn('worker exited unexpectedly',runs[0]['error'])
             with self.request('/api/video/clips?mission='+mission) as response:
                 self.assertEqual(json.load(response),[])
             estimate_path=(f"/api/video/clips/estimate?mission={mission}&event_id={event_id}"

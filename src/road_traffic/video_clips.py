@@ -76,6 +76,7 @@ def _event_context(library, mission, event_id):
     if not event:
         raise ValueError('Video event not found in this mission')
     event = dict(event)
+    event['source_event_id'] = source_event_id
     event.update({key:logical[key] for key in ('first_pts','first_time_base_num','first_time_base_den',
         'first_offset_num','first_offset_den','last_pts','last_time_base_num','last_time_base_den',
         'last_offset_num','last_offset_den','first_utc','last_utc') if key in logical})
@@ -148,7 +149,7 @@ def export_event_clip(library, mission, event_id, pre_seconds, post_seconds, ope
             pre_seconds,post_seconds,requested_start_num,requested_start_den,requested_end_num,
             requested_end_den,output_path,source_sha256,status,created)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (export_id,mission,event['run_id'],source_event_id,event['source_id'],operator,float(pre),float(post),
+            (export_id,mission,event['run_id'],event['source_event_id'],event['source_id'],operator,float(pre),float(post),
              start.numerator,start.denominator,end.numerator,end.denominator,str(target),
              event['source_sha256'],'writing',created))
     try:
