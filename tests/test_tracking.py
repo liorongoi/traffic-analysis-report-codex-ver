@@ -94,6 +94,16 @@ class VideoTrackManagerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'positive'):
             policy(max_gap_seconds=Fraction(0))
 
+    def test_scene_cut_threshold_is_validated_and_closure_marks_boundary(self):
+        with self.assertRaisesRegex(ValueError,'scene_cut_threshold'):
+            policy(scene_cut_threshold=0)
+        manager=VideoTrackManager(policy(scene_cut_threshold=.65),run_id='scene')
+        original=manager.update(timestamp(0),[detection(.2)]).assignments[0]
+        closed=manager.finish(boundary_reason='scene_cut_boundary')
+        self.assertEqual(closed[0].track_id,original.track.track_id)
+        self.assertTrue(closed[0].association_uncertain)
+        self.assertIn('scene_cut_boundary',closed[0].uncertainty_reasons)
+
 
 if __name__ == '__main__':
     unittest.main()

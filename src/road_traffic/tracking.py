@@ -17,6 +17,7 @@ class TrackerPolicy:
     max_center_distance: float
     association_margin: float
     compatible_label_groups: tuple[frozenset[str], ...] = ()
+    scene_cut_threshold: float | None = None
 
     def __post_init__(self):
         if isinstance(self.max_gap_seconds, bool):
@@ -36,6 +37,11 @@ class TrackerPolicy:
             raise ValueError('max_center_distance must be positive')
         if not 0 <= self.association_margin <= 1:
             raise ValueError('association_margin must be between zero and one')
+        if self.scene_cut_threshold is not None:
+            value=self.scene_cut_threshold
+            if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not 0 < value <= 1:
+                raise ValueError('scene_cut_threshold must be null or a finite number in (0, 1]')
+            object.__setattr__(self,'scene_cut_threshold',float(value))
         groups = tuple(frozenset(group) for group in self.compatible_label_groups)
         if any(len(group) < 2 or any(not isinstance(label, str) or not label for label in group)
                for group in groups):
@@ -59,7 +65,7 @@ class TrackerPolicy:
             gap = Fraction(*gap)
         groups = tuple(frozenset(group) for group in config.get('compatible_label_groups', ()))
         return cls(gap, config['minimum_iou'], config['max_center_distance'],
-            config['association_margin'], groups)
+            config['association_margin'], groups, config.get('scene_cut_threshold'))
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +169,7 @@ class VideoTrackManager:
             'minimum_iou': self.policy.minimum_iou,
             'max_center_distance': self.policy.max_center_distance,
             'association_margin': self.policy.association_margin,
+            'scene_cut_threshold':self.policy.scene_cut_threshold,
             'compatible_label_groups': [sorted(group) for group in self.policy.compatible_label_groups]}
 
     def _new(self, timestamp, detection, uncertain_reason=None):
@@ -262,8 +269,14 @@ class VideoTrackManager:
             assignments.append(TrackAssignment(index, self._summary(item), matched, bool(reason)))
         return FrameTrackingResult(tuple(assignments), tuple(closed))
 
-    def finish(self):
-        """Close all active tracks at recording end or an explicit scene cut."""
+    def finish(self, *, boundary_reason=None):
+        """Close tracks at recording end or a known scene boundary."""
+        if boundary_reason is not None and (not isinstance(boundary_reason,str) or not boundary_reason.strip()):
+            raise ValueError('boundary_reason must be a non-empty string')
+        if boundary_reason:
+            for item in self.active.values():
+                item['association_uncertain']=True
+                item['uncertainty_reasons'].add(boundary_reason.strip())
         closed = tuple(self._summary(item) for item in self.active.values())
         self.active.clear()
         return closed

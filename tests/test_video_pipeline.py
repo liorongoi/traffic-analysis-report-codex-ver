@@ -9,8 +9,9 @@ from pathlib import Path
 from road_traffic.tracking import TrackerPolicy, VideoTrackManager
 from road_traffic.video_decoder import IsolatedVideoDecoder, VideoDecodeError
 from road_traffic.video_pipeline import (VideoAnalysisCancelled, VideoAnalysisPipeline,
-    VideoFrameAnalysis, VideoTrackClosure)
+    VideoFrameAnalysis, VideoTrackClosure, SceneCutDetector)
 from road_traffic.video_timeline import VideoTimestamp
+from road_traffic.video_decoder import DecodedVideoFrame, VideoMetadata
 
 
 def make_vfr_video(path):
@@ -37,6 +38,64 @@ def pipeline(detector=None):
 
 
 class VideoAnalysisPipelineTests(unittest.TestCase):
+    def test_scene_cut_detector_uses_color_as_well_as_brightness(self):
+        import numpy as np
+        detector=SceneCutDetector(.65)
+        red=np.zeros((12,12,3),dtype=np.uint8);red[:,:,0]=255
+        blue=np.zeros((12,12,3),dtype=np.uint8);blue[:,:,2]=255
+        self.assertFalse(detector.observe(red))
+        self.assertTrue(detector.observe(blue))
+
+    def test_detected_scene_cut_closes_tracks_and_never_associates_across_it(self):
+        import numpy as np
+        class Decoder:
+            metadata=VideoMetadata('fixture','rawvideo',16,16,0,1,1000,25,1,4,120)
+            def __init__(self,path):
+                self.images=[np.zeros((16,16,3),dtype=np.uint8) for _ in range(2)]+[
+                    np.full((16,16,3),255,dtype=np.uint8) for _ in range(2)]
+            def __enter__(self):return self
+            def __exit__(self,*args):return False
+            def frames(self):
+                for index,image in enumerate(self.images):
+                    yield DecodedVideoFrame(index,VideoTimestamp(index*40,1,1000),image)
+        class StableDetector:
+            def infer(self,image):return [{'label':'car','box':[.2,.2,.1,.1]}]
+        tracker=VideoTrackManager(TrackerPolicy(max_gap_seconds=Fraction(1,2),minimum_iou=.2,
+            max_center_distance=.15,association_margin=.05,scene_cut_threshold=.65),run_id='cut-run')
+        records=list(VideoAnalysisPipeline(StableDetector(),tracker,decoder_factory=Decoder).analyze('fixture'))
+        frames=[item for item in records if isinstance(item,VideoFrameAnalysis)]
+        self.assertEqual([frame.scene_cut for frame in frames],[False,False,True,False])
+        self.assertEqual(frames[0].assignments[0].track.track_id,frames[1].assignments[0].track.track_id)
+        self.assertNotEqual(frames[1].assignments[0].track.track_id,frames[2].assignments[0].track.track_id)
+        self.assertEqual(frames[2].closed_tracks[0].track_id,frames[1].assignments[0].track.track_id)
+        self.assertIn('scene_cut_boundary',frames[2].closed_tracks[0].uncertainty_reasons)
+        self.assertTrue(frames[3].assignments[0].matched_existing)
+
+    def test_resumed_scene_cut_uses_saved_preceding_frame_for_detection(self):
+        import numpy as np
+        class Decoder:
+            metadata=VideoMetadata('fixture','rawvideo',16,16,0,1,1000,25,1,2,80)
+            def __init__(self,path):
+                self.images=[np.zeros((16,16,3),dtype=np.uint8),np.full((16,16,3),255,dtype=np.uint8)]
+            def __enter__(self):return self
+            def __exit__(self,*args):return False
+            def frames(self):
+                for index,image in enumerate(self.images):
+                    yield DecodedVideoFrame(index,VideoTimestamp(index*40,1,1000),image)
+        class StableDetector:
+            def infer(self,image):return [{'label':'car','box':[.2,.2,.1,.1]}]
+        configured=TrackerPolicy(max_gap_seconds=Fraction(1,2),minimum_iou=.2,
+            max_center_distance=.15,association_margin=.05,scene_cut_threshold=.65)
+        original=VideoTrackManager(configured,run_id='resumed-cut')
+        prior=original.update(VideoTimestamp(0,1,1000),[{'label':'car','box':[.2,.2,.1,.1]}]).assignments[0]
+        resumed=VideoTrackManager(configured,run_id='resumed-cut',state=original.state())
+        records=list(VideoAnalysisPipeline(StableDetector(),resumed,decoder_factory=Decoder).analyze(
+            'fixture',start_frame_index=1,expected_previous_timestamp=VideoTimestamp(0,1,1000)))
+        frame=next(item for item in records if isinstance(item,VideoFrameAnalysis))
+        self.assertTrue(frame.scene_cut)
+        self.assertEqual(frame.closed_tracks[0].track_id,prior.track.track_id)
+        self.assertNotEqual(frame.assignments[0].track.track_id,prior.track.track_id)
+
     def test_isolated_decode_runs_detector_tracker_and_progress_incrementally(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'variable-rate.mkv'

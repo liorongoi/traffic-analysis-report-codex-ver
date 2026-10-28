@@ -8,6 +8,33 @@ from .video_decoder import IsolatedVideoDecoder
 from .video_timeline import VideoTimestamp
 
 
+class SceneCutDetector:
+    """Detect abrupt fixed-camera scene changes from sampled RGB histograms."""
+    def __init__(self, threshold):
+        if (isinstance(threshold,bool) or not isinstance(threshold,(int,float))
+                or not 0 < threshold <= 1):
+            raise ValueError('Scene cut threshold must be in (0, 1]')
+        self.threshold=float(threshold)
+        self.previous=None
+
+    def observe(self, rgb_frame):
+        import numpy as np
+        frame=np.asarray(rgb_frame)
+        if frame.ndim!=3 or frame.shape[2]!=3 or not frame.size:
+            raise ValueError('Scene-cut analysis requires a non-empty RGB frame')
+        height,width=frame.shape[:2]
+        sample=frame[::max(1,height//64 or 1),::max(1,width//64 or 1),:]
+        histogram=np.stack([np.histogram(sample[:,:,channel],bins=32,range=(0,256))[0]
+            for channel in range(3)]).astype(np.float64)
+        histogram/=np.maximum(1.0,histogram.sum(axis=1,keepdims=True))
+        cut=False
+        if self.previous is not None:
+            distance=float((.5*np.abs(histogram-self.previous).sum(axis=1)).mean())
+            cut=distance>=self.threshold
+        self.previous=histogram
+        return cut
+
+
 class VideoAnalysisCancelled(RuntimeError):
     """Raised after the caller requests cancellation between decoded frames."""
 
@@ -32,6 +59,7 @@ class VideoFrameAnalysis:
     assignments: tuple
     closed_tracks: tuple
     progress: VideoProgress
+    scene_cut: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +85,8 @@ class VideoAnalysisPipeline:
         self.tracker = tracker
         self.decoder_factory = decoder_factory
         self.metadata = None
+        threshold=getattr(getattr(tracker,'policy',None),'scene_cut_threshold',None)
+        self.scene_cut_detector=SceneCutDetector(threshold) if threshold is not None else None
 
     def analyze(self, path, *, recording_start_utc=None, should_cancel=None,
                 progress_callback=None, frame_callback=None, start_frame_index=0,
@@ -95,6 +125,8 @@ class VideoAnalysisPipeline:
             verified_previous = start_frame_index == 0
             for decoded in decoder.frames():
                 if decoded.index < start_frame_index:
+                    if self.scene_cut_detector is not None:
+                        self.scene_cut_detector.observe(decoded.image)
                     if decoded.index == start_frame_index - 1:
                         if decoded.timestamp != expected_previous_timestamp:
                             raise ValueError('Video source timeline changed since the saved checkpoint')
@@ -104,6 +136,10 @@ class VideoAnalysisPipeline:
                     raise VideoAnalysisCancelled('Video analysis cancelled between frames')
                 if frame_callback is not None:
                     frame_callback(decoded)
+                scene_cut=(self.scene_cut_detector.observe(decoded.image)
+                    if self.scene_cut_detector is not None else False)
+                boundary_tracks=(self.tracker.finish(boundary_reason='scene_cut_boundary')
+                    if scene_cut else ())
                 detections = self.detector.infer(decoded.image)
                 if not isinstance(detections, (list, tuple)):
                     raise ValueError('Detector must return a list of detection mappings')
@@ -133,8 +169,9 @@ class VideoAnalysisPipeline:
                     utc_time=utc_time,
                     detections=tuple(dict(item) for item in detections),
                     assignments=tracking.assignments,
-                    closed_tracks=tracking.closed_tracks,
+                    closed_tracks=tuple(boundary_tracks)+tracking.closed_tracks,
                     progress=progress,
+                    scene_cut=scene_cut,
                 )
             if not verified_previous:
                 raise ValueError('Video is shorter than the saved checkpoint; refusing an unsafe resume')

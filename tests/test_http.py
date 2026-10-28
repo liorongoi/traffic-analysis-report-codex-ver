@@ -382,7 +382,7 @@ class HttpTests(unittest.TestCase):
             policy={'mission':mission,'threshold':.2,'tiled':False,'target_labels':['car'],'resource_profile':'expanded',
                 'tracker_policy':{'max_gap_seconds':'1/2','minimum_iou':.2,
                     'max_center_distance':.15,'association_margin':.05,
-                    'compatible_label_groups':[]}}
+                    'compatible_label_groups':[],'scene_cut_threshold':.65}}
             with self.request('/api/video/monitor-policy',policy) as response:
                 self.assertTrue(json.load(response)['saved'])
             from road_traffic.store import Library
@@ -390,6 +390,7 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(saved['target_labels'],['car'])
             self.assertEqual(saved['resource_profile'],'expanded')
             self.assertEqual(saved['tracker_policy']['max_gap_seconds'],[1,2])
+            self.assertEqual(saved['tracker_policy']['scene_cut_threshold'],.65)
 
     def test_video_event_table_export_api_writes_and_downloads_configured_formats(self):
         from road_traffic.store import Library

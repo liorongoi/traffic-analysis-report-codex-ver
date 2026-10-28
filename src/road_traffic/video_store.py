@@ -359,12 +359,13 @@ def _canonical_tracker_policy(value):
         gap = Fraction(*gap) if isinstance(gap, (list, tuple)) else Fraction(gap)
         groups = tuple(frozenset(group) for group in value.get('compatible_label_groups', ()))
         policy = TrackerPolicy(gap, value['minimum_iou'], value['max_center_distance'],
-            value['association_margin'], groups)
+            value['association_margin'], groups, value.get('scene_cut_threshold'))
     except (TypeError, ValueError, ZeroDivisionError) as exc:
         raise ValueError(f'Invalid explicit tracker_policy: {exc}') from exc
     return {'max_gap_seconds': [policy.max_gap_seconds.numerator, policy.max_gap_seconds.denominator],
         'minimum_iou': policy.minimum_iou, 'max_center_distance': policy.max_center_distance,
         'association_margin': policy.association_margin,
+        'scene_cut_threshold':policy.scene_cut_threshold,
         'compatible_label_groups': [sorted(group) for group in policy.compatible_label_groups]}
 
 
