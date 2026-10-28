@@ -6,7 +6,7 @@ This register tracks decisions and evidence that code alone cannot supply. The u
 
 - The app is an offline-first, local road-traffic review and analysis tool, with opt-in authorized LAN access. There is no application sign-in flow.
 - The UI is bilingual Hebrew/English and supports RTL/LTR.
-- Plate work includes localization, image-chip extraction, optional local OCR suggestions, and separate human crop/text approval. Never infer vehicle identity. The user superseded the earlier crop-only instruction and authorized a usable local LPR algorithm. Do not add plate-type, town, governorate, or identity inference.
+- Plate work includes localization, image-chip extraction, optional local OCR suggestions, and separate human crop/text approval. Each new crop snapshots the mission's operator-configured country as context and labels its basis; this is not image-derived country or layout inference. Never infer vehicle identity. The user superseded the earlier crop-only instruction and authorized a usable local LPR algorithm. Do not add plate-type, town, governorate, or identity inference.
 - The supplied Iran and Lebanon plate charts are qualitative visual guidance only. They are not camera samples or OCR ground truth.
 - Video identity correction uses corrected identities: a merge creates one corrected logical event; a split creates child events; original records remain auditable.
 - Original sources and append-only human review history are preserved. No automatic deletion or retention period has been approved.

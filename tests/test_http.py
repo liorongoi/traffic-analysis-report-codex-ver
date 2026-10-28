@@ -513,6 +513,8 @@ class HttpTests(unittest.TestCase):
             self.assertTrue((output/'plate-crops'/mission/'review.sqlite3').is_file())
             for crop in saved:
                 self.assertEqual(crop['source_name'],image['name'])
+                self.assertEqual((crop['mission_country_context'],crop['country_context_basis']),
+                    ('Israel','mission_configuration'))
                 self.assertNotIn('text',crop);self.assertNotIn('ocr',crop)
                 with self.request(f"/api/plate-crop?mission={mission}&crop={crop['id']}") as response:
                     self.assertEqual(response.headers['Content-Type'],'image/jpeg')

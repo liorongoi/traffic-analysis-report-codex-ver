@@ -380,6 +380,9 @@ $('stopInference').onclick=()=>action(async()=>{if(activeRun){await api('/api/in
 for(const id of ['role','status','operator'])$(id).onchange=()=>{if(images[index])dirty=true;};
 window.onbeforeunload=e=>{if(dirty){e.preventDefault();e.returnValue='';}};
 
+Object.assign(en,{plateMissionCountry:'Mission country',missionCountryContextBasis:'operator configured, not inferred'});
+Object.assign(he,{plateMissionCountry:'מדינת המשימה',missionCountryContextBasis:'הוגדר בידי המפעיל, לא זוהה אוטומטית'});
+
 function renderPlateOcrMetrics(report){
  const panel=$('plateOcrMetrics');panel.replaceChildren();
  const summary=document.createElement('p');summary.className='muted';
@@ -424,6 +427,7 @@ async function refreshPlateCrops(imageId=null){
   const context=document.createElement('img');context.className='plate-context';context.src=item.source_kind==='video'?'/api/plate-context?mission='+encodeURIComponent(mission)+'&crop='+encodeURIComponent(item.id):'/api/image?mission='+encodeURIComponent(mission)+'&image='+encodeURIComponent(item.image_id);context.alt=item.source_name;
   const meta=document.createElement('div');meta.className='plate-meta';
   const source=document.createElement('strong');source.textContent=`${tr('plateSource')}: ${item.source_name}`;
+  const country=document.createElement('span');country.className='muted';country.textContent=item.mission_country_context?`${tr('plateMissionCountry')}: ${item.mission_country_context} (${tr('missionCountryContextBasis')})`:'';
   const score=document.createElement('span');score.textContent=`${tr('plateConfidence')}: ${Number(item.confidence).toFixed(3)}`;const focus=document.createElement('span');focus.textContent=item.blur_laplacian_variance!=null&&Number.isFinite(Number(item.blur_laplacian_variance))?`${tr('plateFocusReference')}: ${Number(item.blur_laplacian_variance).toFixed(1)}`:'';const frameTime=document.createElement('span');if(item.source_kind==='video'){const seconds=item.time_base_den?item.pts*item.time_base_num/item.time_base_den:null;frameTime.textContent=`${tr('plateFrameTime')}: ${item.frame_index} · ${seconds===null?'?':seconds.toFixed(3)+'s'}${item.capture_utc?' · '+item.capture_utc:''}`;}
   const state=document.createElement('span');state.className='plate-state';state.textContent=tr(item.decision==='approved'?'plateApproved':item.decision==='rejected'?'plateRejected':'platePending');
   const textState=document.createElement('span');textState.className='plate-state';textState.textContent=item.text_decision?tr(({accepted:'plateTextAccepted',corrected:'plateTextCorrected',rejected:'plateTextRejected',unreadable:'plateTextUnreadable'})[item.text_decision]):tr('platePending');
@@ -435,7 +439,7 @@ async function refreshPlateCrops(imageId=null){
   for(const [decision,key] of [['accepted','plateAcceptText'],['corrected','plateCorrectText'],['rejected','plateRejectText'],['unreadable','plateUnreadableText']]){const button=document.createElement('button');button.type='button';button.textContent=tr(key);button.onclick=()=>action(async()=>{const operator=$('plateOperator').value.trim();if(!operator)throw new Error(tr('plateTextNeedOperator'));if(['accepted','corrected'].includes(decision)&&!textInput.value.trim())throw new Error(tr('plateTextNeedValue'));await api('/api/plates/text-review',{mission,crop_id:item.id,expected_revision:item.text_revision||0,decision,verified_text:textInput.value,operator});await refreshPlateCrops();});textControls.append(button);}
   const controls=document.createElement('div');controls.className='plate-review-buttons';
   for(const [decision,key] of [['approved','plateApprove'],['rejected','plateReject']]){const button=document.createElement('button');button.type='button';button.textContent=tr(key);button.onclick=()=>action(async()=>{const operator=$('plateOperator').value.trim();if(!operator)throw new Error(tr('plateNeedOperator'));await api('/api/plates/review',{mission,crop_id:item.id,expected_revision:item.revision||0,decision,operator});await refreshPlateCrops();});controls.append(button);}
-  const contextLabel=document.createElement('span');contextLabel.className='muted';contextLabel.textContent=item.source_name;meta.append(source,score);if(focus.textContent)meta.append(focus);if(item.source_kind==='video')meta.append(frameTime);meta.append(suggestion);if(item.ocr_alternative_model_sha256)meta.append(alternate,useAlternate);meta.append(textState,textInput,textControls,state,controls);card.append(image,contextLabel,context,meta);list.append(card);
+  const contextLabel=document.createElement('span');contextLabel.className='muted';contextLabel.textContent=item.source_name;meta.append(source);if(country.textContent)meta.append(country);meta.append(score);if(focus.textContent)meta.append(focus);if(item.source_kind==='video')meta.append(frameTime);meta.append(suggestion);if(item.ocr_alternative_model_sha256)meta.append(alternate,useAlternate);meta.append(textState,textInput,textControls,state,controls);card.append(image,contextLabel,context,meta);list.append(card);
  }
 }
 

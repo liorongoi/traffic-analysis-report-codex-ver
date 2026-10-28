@@ -42,6 +42,12 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn('real-camera accuracy is not yet validated', source)
         self.assertNotIn('no validated Persian/Arabic support', source)
 
+    def test_plate_crop_country_is_presented_as_mission_context_not_inference(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn('item.mission_country_context', source)
+        self.assertIn('operator configured, not inferred', source)
+        self.assertIn('הוגדר בידי המפעיל, לא זוהה אוטומטית', source)
+
     def test_mission_configuration_is_a_three_step_wizard(self):
         parser = MissionWizardMarkup()
         parser.feed((ROOT / 'web' / 'index.html').read_text(encoding='utf-8'))

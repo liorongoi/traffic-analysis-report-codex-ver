@@ -104,6 +104,12 @@ def _paths(library, mission):
     return root,folder,db
 
 
+def _mission_country(library,mission):
+    with library.connect(mission) as conn:
+        row=conn.execute('SELECT country FROM mission WHERE id=?',(mission,)).fetchone()
+    return row['country'] if row else None
+
+
 def _open_connection(db):
     conn=sqlite3.connect(db,timeout=20)
     try:
@@ -115,6 +121,8 @@ def _open_connection(db):
                 source_sha256 TEXT NOT NULL, crop_file TEXT NOT NULL UNIQUE,
                 crop_sha256 TEXT NOT NULL, bbox TEXT NOT NULL, confidence REAL NOT NULL,
                 model_sha256 TEXT NOT NULL, created TEXT NOT NULL,
+                mission_country_context TEXT,
+                country_context_basis TEXT NOT NULL DEFAULT 'unknown',
                 ocr_text TEXT NOT NULL DEFAULT '', ocr_confidence REAL NOT NULL DEFAULT 0,
                 ocr_model_sha256 TEXT NOT NULL DEFAULT '',
                 ocr_search_text TEXT NOT NULL DEFAULT '');
@@ -145,6 +153,8 @@ def _open_connection(db):
             ('frame_index','INTEGER'), ('pts','INTEGER'), ('time_base_num','INTEGER'),
             ('time_base_den','INTEGER'), ('capture_utc','TEXT'), ('context_file','TEXT'),
             ('blur_laplacian_variance','REAL'),
+            ('mission_country_context','TEXT'),
+            ('country_context_basis',"TEXT NOT NULL DEFAULT 'unknown'"),
             ('ocr_text', "TEXT NOT NULL DEFAULT ''"), ('ocr_confidence','REAL NOT NULL DEFAULT 0'),
             ('ocr_model_sha256', "TEXT NOT NULL DEFAULT ''"),
             ('ocr_search_text', "TEXT NOT NULL DEFAULT ''"),
@@ -387,7 +397,8 @@ def _iou(a,b):
 def propose(library,mission,image_id,pack,threshold=.3):
     from PIL import Image
     source=library.image_path(mission,image_id)
-    global_ocr_enabled=_global_latin_ocr_applicable(library.settings(mission).get('country'))
+    mission_country=_mission_country(library,mission)
+    global_ocr_enabled=_global_latin_ocr_applicable(mission_country)
     with library.connect(mission) as conn:
         row=conn.execute('SELECT name,sha256 FROM images WHERE id=?',(image_id,)).fetchone()
     if not row:raise ValueError('Image not found in mission')
@@ -419,12 +430,14 @@ def propose(library,mission,image_id,pack,threshold=.3):
             for crop_id,filename,path,item,coords,ocr,alternative in crops:
                 box=item['box']
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
-                    crop_sha256,bbox,confidence,blur_laplacian_variance,model_sha256,created,ocr_text,ocr_confidence,ocr_model_sha256,
+                    crop_sha256,bbox,confidence,blur_laplacian_variance,model_sha256,created,
+                    mission_country_context,country_context_basis,ocr_text,ocr_confidence,ocr_model_sha256,
                     ocr_search_text,ocr_alternative_text,ocr_alternative_confidence,ocr_alternative_model_sha256,
                     ocr_alternative_search_text)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],'height':coords[3]-coords[1]}),
-                    item['confidence'],item.get('blur_laplacian_variance'),detector.sha,created,ocr['text'],ocr['confidence'],ocr['model_sha256'],
+                    item['confidence'],item.get('blur_laplacian_variance'),detector.sha,created,mission_country,
+                    'mission_configuration' if mission_country else 'unknown',ocr['text'],ocr['confidence'],ocr['model_sha256'],
                     normalize_plate_text(ocr['text']),alternative['text'],alternative['confidence'],alternative['model_sha256'],
                     normalize_plate_text(alternative['text'])) )
                 inserted.append(crop_id)
@@ -441,7 +454,8 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
     import numpy as np
     _,folder,db=_paths(library,mission)
     source=video_store.source_detail(library,mission,source_id)
-    global_ocr_enabled=_global_latin_ocr_applicable(library.settings(mission).get('country'))
+    mission_country=_mission_country(library,mission)
+    global_ocr_enabled=_global_latin_ocr_applicable(mission_country)
     image_id=f"video:{source_id}:{decoded.index}"
     with _connect(db) as conn:
         existing=conn.execute('''SELECT id FROM crops WHERE source_kind='video'
@@ -474,14 +488,16 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
                     crop_sha256,bbox,confidence,blur_laplacian_variance,model_sha256,created,source_kind,video_source_id,
                     frame_index,pts,time_base_num,time_base_den,capture_utc,context_file,
+                    mission_country_context,country_context_basis,
                     ocr_text,ocr_confidence,ocr_model_sha256,ocr_search_text,ocr_alternative_text,
                     ocr_alternative_confidence,ocr_alternative_model_sha256,ocr_alternative_search_text)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
                     crop_id,image_id,source['original_name'],source['sha256'],crop_name,_sha(crop_path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],
                         'height':coords[3]-coords[1]}),item['confidence'],item.get('blur_laplacian_variance'),detector.sha,created,'video',
                     source_id,decoded.index,decoded.timestamp.pts,decoded.timestamp.time_base_num,
-                    decoded.timestamp.time_base_den,utc.isoformat() if utc else None,context_name,
+                    decoded.timestamp.time_base_den,utc.isoformat() if utc else None,context_name,mission_country,
+                    'mission_configuration' if mission_country else 'unknown',
                     ocr['text'],ocr['confidence'],ocr['model_sha256'],normalize_plate_text(ocr['text']),
                     alternative['text'],alternative['confidence'],alternative['model_sha256'],
                     normalize_plate_text(alternative['text'])))
@@ -709,7 +725,7 @@ def ocr_quality_report(library,mission):
     return result
 
 
-PLATE_EXPORT_FIELDS=('crop_id','source_kind','source_name','source_sha256','image_id','video_source_id',
+PLATE_EXPORT_FIELDS=('crop_id','mission_country_context','country_context_basis','source_kind','source_name','source_sha256','image_id','video_source_id',
     'frame_index','pts','time_base_num','time_base_den','capture_utc','bbox','detector_confidence',
     'blur_laplacian_variance','detector_model_sha256','crop_file','crop_sha256','crop_review_decision','crop_review_revision',
     'crop_review_operator','crop_reviewed_at','ocr_primary_text','ocr_primary_confidence',
@@ -724,7 +740,7 @@ def export_crops_csv(library,mission):
     export_id=str(uuid.uuid4())
     target=folder/f'plate-review-{mission[:8]}-{export_id}.csv'
     temporary=folder/f'.{target.name}.tmp'
-    query='''SELECT c.id AS crop_id,c.source_kind,c.source_name,c.source_sha256,c.image_id,c.video_source_id,
+    query='''SELECT c.id AS crop_id,c.mission_country_context,c.country_context_basis,c.source_kind,c.source_name,c.source_sha256,c.image_id,c.video_source_id,
         c.frame_index,c.pts,c.time_base_num,c.time_base_den,c.capture_utc,c.bbox,
         c.confidence AS detector_confidence,c.blur_laplacian_variance,c.model_sha256 AS detector_model_sha256,c.crop_file,c.crop_sha256,
         r.decision AS crop_review_decision,r.revision AS crop_review_revision,r.operator AS crop_review_operator,

@@ -62,6 +62,8 @@ class PlateCropReviewTests(unittest.TestCase):
                 self.assertEqual(row['normalized_text'],'0012ب34')
                 crop=migrated.execute('SELECT ocr_search_text FROM crops WHERE id=?',('crop',)).fetchone()
                 self.assertEqual(crop['ocr_search_text'],'ab0012')
+                country=migrated.execute('SELECT mission_country_context,country_context_basis FROM crops WHERE id=?',('crop',)).fetchone()
+                self.assertEqual((country['mission_country_context'],country['country_context_basis']),(None,'unknown'))
             with _connect(db) as migrated:
                 with self.assertRaisesRegex(sqlite3.IntegrityError,'append-only'):
                     migrated.execute('UPDATE text_reviews SET verified_text=? WHERE id=1',('different',))
@@ -81,9 +83,11 @@ class PlateCropReviewTests(unittest.TestCase):
         crop=folder/(self.crop_id+'.jpg');Image.new('RGB',(12,5),(255,255,255)).save(crop,'JPEG')
         with _connect(db) as conn:
             conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
-                crop_sha256,bbox,confidence,model_sha256,created) VALUES (?,?,?,?,?,?,?,?,?,?)''',(
+                crop_sha256,bbox,confidence,model_sha256,created,mission_country_context,country_context_basis)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',(
                 self.crop_id,self.image['id'],self.image['name'],self.image['sha256'],crop.name,_sha(crop),
-                json.dumps({'x':2,'y':3,'width':12,'height':5}),.8,'a'*64,'2026-10-25T00:00:00+00:00'))
+                json.dumps({'x':2,'y':3,'width':12,'height':5}),.8,'a'*64,'2026-10-25T00:00:00+00:00',
+                'Israel','mission_configuration'))
     def tearDown(self):self.tmp.cleanup()
 
     def test_crop_database_connection_closes_after_context(self):
@@ -146,6 +150,8 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertEqual(len(rows),1)
         self.assertEqual(rows[0]['decision'],None)
         self.assertEqual(rows[0]['source_name'],self.image['name'])
+        self.assertEqual((rows[0]['mission_country_context'],rows[0]['country_context_basis']),
+            ('Israel','mission_configuration'))
         self.assertTrue(crop_file(self.lib,self.mission,rows[0]['id']).is_file())
         self.assertEqual(rows[0]['ocr_text'],'AB1234');self.assertEqual(rows[0]['ocr_confidence'],.82)
         self.assertEqual(rows[0]['ocr_alternative_text'],'CD5678')
@@ -232,6 +238,8 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertEqual(row['normalized_text'],'0012ب34')
         self.assertEqual(row['text_decision'],'corrected')
         self.assertEqual(row['crop_review_operator'],'Reviewer')
+        self.assertEqual(row['mission_country_context'],'Israel')
+        self.assertEqual(row['country_context_basis'],'mission_configuration')
         self.assertEqual(row['crop_sha256'],_sha(Path(self.output)/'plate-crops'/self.mission/(self.crop_id+'.jpg')))
         self.assertEqual(len(first['sha256']),64)
         second=export_crops_csv(self.lib,self.mission)
@@ -292,6 +300,8 @@ class PlateCropReviewTests(unittest.TestCase):
         row=list_crops(self.lib,video_mission)[0]
         self.assertEqual((row['source_kind'],row['frame_index'],row['pts']),('video',7,150))
         self.assertEqual((row['time_base_num'],row['time_base_den']),(1,30))
+        self.assertEqual((row['mission_country_context'],row['country_context_basis']),
+            ('Israel','mission_configuration'))
         self.assertTrue(row['capture_utc'].startswith('2026-05-17T16:04:05'))
         self.assertTrue(context_file(self.lib,video_mission,row['id']).is_file())
         self.assertEqual(propose_video_frame(self.lib,video_mission,source['id'],decoded,detector),[])
