@@ -571,6 +571,63 @@ def _normalized_edit_similarity(actual,predicted):
     return max(0.0,1.0-_edit_distance(left,right)/max(len(left),len(right)))
 
 
+def _near_duplicate_components(values, min_similarity=0.9):
+    """Group normalized plate strings linked by edit similarity at the threshold.
+
+    A BK-tree avoids comparing every pair when a mission has many distinct
+    verified plates. Components use transitive closure and are intended only
+    to reduce repeated near-duplicate weighting in exploratory summaries.
+    """
+    if not 0 < min_similarity <= 1:
+        raise ValueError('Minimum plate-string similarity must be greater than zero and at most one')
+    strings=set()
+    for value in values:
+        normalized=normalize_plate_text(value)
+        if normalized:strings.add(normalized)
+    strings=sorted(strings)
+    if not strings:return []
+    parent=list(range(len(strings)))
+    def find(index):
+        while parent[index]!=index:
+            parent[index]=parent[parent[index]]
+            index=parent[index]
+        return index
+    def union(left,right):
+        left_root=find(left);right_root=find(right)
+        if left_root!=right_root:
+            parent[max(left_root,right_root)]=min(left_root,right_root)
+
+    root=None;max_length_seen=0
+    def matches(query,radius):
+        if root is None:return []
+        found=[];stack=[root]
+        while stack:
+            node=stack.pop()
+            distance=_edit_distance(query,node['value'])
+            if distance<=radius and _normalized_edit_similarity(query,node['value'])>=min_similarity:
+                found.append(node['index'])
+            low=distance-radius;high=distance+radius
+            stack.extend(child for edge,child in node['children'].items() if low<=edge<=high)
+        return found
+    for index,value in enumerate(strings):
+        radius=int((1.0-min_similarity)*max(len(value),max_length_seen)+1e-12)
+        for other in matches(value,radius):union(index,other)
+        if root is None:root={'value':value,'index':index,'children':{}}
+        else:
+            node=root
+            while True:
+                distance=_edit_distance(value,node['value'])
+                child=node['children'].get(distance)
+                if child is None:
+                    node['children'][distance]={'value':value,'index':index,'children':{}}
+                    break
+                node=child
+        max_length_seen=max(max_length_seen,len(value))
+    groups={}
+    for index,value in enumerate(strings):groups.setdefault(find(index),[]).append(value)
+    return [groups[key] for key in sorted(groups)]
+
+
 def _ocr_metrics(rows,text_field):
     exact=0;covered=0;similarities=[];edit_errors=0;reference_characters=0
     for row in rows:
@@ -594,14 +651,16 @@ def ocr_quality_report(library,mission):
 
     This is an exploratory report, not a held-out accuracy claim. It reports
     crop-level metrics and a deterministic one-crop-per-normalized-string view
-    so repeated observations cannot inflate the string-grouped summary.
+    so repeated observations cannot inflate the exact-string summary. A
+    separate 0.90 near-duplicate grouping follows the supplied paper's
+    leakage-control lesson, but does not create a protected split.
     """
     with library.connect(mission) as conn:
         mission_row=conn.execute('SELECT country FROM mission WHERE id=?',(mission,)).fetchone()
     reviewed=[row for row in list_crops(library,mission)
         if row.get('decision')=='approved' and row.get('text_decision') in ('accepted','corrected')]
     result={'mission_id':mission,'country':mission_row['country'] if mission_row else None,'reviewed_crops':len(reviewed),
-        'scope':'Exploratory metrics on human-verified approved crop observations; not a protected held-out evaluation. Crop-level observations may be correlated. String-grouped metrics use one deterministic crop per normalized verified string; this is not a substitute for a protected split.',
+        'scope':'Exploratory metrics on human-verified approved crop observations; not a protected held-out evaluation. Crop-level observations may be correlated. Exact-string and 0.90 near-duplicate summaries use one deterministic crop per group; near-duplicate groups use transitive closure and are not a substitute for a protected split.',
         'models':[]}
     choices=(('primary','ocr_text','ocr_model_sha256'),
         ('global_latin','ocr_alternative_text','ocr_alternative_model_sha256'))
@@ -618,10 +677,18 @@ def ocr_quality_report(library,mission):
                 if actual not in grouped or key<(grouped[actual].get('crop_sha256') or '',grouped[actual].get('id') or ''):
                     grouped[actual]=row
             grouped_rows=list(grouped.values())
+            components=_near_duplicate_components(grouped)
+            near_duplicate_rows=[]
+            for component in components:
+                candidates=[grouped[value] for value in component]
+                near_duplicate_rows.append(min(candidates,key=lambda row:(row.get('crop_sha256') or '',row.get('id') or '')))
             result['models'].append({'candidate':label,'model_sha256':model_hash,
                 **_ocr_metrics(rows,text_field),
                 'unique_verified_strings':len(grouped_rows),
-                'string_grouped':_ocr_metrics(grouped_rows,text_field)})
+                'string_grouped':_ocr_metrics(grouped_rows,text_field),
+                'near_duplicate_similarity_threshold':0.9,
+                'near_duplicate_groups':len(components),
+                'near_duplicate_grouped':_ocr_metrics(near_duplicate_rows,text_field)})
     return result
 
 

@@ -255,6 +255,8 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(metrics['reviewed_crops'],1)
             primary=next(row for row in metrics['models'] if row['candidate']=='primary')
             self.assertEqual(primary['exact_match_rate'],1)
+            self.assertEqual(primary['near_duplicate_groups'],1)
+            self.assertEqual(primary['near_duplicate_grouped']['reviewed_crops'],1)
             self.assertIn('not a protected held-out evaluation',metrics['scope'])
             with self.request('/api/plates/export',{'mission':mission}) as response:
                 exported=json.load(response)

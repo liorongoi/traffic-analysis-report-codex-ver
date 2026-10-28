@@ -7,7 +7,8 @@ import unittest
 from PIL import Image
 from road_traffic.plate_review import (_connect, _paths, crop_file, list_crops,
     normalize_plate_text, review, review_text, _sha, propose, ocr_quality_report,
-    _normalized_edit_similarity, _edit_distance, list_crops_page,export_crops_csv,PlateDetector)
+    _normalized_edit_similarity, _edit_distance, _near_duplicate_components,
+    list_crops_page,export_crops_csv,PlateDetector)
 from road_traffic.plate_review import _laplacian_variance
 from unittest.mock import patch
 from road_traffic.store import Library
@@ -18,6 +19,12 @@ from road_traffic.video_decoder import DecodedVideoFrame
 
 
 class PlateCropReviewTests(unittest.TestCase):
+    def test_near_duplicate_plate_groups_follow_similarity_threshold_transitively(self):
+        groups=_near_duplicate_components(['AB12345678','AB12345679','XY12345678','AB12345678'])
+        self.assertEqual(groups,[['ab12345678','ab12345679'],['xy12345678']])
+        transitive=_near_duplicate_components(['ABCDEFGHIJ','ABCDEFGHI1','ABCDEFGH11'])
+        self.assertEqual(transitive,[['abcdefgh11','abcdefghi1','abcdefghij']])
+
     def test_search_normalization_preserves_order_and_leading_zeroes(self):
         self.assertEqual(normalize_plate_text('٠٠١٢-ب/34\u200f'), '0012ب34')
         self.assertEqual(normalize_plate_text('۱۲٣٤'), '1234')
@@ -203,6 +210,9 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertEqual(primary['string_grouped']['reviewed_crops'],1)
         self.assertEqual(primary['string_grouped']['exact_matches'],0)
         self.assertEqual(primary['unique_verified_strings'],1)
+        self.assertEqual(primary['near_duplicate_similarity_threshold'],.9)
+        self.assertEqual(primary['near_duplicate_groups'],1)
+        self.assertEqual(primary['near_duplicate_grouped']['reviewed_crops'],1)
         self.assertAlmostEqual(_normalized_edit_similarity('۱۲-AB','12AC'),.75)
         self.assertEqual(_edit_distance('A','ABCDEF'),5)
 
