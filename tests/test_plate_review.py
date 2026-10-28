@@ -228,7 +228,8 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertNotEqual(first['path'],second['path'])
 
     def test_plate_detector_reports_missing_offline_runtime_dependency_clearly(self):
-        with patch('builtins.__import__',side_effect=ModuleNotFoundError("No module named 'cv2'",name='cv2')):
+        with patch('road_traffic.plate_review.importlib.import_module',
+                side_effect=ModuleNotFoundError("No module named 'cv2'",name='cv2')):
             with self.assertRaisesRegex(ValueError,r"offline runtime is missing a required plate-detection dependency \(module 'cv2'\)"):
                 PlateDetector(Path('unused-model-pack'))
 
