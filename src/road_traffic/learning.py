@@ -413,7 +413,9 @@ def _feature_vectors(library,mission,records,yield_checkpoint=None,*,
         with Image.open(library.image_path(mission,row['image_id'])) as image:
             if image.width*image.height>24_000_000:raise ValueError('Evaluation image exceeds adapter pixel budget')
             rgb=np.asarray(image.convert('RGB'))
-        vectors.append(patch_features(rgb,row['box']).tolist())
+        # Keep checkpoint JSON compatible with both the production list return
+        # value and array-like feature extractors used by alternate backends.
+        vectors.append([float(value) for value in patch_features(rgb,row['box'])])
         if save_checkpoint and (len(vectors)%64==0 or len(vectors)==len(records)):
             save_checkpoint({'identity':checkpoint_identity,'vectors':vectors})
     return np.asarray(vectors,dtype=np.float64)
@@ -660,7 +662,7 @@ def train(library,mission,yield_checkpoint=None,resume_checkpoint=None,save_chec
                 with Image.open(library.image_path(mission,row['image_id'])) as im:
                     if im.width*im.height>24_000_000:raise ValueError('Training image exceeds adapter pixel budget')
                     rgb=np.asarray(im.convert('RGB'))
-                vectors.append(patch_features(rgb,row['box']).tolist())
+                vectors.append([float(value) for value in patch_features(rgb,row['box'])])
                 if save_checkpoint and (len(vectors)%64==0 or len(vectors)==len(records)):
                     checkpoint_state[f'{role}_vectors']=vectors
                     checkpoint_state.update({'evidence_hash':fingerprint,'stage':'features'})
