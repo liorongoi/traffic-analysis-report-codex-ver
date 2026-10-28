@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import csv
 import hashlib
+import importlib
 import json
 import os
 from .ort_session import create_session
@@ -30,6 +31,14 @@ OCR_GLOBAL_MODEL_CONFIG_NAME = 'plate_ocr_global_cct_s_v2_model_config.yaml'
 OCR_GLOBAL_MODEL_SHA256 = '384bbbd2cea3ef54761d3df70822ef3a349ee1a112aeafddbe0e3ba06bc6e47b'
 OCR_GLOBAL_PLATE_CONFIG_SHA256 = '0335c74a305173bb6f393efed0fde03cadeaa0b649ed8e19f431016d8232d0a6'
 OCR_GLOBAL_MODEL_CONFIG_SHA256 = '244c3c712205750e9747bca4707cd553a84005f41959745bff676b0fca8faba3'
+
+
+def _plate_runtime_modules(role,*names):
+    try:
+        return [importlib.import_module(name) for name in names]
+    except (ImportError,OSError) as exc:
+        missing=f"module '{exc.name}'" if getattr(exc,'name',None) else str(exc)[:160]
+        raise ValueError(f'The offline runtime is missing a required {role} dependency ({missing}). Repair or reinstall the app before running plate analysis.') from exc
 
 _PLATE_DIGITS = str.maketrans({
     **{chr(0x0660 + i): str(i) for i in range(10)},
@@ -186,8 +195,7 @@ def _model_pack(pack):
 class PlateTextRecognizer:
     """CPU CTC recognizer for Latin and Arabic/Persian letters; outputs need review."""
     def __init__(self,pack):
-        import numpy as np
-        import onnxruntime as ort
+        np,ort=_plate_runtime_modules('plate OCR','numpy','onnxruntime')
         pack=Path(pack).resolve(strict=True)
         model=pack/OCR_MODEL_NAME;dictionary=pack/OCR_DICT_NAME
         if _sha(model)!=OCR_MODEL_SHA256 or _sha(dictionary)!=OCR_DICT_SHA256:
@@ -251,9 +259,7 @@ class GlobalPlateTextRecognizer:
     max_slots=10
 
     def __init__(self,pack):
-        import cv2
-        import numpy as np
-        import onnxruntime as ort
+        cv2,np,ort=_plate_runtime_modules('global-plate OCR','cv2','numpy','onnxruntime')
         pack=Path(pack).resolve(strict=True)
         model=pack/OCR_GLOBAL_MODEL_NAME
         plate_config=pack/OCR_GLOBAL_PLATE_CONFIG_NAME
@@ -309,13 +315,7 @@ class GlobalPlateTextRecognizer:
 
 class PlateDetector:
     def __init__(self,pack,threshold=.3):
-        try:
-            import cv2
-            import numpy as np
-            import onnxruntime as ort
-        except (ImportError,OSError) as exc:
-            missing=f"module '{exc.name}'" if getattr(exc,'name',None) else str(exc)[:160]
-            raise ValueError(f'The offline runtime is missing a required plate-detection dependency ({missing}). Repair or reinstall the app before running plate analysis.') from exc
+        cv2,np,ort=_plate_runtime_modules('plate-detection','cv2','numpy','onnxruntime')
         if not .01<=threshold<=.9:raise ValueError('Invalid plate detector threshold')
         self.cv,self.np=cv2,np
         self.model,self.sha=_model_pack(pack)

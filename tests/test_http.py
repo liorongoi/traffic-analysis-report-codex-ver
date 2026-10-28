@@ -26,6 +26,25 @@ def write_test_image(path,color=(45,85,125)):
     Image.new('RGB',(8,8),color).save(path,'JPEG')
 
 
+def local_plate_runtime_available():
+    try:
+        import cv2
+        import numpy
+        import onnxruntime
+        return True
+    except (ImportError,OSError):
+        return False
+
+
+def local_view_runtime_available():
+    try:
+        import cv2
+        import numpy
+        return True
+    except (ImportError,OSError):
+        return False
+
+
 class HttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -449,6 +468,12 @@ class HttpTests(unittest.TestCase):
             with self.request('/api/import',{'mission':mission,'path':str(source),'preset':'camera'}) as response:
                 json.load(response)
             with self.request('/api/images?mission='+mission) as response:image=json.load(response)[0]
+            if not local_plate_runtime_available():
+                with self.assertRaises(urllib.error.HTTPError) as exc:
+                    self.request('/api/plates/detect',{'mission':mission,'image_id':image['id']})
+                self.assertEqual(exc.exception.code,400)
+                self.assertIn("module 'cv2'",exc.exception.read().decode())
+                return
             with self.request('/api/plates/detect',{'mission':mission,'image_id':image['id']}) as response:
                 proposals=json.load(response)
             with self.request('/api/plates?mission='+mission) as response:saved=json.load(response)
@@ -524,10 +549,16 @@ class HttpTests(unittest.TestCase):
     def test_view_proposals_route_is_local_and_still_image_scoped(self):
         with self.request('/api/missions',{'name':'View proposal fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
             mission=json.load(response)['id']
-        with self.request('/api/views/proposals',{'mission':mission}) as response:
-            result=json.load(response)
-        self.assertEqual(result['available_images'],0)
-        self.assertEqual(result['groups'],[])
+        if not local_view_runtime_available():
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self.request('/api/views/proposals',{'mission':mission})
+            self.assertEqual(exc.exception.code,400)
+            self.assertIn('Local OpenCV/NumPy runtime is required',exc.exception.read().decode())
+        else:
+            with self.request('/api/views/proposals',{'mission':mission}) as response:
+                result=json.load(response)
+            self.assertEqual(result['available_images'],0)
+            self.assertEqual(result['groups'],[])
         with self.request('/api/missions',{'name':'Video view fixture','country':'Israel','zone':'Asia/Jerusalem',
                 'input_type':'videos','analysis_mode':'video_traffic'}) as response:
             video_mission=json.load(response)['id']
