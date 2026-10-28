@@ -8,6 +8,7 @@ from PIL import Image
 from road_traffic.plate_review import (_connect, _paths, crop_file, list_crops,
     normalize_plate_text, review, review_text, _sha, propose, ocr_quality_report,
     _normalized_edit_similarity, _edit_distance, list_crops_page,export_crops_csv,PlateDetector)
+from road_traffic.plate_review import _laplacian_variance
 from unittest.mock import patch
 from road_traffic.store import Library
 from datetime import datetime, timezone
@@ -230,6 +231,19 @@ class PlateCropReviewTests(unittest.TestCase):
         with patch('builtins.__import__',side_effect=ModuleNotFoundError("No module named 'cv2'",name='cv2')):
             with self.assertRaisesRegex(ValueError,r"offline runtime is missing a required plate-detection dependency \(module 'cv2'\)"):
                 PlateDetector(Path('unused-model-pack'))
+
+    def test_plate_blur_reference_uses_laplacian_variance_without_thresholding(self):
+        import numpy as np
+        class FakeCV:
+            COLOR_RGB2GRAY=1
+            CV_64F=2
+            @staticmethod
+            def cvtColor(image,code):return image
+            @staticmethod
+            def Laplacian(image,dtype):return image
+        crop=np.array([[0,1,2],[1,2,3],[2,3,4]],dtype=np.float32)
+        self.assertAlmostEqual(_laplacian_variance(FakeCV,np,crop),float(np.var(crop)))
+        self.assertIsNone(_laplacian_variance(FakeCV,np,np.empty((0,0))))
 
     def test_reviews_reject_missing_operator_and_invalid_decision(self):
         with self.assertRaisesRegex(ValueError,'Operator'):

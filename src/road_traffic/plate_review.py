@@ -40,6 +40,15 @@ def _plate_runtime_modules(role,*names):
         missing=f"module '{exc.name}'" if getattr(exc,'name',None) else str(exc)[:160]
         raise ValueError(f'The offline runtime is missing a required {role} dependency ({missing}). Repair or reinstall the app before running plate analysis.') from exc
 
+
+def _laplacian_variance(cv,np,rgb_crop):
+    """Return the raw focus score used as a review hint; no quality threshold is implied."""
+    if rgb_crop is None or getattr(rgb_crop,'size',0)==0:
+        return None
+    gray=cv.cvtColor(rgb_crop,cv.COLOR_RGB2GRAY)
+    value=float(np.var(cv.Laplacian(gray,cv.CV_64F)))
+    return value if math.isfinite(value) else None
+
 _PLATE_DIGITS = str.maketrans({
     **{chr(0x0660 + i): str(i) for i in range(10)},
     **{chr(0x06F0 + i): str(i) for i in range(10)},
@@ -135,6 +144,7 @@ def _open_connection(db):
             ('source_kind', "TEXT NOT NULL DEFAULT 'image'"), ('video_source_id','TEXT'),
             ('frame_index','INTEGER'), ('pts','INTEGER'), ('time_base_num','INTEGER'),
             ('time_base_den','INTEGER'), ('capture_utc','TEXT'), ('context_file','TEXT'),
+            ('blur_laplacian_variance','REAL'),
             ('ocr_text', "TEXT NOT NULL DEFAULT ''"), ('ocr_confidence','REAL NOT NULL DEFAULT 0'),
             ('ocr_model_sha256', "TEXT NOT NULL DEFAULT ''"),
             ('ocr_search_text', "TEXT NOT NULL DEFAULT ''"),
@@ -359,7 +369,11 @@ class PlateDetector:
             if x2<=x1 or y2<=y1:continue
             box=[x1/w,y1/h,(x2-x1)/w,(y2-y1)/h]
             if any(_iou(box,old['box'])>.45 for old in boxes):continue
-            boxes.append({'box':box,'confidence':score,'model_sha256':self.sha})
+            left,top=int(box[0]*w),int(box[1]*h)
+            right,bottom=int((box[0]+box[2])*w),int((box[1]+box[3])*h)
+            blur_score=_laplacian_variance(cv,np,image[top:bottom,left:right])
+            boxes.append({'box':box,'confidence':score,'model_sha256':self.sha,
+                'blur_laplacian_variance':blur_score})
             if len(boxes)>=200:break
         return boxes
 
@@ -405,12 +419,12 @@ def propose(library,mission,image_id,pack,threshold=.3):
             for crop_id,filename,path,item,coords,ocr,alternative in crops:
                 box=item['box']
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
-                    crop_sha256,bbox,confidence,model_sha256,created,ocr_text,ocr_confidence,ocr_model_sha256,
+                    crop_sha256,bbox,confidence,blur_laplacian_variance,model_sha256,created,ocr_text,ocr_confidence,ocr_model_sha256,
                     ocr_search_text,ocr_alternative_text,ocr_alternative_confidence,ocr_alternative_model_sha256,
                     ocr_alternative_search_text)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],'height':coords[3]-coords[1]}),
-                    item['confidence'],detector.sha,created,ocr['text'],ocr['confidence'],ocr['model_sha256'],
+                    item['confidence'],item.get('blur_laplacian_variance'),detector.sha,created,ocr['text'],ocr['confidence'],ocr['model_sha256'],
                     normalize_plate_text(ocr['text']),alternative['text'],alternative['confidence'],alternative['model_sha256'],
                     normalize_plate_text(alternative['text'])) )
                 inserted.append(crop_id)
@@ -458,14 +472,14 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
         with _connect(db) as conn:
             for crop_id,crop_name,context_name,crop_path,context_path,item,coords,ocr,alternative in saved:
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
-                    crop_sha256,bbox,confidence,model_sha256,created,source_kind,video_source_id,
+                    crop_sha256,bbox,confidence,blur_laplacian_variance,model_sha256,created,source_kind,video_source_id,
                     frame_index,pts,time_base_num,time_base_den,capture_utc,context_file,
                     ocr_text,ocr_confidence,ocr_model_sha256,ocr_search_text,ocr_alternative_text,
                     ocr_alternative_confidence,ocr_alternative_model_sha256,ocr_alternative_search_text)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
                     crop_id,image_id,source['original_name'],source['sha256'],crop_name,_sha(crop_path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],
-                        'height':coords[3]-coords[1]}),item['confidence'],detector.sha,created,'video',
+                        'height':coords[3]-coords[1]}),item['confidence'],item.get('blur_laplacian_variance'),detector.sha,created,'video',
                     source_id,decoded.index,decoded.timestamp.pts,decoded.timestamp.time_base_num,
                     decoded.timestamp.time_base_den,utc.isoformat() if utc else None,context_name,
                     ocr['text'],ocr['confidence'],ocr['model_sha256'],normalize_plate_text(ocr['text']),
@@ -613,7 +627,7 @@ def ocr_quality_report(library,mission):
 
 PLATE_EXPORT_FIELDS=('crop_id','source_kind','source_name','source_sha256','image_id','video_source_id',
     'frame_index','pts','time_base_num','time_base_den','capture_utc','bbox','detector_confidence',
-    'detector_model_sha256','crop_file','crop_sha256','crop_review_decision','crop_review_revision',
+    'blur_laplacian_variance','detector_model_sha256','crop_file','crop_sha256','crop_review_decision','crop_review_revision',
     'crop_review_operator','crop_reviewed_at','ocr_primary_text','ocr_primary_confidence',
     'ocr_primary_model_sha256','ocr_alternative_text','ocr_alternative_confidence',
     'ocr_alternative_model_sha256','text_decision','verified_text','normalized_text',
@@ -628,7 +642,7 @@ def export_crops_csv(library,mission):
     temporary=folder/f'.{target.name}.tmp'
     query='''SELECT c.id AS crop_id,c.source_kind,c.source_name,c.source_sha256,c.image_id,c.video_source_id,
         c.frame_index,c.pts,c.time_base_num,c.time_base_den,c.capture_utc,c.bbox,
-        c.confidence AS detector_confidence,c.model_sha256 AS detector_model_sha256,c.crop_file,c.crop_sha256,
+        c.confidence AS detector_confidence,c.blur_laplacian_variance,c.model_sha256 AS detector_model_sha256,c.crop_file,c.crop_sha256,
         r.decision AS crop_review_decision,r.revision AS crop_review_revision,r.operator AS crop_review_operator,
         r.created AS crop_reviewed_at,c.ocr_text AS ocr_primary_text,c.ocr_confidence AS ocr_primary_confidence,
         c.ocr_model_sha256 AS ocr_primary_model_sha256,c.ocr_alternative_text,c.ocr_alternative_confidence,
