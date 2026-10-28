@@ -20,8 +20,8 @@ from road_traffic.video_decoder import DecodedVideoFrame
 
 class PlateCropReviewTests(unittest.TestCase):
     def test_near_duplicate_plate_groups_follow_similarity_threshold_transitively(self):
-        groups=_near_duplicate_components(['AB12345678','AB12345679','XY12345678','AB12345678'])
-        self.assertEqual(groups,[['ab12345678','ab12345679'],['xy12345678']])
+        groups=_near_duplicate_components(['AB12345678','AB12345679','AB1234567','XY12345678','AB12345678'])
+        self.assertEqual(groups,[['ab1234567','ab12345678','ab12345679'],['xy12345678']])
         transitive=_near_duplicate_components(['ABCDEFGHIJ','ABCDEFGHI1','ABCDEFGH11'])
         self.assertEqual(transitive,[['abcdefgh11','abcdefghi1','abcdefghij']])
 

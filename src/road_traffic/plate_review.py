@@ -597,32 +597,49 @@ def _near_duplicate_components(values, min_similarity=0.9):
         if left_root!=right_root:
             parent[max(left_root,right_root)]=min(left_root,right_root)
 
-    root=None;max_length_seen=0
-    def matches(query,radius):
-        if root is None:return []
-        found=[];stack=[root]
-        while stack:
-            node=stack.pop()
-            distance=_edit_distance(query,node['value'])
-            if distance<=radius and _normalized_edit_similarity(query,node['value'])>=min_similarity:
-                found.append(node['index'])
-            low=distance-radius;high=distance+radius
-            stack.extend(child for edge,child in node['children'].items() if low<=edge<=high)
-        return found
-    for index,value in enumerate(strings):
-        radius=int((1.0-min_similarity)*max(len(value),max_length_seen)+1e-12)
-        for other in matches(value,radius):union(index,other)
-        if root is None:root={'value':value,'index':index,'children':{}}
-        else:
-            node=root
-            while True:
-                distance=_edit_distance(value,node['value'])
-                child=node['children'].get(distance)
-                if child is None:
-                    node['children'][distance]={'value':value,'index':index,'children':{}}
-                    break
-                node=child
-        max_length_seen=max(max_length_seen,len(value))
+    max_distance=int((1.0-min_similarity)*max(map(len,strings))+1e-12)
+    if max_distance<=1:
+        # At the plate-string lengths covered by a one-edit threshold, shared
+        # delete-one signatures find every substitution or insertion/deletion
+        # neighbor in near-linear time without scanning all string pairs.
+        signature_index={}
+        for index,value in enumerate(strings):
+            signatures={value}
+            signatures.update(value[:position]+value[position+1:] for position in range(len(value)))
+            candidates=set()
+            for signature in signatures:candidates.update(signature_index.get(signature,()))
+            for other in candidates:
+                if _normalized_edit_similarity(value,strings[other])>=min_similarity:union(index,other)
+            for signature in signatures:signature_index.setdefault(signature,[]).append(index)
+    else:
+        # Longer labels may allow two or more edits at the paper's relative
+        # threshold; use the metric tree for those uncommon non-plate strings.
+        root=None;max_length_seen=0
+        def matches(query,radius):
+            if root is None:return []
+            found=[];stack=[root]
+            while stack:
+                node=stack.pop()
+                distance=_edit_distance(query,node['value'])
+                if distance<=radius and _normalized_edit_similarity(query,node['value'])>=min_similarity:
+                    found.append(node['index'])
+                low=distance-radius;high=distance+radius
+                stack.extend(child for edge,child in node['children'].items() if low<=edge<=high)
+            return found
+        for index,value in enumerate(strings):
+            radius=int((1.0-min_similarity)*max(len(value),max_length_seen)+1e-12)
+            for other in matches(value,radius):union(index,other)
+            if root is None:root={'value':value,'index':index,'children':{}}
+            else:
+                node=root
+                while True:
+                    distance=_edit_distance(value,node['value'])
+                    child=node['children'].get(distance)
+                    if child is None:
+                        node['children'][distance]={'value':value,'index':index,'children':{}}
+                        break
+                    node=child
+            max_length_seen=max(max_length_seen,len(value))
     groups={}
     for index,value in enumerate(strings):groups.setdefault(find(index),[]).append(value)
     return [groups[key] for key in sorted(groups)]
