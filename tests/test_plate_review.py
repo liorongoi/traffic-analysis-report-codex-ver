@@ -75,6 +75,7 @@ class PlateCropReviewTests(unittest.TestCase):
         self.mission=self.lib.create('Plate crops','Israel','Asia/Jerusalem',{
             'input_type':'images','analysis_mode':'license_plate','output_root':str(self.output)})
         source=root/'source';source.mkdir()
+        self.source=source
         Image.new('RGB',(32,24),(30,60,90)).save(source/'17052026-1604-camera.jpg','JPEG')
         self.lib.import_folder(self.mission,source,'camera')
         self.image=self.lib.images(self.mission)[0]
@@ -163,6 +164,22 @@ class PlateCropReviewTests(unittest.TestCase):
         self.assertEqual(rows[0]['text_decision'],None)
         repeated=propose(self.lib,self.mission,self.image['id'],Path('model-packs/license-plate-yolox'))
         self.assertEqual(len(repeated),1)
+
+    @patch('road_traffic.plate_review.PlateDetector')
+    def test_iran_mission_does_not_run_latin_only_alternative_ocr(self, detector):
+        iran_output=Path(self.tmp.name)/'iran-output';iran_output.mkdir()
+        iran=self.lib.create('Iran plate mission','Iran','Asia/Tehran',{
+            'input_type':'images','analysis_mode':'license_plate','output_root':str(iran_output)})
+        self.lib.import_folder(iran,self.source,'camera')
+        image=self.lib.images(iran)[0]
+        detector.return_value.sha='f'*64
+        detector.return_value.recognizer.read.return_value={'text':'۱۲ب۳۴۵','confidence':.73,'model_sha256':'d'*64}
+        detector.return_value.detect.return_value=[{'box':[.25,.25,.5,.25],'confidence':.91,'model_sha256':'f'*64}]
+        rows=propose(self.lib,iran,image['id'],Path('model-packs/license-plate-yolox'))
+        detector.return_value.global_recognizer.read.assert_not_called()
+        self.assertEqual((rows[0]['mission_country_context'],rows[0]['country_context_basis']),
+            ('Iran','mission_configuration'))
+        self.assertEqual(rows[0]['ocr_alternative_text'],'')
 
     def test_text_acceptance_and_correction_are_separate_append_only_reviews(self):
         accepted=review_text(self.lib,self.mission,self.crop_id,0,'accepted','٠٠١٢-ب/34','Operator A')
