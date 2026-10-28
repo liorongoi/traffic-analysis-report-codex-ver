@@ -423,7 +423,17 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 if not 0 < length <= 1024*1024:
                     return self.reply(413, {'error':'Request exceeds limit'})
                 data = json.loads(self.rfile.read(length))
-                if self.path == '/api/missions':
+                if self.path == '/api/missions/backup':
+                    from .backup import create_backup
+                    result=create_backup(library,data['mission'],data['destination'])
+                elif self.path == '/api/missions/verify-backup':
+                    from .backup import verify_backup
+                    result=verify_backup(data['archive'])
+                elif self.path == '/api/missions/restore':
+                    from .backup import restore_backup
+                    result=restore_backup(library,data['archive'],
+                        plate_output_root=data.get('plate_output_root') or None)
+                elif self.path == '/api/missions':
                     settings = {key: data[key] for key in (
                         'input_type', 'analysis_mode', 'location', 'source_root',
                         'include_subdirectories', 'processing_mode', 'output_root', 'export_formats',

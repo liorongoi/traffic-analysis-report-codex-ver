@@ -1,5 +1,17 @@
 # RoadLoom — independent offline traffic analysis
 
+## Protecting a mission
+
+The bilingual **Back up or restore a mission** panel is beside the mission selector. Enter a full path on the backend computer to create or verify an archive, or enter the backup path and restore it. The command-line forms are:
+
+```powershell
+road-traffic backup-mission MISSION-ID D:\TrafficBackups\mission.zip --workspace D:\TrafficAnalysisWorkspace
+road-traffic verify-backup D:\TrafficBackups\mission.zip
+road-traffic restore-mission D:\TrafficBackups\mission.zip --workspace E:\TrafficAnalysisWorkspace
+```
+
+The archive contains a transactionally consistent SQLite copy, mission source and run files, registered exports and clips, and plate chips/review data when present. Restore preserves the mission ID and refuses to overwrite an existing mission or restore-output folder. Restored outputs go into `roadloom-restored/<mission-id>` under the chosen output folder, and saved output paths are updated. If restoring to a different location, pass `--output-root` with an existing folder. Keep backups on a separate drive or network location; a backup on the same failed disk cannot recover that disk. This is an operator-triggered backup; the application does not delete old data or schedule automatic backups.
+
 ## Working inference and review preview (2026-10-25)
 
 This is a **separate project**, outside SpectraScope. Its source, workspace, database, launch port and installer identity are independent.

@@ -59,6 +59,16 @@ class UiBootstrapTests(unittest.TestCase):
             'outputDirectory',
         }.issubset(parser.ids))
 
+    def test_mission_backup_controls_are_bilingual_and_non_overwriting(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        for value in ('missionBackupPanel', 'missionBackupCreate', 'missionBackupVerify',
+                'missionRestore', 'missionBackupSaved', 'missionBackupValid'):
+            self.assertIn(value, source)
+        self.assertIn('Back up or restore a mission', source)
+        self.assertIn('גיבוי או שחזור משימה', source)
+        self.assertIn("'/api/missions/backup'", source)
+        self.assertIn("'/api/missions/restore'", source)
+
 
 if __name__ == '__main__':
     unittest.main()

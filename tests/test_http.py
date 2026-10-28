@@ -218,6 +218,36 @@ class HttpTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},token=False)
         self.assertEqual(exc.exception.code,403)
 
+    def test_mission_backup_api_creates_and_verifies_archive_outside_workspace(self):
+        from road_traffic.backup import create_backup
+        with self.request('/api/missions',{'name':'Backup API','country':'Latvia','zone':'Europe/Riga'}) as response:
+            mission=json.load(response)['id']
+        archive=Path(self.tmp.name).parent/f'roadloom-test-{uuid.uuid4()}.zip'
+        try:
+            with self.request('/api/missions/backup',{'mission':mission,'destination':str(archive)}) as response:
+                created=json.load(response)
+            self.assertTrue(archive.is_file())
+            self.assertEqual(created['mission_id'],mission)
+            with self.request('/api/missions/verify-backup',{'archive':str(archive)}) as response:
+                verified=json.load(response)
+            self.assertTrue(verified['valid'])
+            self.assertEqual(verified['mission_id'],mission)
+
+            source_library=Library(Path(self.tmp.name)/'backup-source-workspace')
+            restore_mission=source_library.create('Restore API','Iran','Asia/Tehran')
+            restore_archive=Path(self.tmp.name).parent/f'roadloom-restore-test-{uuid.uuid4()}.zip'
+            try:
+                create_backup(source_library,restore_mission,restore_archive)
+                with self.request('/api/missions/restore',{'archive':str(restore_archive)}) as response:
+                    restored=json.load(response)
+                self.assertEqual(restored['mission_id'],restore_mission)
+                with self.request('/api/session') as response:
+                    self.assertIn(restore_mission,{item['id'] for item in json.load(response)['missions']})
+            finally:
+                restore_archive.unlink(missing_ok=True)
+        finally:
+            archive.unlink(missing_ok=True)
+
     def test_plate_text_search_api_matches_normalized_ocr_and_verified_text(self):
         from road_traffic.plate_review import _connect, _paths, list_crops, normalize_plate_text, review, review_text
         from road_traffic.store import Library

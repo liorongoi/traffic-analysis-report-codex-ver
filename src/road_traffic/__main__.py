@@ -22,6 +22,17 @@ def main():
     imp = sub.add_parser('import-fintraffic')
     imp.add_argument('source',type=Path)
     imp.add_argument('--workspace',type=Path,required=True)
+    backup = sub.add_parser('backup-mission',help='Create a verified mission backup outside the workspace')
+    backup.add_argument('mission')
+    backup.add_argument('destination',type=Path)
+    backup.add_argument('--workspace',type=Path,default=Path.home()/'TrafficAnalysisWorkspace')
+    verify = sub.add_parser('verify-backup',help='Verify a mission backup archive and its checksums')
+    verify.add_argument('archive',type=Path)
+    restore = sub.add_parser('restore-mission',help='Restore a mission without overwriting existing work')
+    restore.add_argument('archive',type=Path)
+    restore.add_argument('--workspace',type=Path,default=Path.home()/'TrafficAnalysisWorkspace')
+    restore.add_argument('--output-root','--plate-output-root',dest='plate_output_root',type=Path,
+        help='Existing output folder for restored exports and plate chips; defaults to the folder saved in the backup')
     args = parser.parse_args()
     if args.command == 'timestamp':
         utc, precision = capture_time(args.filename,args.preset)
@@ -30,10 +41,20 @@ def main():
         from .server import serve
         serve(args.workspace,Path(__file__).resolve().parents[2]/'web',args.port,
             host=args.host,public_host=args.public_host,tls_cert=args.tls_cert,tls_key=args.tls_key)
-    else:
+    elif args.command == 'import-fintraffic':
         library=Library(args.workspace)
         mission=library.create('Fintraffic sample review','Finland','Europe/Helsinki')
         print(json.dumps({'mission':mission,**library.import_folder(mission,args.source,'fintraffic')}))
+    elif args.command == 'backup-mission':
+        from .backup import create_backup
+        print(json.dumps(create_backup(Library(args.workspace),args.mission,args.destination),ensure_ascii=False))
+    elif args.command == 'verify-backup':
+        from .backup import verify_backup
+        print(json.dumps(verify_backup(args.archive),ensure_ascii=False))
+    elif args.command == 'restore-mission':
+        from .backup import restore_backup
+        print(json.dumps(restore_backup(Library(args.workspace),args.archive,
+            plate_output_root=args.plate_output_root),ensure_ascii=False))
 
 if __name__ == '__main__':
     main()
