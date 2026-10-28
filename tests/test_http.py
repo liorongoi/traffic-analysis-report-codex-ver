@@ -373,6 +373,20 @@ class HttpTests(unittest.TestCase):
                 'recording_start_utc':'2026-05-17T16:04:00+00:00','origin_provenance':'test metadata'}) as response:
                 source=json.load(response)
             self.assertEqual(source['recording_start_utc'],'2026-05-17T16:04:00+00:00')
+            library=Library(Path(self.tmp.name))
+            run=video_store.create_run(library,mission,source['id'],{
+                'detector':{'version':'test','sha256':'test'},
+                'tracker_policy':{'max_gap_seconds':[1,2],'minimum_iou':.2,
+                    'max_center_distance':.2,'association_margin':.05,'compatible_label_groups':[]}})
+            event_id='clip-estimate-api-event'
+            with library.connect(mission) as conn:
+                conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                    first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,
+                    last_time_base_den,first_offset_num,first_offset_den,last_offset_num,last_offset_den,
+                    first_utc,last_utc,labels,observation_count,association_uncertain,uncertainty_reasons,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (event_id,mission,run['id'],source['id'],'track-a',8,1,10,30,1,10,
+                     4,5,3,1,None,None,'["car"]',2,0,'[]','now'))
             media_path=f"/api/video/media?mission={mission}&source={source['id']}"
             with self.request(media_path,headers={'Range':'bytes=1-4'}) as response:
                 self.assertEqual(response.status,206)
@@ -388,6 +402,16 @@ class HttpTests(unittest.TestCase):
                 self.assertEqual(json.load(response),[])
             with self.request('/api/video/clips?mission='+mission) as response:
                 self.assertEqual(json.load(response),[])
+            estimate_path=(f"/api/video/clips/estimate?mission={mission}&event_id={event_id}"
+                '&pre_seconds=0.2&post_seconds=0.2')
+            with self.request(estimate_path) as response:
+                estimate=json.load(response)
+            self.assertIsNone(estimate['estimated_size_bytes'])
+            self.assertEqual(estimate['basis'],'unavailable')
+            estimate_path=f"/api/video/clips/estimate?mission={mission}&event_id=missing&pre_seconds=1&post_seconds=1"
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self.request(estimate_path)
+            self.assertEqual(exc.exception.code,400)
             with self.assertRaises(urllib.error.HTTPError) as exc:
                 self.request('/api/video/clips',{'mission':mission,'event_id':'missing',
                     'pre_seconds':1,'post_seconds':1,'operator':'Operator'})

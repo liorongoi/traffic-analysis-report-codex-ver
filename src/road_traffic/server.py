@@ -323,6 +323,10 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         query['mission'][0],query['run'][0],float(query['seconds'][0])))
                 if parsed.path == '/api/video/clips':
                     return self.reply(200,video_clips.exports(library,query['mission'][0]))
+                if parsed.path == '/api/video/clips/estimate':
+                    return self.reply(200,video_clips.estimate_event_clip(library,
+                        query['mission'][0],query['event_id'][0],query['pre_seconds'][0],
+                        query['post_seconds'][0]))
                 if parsed.path == '/api/video/event-exports':
                     return self.reply(200,video_event_exports.exports(library,query['mission'][0],
                         query.get('run',[None])[0]))

@@ -58,18 +58,14 @@ def _export_detail(library, mission, export_id):
     return item
 
 
-def export_event_clip(library, mission, event_id, pre_seconds, post_seconds, operator):
+def _event_context(library, mission, event_id):
     video_store.prepare(library, mission)
     logical=video_store.logical_event_by_id(library,mission,event_id)
     source_event_id=logical.get('source_event_id',event_id)
-    pre = _seconds(pre_seconds, 'Pre-event context')
-    post = _seconds(post_seconds, 'Post-event context')
-    operator = operator.strip() if isinstance(operator, str) else ''
-    if not 1 <= len(operator) <= 120:
-        raise ValueError('Operator is required for clip export')
     with library.connect(mission) as conn:
         event = conn.execute('''SELECT e.*,r.source_id,s.sha256 source_sha256,
-            s.recording_start_utc,review.action,review.payload,timing.payload timing_payload
+            s.recording_start_utc,s.size source_size,s.metadata source_metadata,
+            review.action,review.payload,timing.payload timing_payload
             FROM video_events e JOIN video_runs r ON r.id=e.run_id AND r.mission_id=e.mission_id
             JOIN video_sources s ON s.id=e.source_id AND s.mission_id=e.mission_id
             LEFT JOIN video_event_reviews review ON review.event_id=e.id AND review.revision=(
@@ -83,6 +79,54 @@ def export_event_clip(library, mission, event_id, pre_seconds, post_seconds, ope
     event.update({key:logical[key] for key in ('first_pts','first_time_base_num','first_time_base_den',
         'first_offset_num','first_offset_den','last_pts','last_time_base_num','last_time_base_den',
         'last_offset_num','last_offset_den','first_utc','last_utc') if key in logical})
+    return event
+
+
+def _clip_bounds(event, pre_seconds, post_seconds):
+    pre = _seconds(pre_seconds, 'Pre-event context')
+    post = _seconds(post_seconds, 'Post-event context')
+    start = Fraction(event['first_offset_num'], event['first_offset_den']) - Fraction(pre)
+    end = Fraction(event['last_offset_num'], event['last_offset_den']) + Fraction(post)
+    if start >= end:
+        raise ValueError('Clip interval must have positive duration')
+    return pre, post, start, end
+
+
+def estimate_event_clip(library, mission, event_id, pre_seconds, post_seconds):
+    """Estimate encoded size from source average bitrate; CRF output is advisory."""
+    event = _event_context(library, mission, event_id)
+    pre, post, start, end = _clip_bounds(event, pre_seconds, post_seconds)
+    try:
+        metadata = json.loads(event['source_metadata'] or '{}')
+    except (TypeError, json.JSONDecodeError):
+        metadata = {}
+    probe = (metadata.get('media_probe') or {}).get('metadata') or {}
+    try:
+        source_duration = Fraction(int(probe['duration_pts']) * int(probe['stream_time_base_num']),
+            int(probe['stream_time_base_den']))
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        source_duration = None
+    requested_duration = end - start
+    actual_duration = min(requested_duration, source_duration) if source_duration else requested_duration
+    source_size = int(event['source_size'] or 0)
+    estimate = None
+    if source_duration and source_duration > 0 and source_size > 0 and actual_duration > 0:
+        # Use integer ceiling of source bytes-per-second times the output duration.
+        ratio = actual_duration / source_duration
+        estimate = (source_size * ratio.numerator + ratio.denominator - 1) // ratio.denominator
+    return {'event_id':event_id,'requested_duration_seconds':float(requested_duration),
+        'estimated_duration_seconds':float(actual_duration),'source_duration_seconds':
+        float(source_duration) if source_duration else None,'source_size_bytes':source_size,
+        'estimated_size_bytes':estimate,'basis':'source average bitrate' if estimate is not None else 'unavailable',
+        'advisory':'Advisory only: estimate scales source average bitrate; H.264 CRF 20 output varies with scene complexity.'}
+
+
+def export_event_clip(library, mission, event_id, pre_seconds, post_seconds, operator):
+    event = _event_context(library, mission, event_id)
+    pre, post, start, end = _clip_bounds(event, pre_seconds, post_seconds)
+    operator = operator.strip() if isinstance(operator, str) else ''
+    if not 1 <= len(operator) <= 120:
+        raise ValueError('Operator is required for clip export')
     settings = library.settings(mission)
     output_text = library._configured_directory(settings['output_root'], 'output', writable=True)
     if not output_text:
@@ -93,10 +137,6 @@ def export_event_clip(library, mission, event_id, pre_seconds, post_seconds, ope
     if output_root.is_relative_to(workspace) or workspace.is_relative_to(output_root):
         raise ValueError('Choose an output outside application-managed storage')
     source = video_store.source_path(library, mission, event['source_id'])
-    start = Fraction(event['first_offset_num'], event['first_offset_den']) - Fraction(pre)
-    end = Fraction(event['last_offset_num'], event['last_offset_den']) + Fraction(post)
-    if start >= end:
-        raise ValueError('Clip interval must have positive duration')
     export_id = str(uuid.uuid4())
     target = output_root / f'traffic-event-{event_id[:8]}-{export_id[:8]}.mp4'
     fd, temporary = tempfile.mkstemp(prefix='.traffic-event-', suffix='.mp4', dir=output_root)

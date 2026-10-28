@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from road_traffic.store import Library, now
-from road_traffic.video_clips import export_event_clip, export_file, exports
+from road_traffic.video_clips import estimate_event_clip, export_event_clip, export_file, exports
 from road_traffic.video_clip_worker import MIN_FREE_BYTES, ensure_output_space
 from road_traffic.video_store import create_run, events, register_video, review_event
 
@@ -69,6 +70,18 @@ class VideoClipTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_clip_size_estimate_uses_source_average_bitrate_and_discloses_variation(self):
+        estimate=estimate_event_clip(self.library,self.mission,self.event_id,.2,.2)
+        self.assertEqual(estimate['event_id'],self.event_id)
+        self.assertEqual(estimate['basis'],'source average bitrate')
+        self.assertAlmostEqual(estimate['requested_duration_seconds'],2.6)
+        self.assertAlmostEqual(estimate['estimated_duration_seconds'],2.6)
+        self.assertEqual(estimate['source_size_bytes'],self.source['size'])
+        self.assertEqual(estimate['estimated_size_bytes'],math.ceil(
+            estimate['source_size_bytes']*estimate['estimated_duration_seconds'] /
+            estimate['source_duration_seconds']))
+        self.assertIn('varies with scene complexity',estimate['advisory'])
 
     def test_clip_export_uses_explicit_context_and_preserves_lineage(self):
         clip = export_event_clip(self.library,self.mission,self.event_id,.2,.2,'Operator')
@@ -154,6 +167,18 @@ print(json.dumps(timestamps))
 
 
 class VideoClipSpaceGuardTests(unittest.TestCase):
+    def test_clip_estimate_scales_source_average_bitrate(self):
+        from road_traffic.video_clips import estimate_event_clip
+        event={'first_offset_num':4,'first_offset_den':5,'last_offset_num':3,'last_offset_den':1,
+            'source_size':100_000,'source_metadata':json.dumps({'media_probe':{'status':'available',
+                'metadata':{'duration_pts':120,'stream_time_base_num':1,'stream_time_base_den':30}}})}
+        with patch('road_traffic.video_clips._event_context',return_value=event):
+            estimate=estimate_event_clip(None,'mission','event',.2,.2)
+        self.assertAlmostEqual(estimate['requested_duration_seconds'],2.6)
+        self.assertEqual(estimate['source_duration_seconds'],4.0)
+        self.assertEqual(estimate['estimated_size_bytes'],65_000)
+        self.assertIn('advisory only',estimate['advisory'].lower())
+
     def test_clip_space_guard_reports_low_space_and_unavailable_volume(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'clip.mp4'
