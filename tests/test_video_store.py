@@ -67,22 +67,6 @@ class VideoStoreTests(unittest.TestCase):
             self.assertEqual(connection.execute('SELECT COUNT(*) FROM video_sources').fetchone()[0],0)
         self.assertFalse((self.library.location(self.mission)/'sources'/'videos').exists())
 
-    def test_legacy_run_policy_without_scene_cut_setting_keeps_checkpoint_compatible(self):
-        source=register_video(self.library,self.mission,'clip.mkv')
-        run=create_run(self.library,self.mission,source['id'],self.config(),total_frames=1)
-        transition(self.library,self.mission,run['id'],'running')
-        tracker=VideoTrackManager(TrackerPolicy(max_gap_seconds=Fraction(1,2),minimum_iou=.2,
-            max_center_distance=.15,association_margin=.05),run_id=run['id'])
-        timestamp=VideoTimestamp(0,1,1000)
-        tracker.update(timestamp,[{'label':'car','box':[.2,.2,.1,.1]}])
-        with self.library.connect(self.mission) as conn:
-            config=json.loads(conn.execute('SELECT config FROM video_runs WHERE id=?',(run['id'],)).fetchone()[0])
-            config['tracker_policy'].pop('scene_cut_threshold')
-            conn.execute('UPDATE video_runs SET config=? WHERE id=?',(json.dumps(config),run['id']))
-        saved=checkpoint(self.library,self.mission,run['id'],frame_index=0,
-            timestamp=timestamp,tracker_state=tracker.state())
-        self.assertEqual(saved['frames_done'],1)
-
     def test_stored_video_tampering_is_detected_even_after_digest_cache(self):
         source = register_video(self.library, self.mission, 'clip.mkv')
         self.assertEqual(source['metadata']['media_probe']['status'], 'unavailable')

@@ -2,7 +2,7 @@ import json
 import unittest
 from fractions import Fraction
 
-from road_traffic.tracking import TrackerPolicy, VideoTrackManager
+from road_traffic.tracking import TrackerPolicy, VideoTrackManager, checkpoint_policy_matches
 from road_traffic.video_timeline import VideoTimestamp
 
 
@@ -114,6 +114,9 @@ class VideoTrackManagerTests(unittest.TestCase):
         next_item=resumed.update(timestamp(40),[detection(.21)]).assignments[0]
         self.assertTrue(next_item.matched_existing)
         self.assertEqual(next_item.track.track_id,first.track.track_id)
+        self.assertTrue(checkpoint_policy_matches(checkpoint['policy'],resumed._policy_state()))
+        changed={**resumed._policy_state(),'scene_cut_threshold':.65}
+        self.assertFalse(checkpoint_policy_matches(checkpoint['policy'],changed))
 
 
 if __name__ == '__main__':

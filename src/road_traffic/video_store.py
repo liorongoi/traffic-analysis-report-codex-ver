@@ -13,7 +13,7 @@ from functools import lru_cache
 from contextlib import nullcontext
 
 from .store import now, safe_file
-from .tracking import TrackerPolicy
+from .tracking import TrackerPolicy, checkpoint_policy_matches
 from .video_timeline import VideoTimestamp
 
 
@@ -463,11 +463,8 @@ def checkpoint(library, mission, run_id, *, frame_index, timestamp, tracker_stat
             run_config = json.loads(run['config'])
         except (TypeError, json.JSONDecodeError) as exc:
             raise ValueError('Video run config is corrupt') from exc
-        expected_policy=run_config.get('tracker_policy')
-        if isinstance(expected_policy,dict) and 'scene_cut_threshold' not in expected_policy:
-            expected_policy={**expected_policy,'scene_cut_threshold':None}
         if (not isinstance(tracker_state, dict) or tracker_state.get('run_id') != run_id
-                or tracker_state.get('policy') != expected_policy):
+                or not checkpoint_policy_matches(tracker_state.get('policy'),run_config.get('tracker_policy'))):
             raise ValueError('Tracker checkpoint does not match this run and its frozen policy')
         if frame_index < run['frames_done']:
             if (frame_index == run['frames_done'] - 1 and run['current_pts'] == timestamp.pts
