@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from PIL import Image
 from road_traffic.plate_review import (_connect, _paths, crop_file, list_crops,
-    normalize_plate_text, review, review_text, _sha, propose)
+    normalize_plate_text, review, review_text, _sha, propose, ocr_quality_report,
+    _normalized_edit_similarity)
 from unittest.mock import patch
 from road_traffic.store import Library
 from datetime import datetime, timezone
@@ -144,6 +145,29 @@ class PlateCropReviewTests(unittest.TestCase):
         with _connect(db) as conn:
             with self.assertRaisesRegex(sqlite3.IntegrityError,'append-only'):
                 conn.execute('UPDATE text_reviews SET verified_text=? WHERE crop_id=?',('OTHER',self.crop_id))
+
+    def test_plate_ocr_report_scores_only_approved_human_labels_and_discloses_limits(self):
+        review(self.lib,self.mission,self.crop_id,0,'approved','Reviewer')
+        review_text(self.lib,self.mission,self.crop_id,0,'corrected','AB-0012','Reviewer')
+        _,_,db=_paths(self.lib,self.mission)
+        with _connect(db) as conn:
+            conn.execute('''UPDATE crops SET ocr_text=?,ocr_model_sha256=?,ocr_alternative_text=?,
+                ocr_alternative_model_sha256=? WHERE id=?''',('AB0012','a'*64,'AB0013','b'*64,self.crop_id))
+        report=ocr_quality_report(self.lib,self.mission)
+        self.assertEqual(report['country'],'Israel')
+        self.assertEqual(report['reviewed_crops'],1)
+        self.assertIn('not a protected held-out evaluation',report['scope'])
+        primary=next(row for row in report['models'] if row['candidate']=='primary')
+        alternate=next(row for row in report['models'] if row['candidate']=='global_latin')
+        self.assertEqual((primary['exact_matches'],primary['exact_match_rate']),(1,1.0))
+        self.assertEqual(alternate['exact_matches'],0)
+        self.assertAlmostEqual(alternate['mean_normalized_edit_similarity'],5/6)
+        self.assertAlmostEqual(_normalized_edit_similarity('۱۲-AB','12AC'),.75)
+
+    def test_plate_ocr_report_excludes_pending_rejected_or_unreadable_text(self):
+        report=ocr_quality_report(self.lib,self.mission)
+        self.assertEqual(report['reviewed_crops'],0)
+        self.assertEqual(report['models'],[])
 
     def test_reviews_reject_missing_operator_and_invalid_decision(self):
         with self.assertRaisesRegex(ValueError,'Operator'):

@@ -50,3 +50,5 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important; } }
 
 .plate-search{display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,2fr);gap:10px;align-items:center;margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}.plate-search label{margin:0}.plate-search input{width:100%}@media(max-width:600px){.plate-search{grid-template-columns:1fr}}
+
+.plate-ocr-metrics{margin:12px 0;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:rgba(18,33,55,.72)}.plate-ocr-metrics p{margin:4px 0}.plate-ocr-metrics p:not(.muted){font-variant-numeric:tabular-nums}

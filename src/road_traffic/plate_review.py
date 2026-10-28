@@ -496,6 +496,56 @@ def list_crops(library,mission,image_id=None,search=None):
         return [dict(row) for row in conn.execute(sql,params).fetchall()]
 
 
+def _normalized_edit_similarity(actual,predicted):
+    """Return character-level similarity after the same plate-search normalization."""
+    left=normalize_plate_text(actual);right=normalize_plate_text(predicted)
+    if not left:return 1.0 if not right else 0.0
+    if not right:return 0.0
+    previous=list(range(len(right)+1))
+    for i,a in enumerate(left,1):
+        current=[i]
+        for j,b in enumerate(right,1):
+            current.append(min(current[-1]+1,previous[j]+1,previous[j-1]+(a!=b)))
+        previous=current
+    return max(0.0,1.0-previous[-1]/max(len(left),len(right)))
+
+
+def ocr_quality_report(library,mission):
+    """Compare pinned OCR candidates with explicit human text decisions.
+
+    This is an exploratory report over reviewed crop observations, not a held-out
+    accuracy claim. Repeated views of the same physical plate may be correlated.
+    """
+    with library.connect(mission) as conn:
+        mission_row=conn.execute('SELECT country FROM mission WHERE id=?',(mission,)).fetchone()
+    reviewed=[row for row in list_crops(library,mission)
+        if row.get('decision')=='approved' and row.get('text_decision') in ('accepted','corrected')]
+    result={'mission_id':mission,'country':mission_row['country'] if mission_row else None,'reviewed_crops':len(reviewed),
+        'scope':'Exploratory metrics on human-verified approved crop observations; not a protected held-out evaluation. Repeated views of a plate may be correlated.',
+        'models':[]}
+    choices=(('primary','ocr_text','ocr_model_sha256'),
+        ('global_latin','ocr_alternative_text','ocr_alternative_model_sha256'))
+    for label,text_field,hash_field in choices:
+        model_hashes=sorted({row.get(hash_field) for row in reviewed if row.get(hash_field)})
+        for model_hash in model_hashes:
+            rows=[row for row in reviewed if row.get(hash_field)==model_hash]
+            exact=0;covered=0;similarities=[];unique_labels=set()
+            for row in rows:
+                actual=row.get('normalized_text') or normalize_plate_text(row.get('verified_text',''))
+                predicted=row.get(text_field) or ''
+                unique_labels.add(actual)
+                if predicted:covered+=1
+                if predicted and normalize_plate_text(predicted)==actual:exact+=1
+                similarities.append(_normalized_edit_similarity(actual,predicted))
+            count=len(rows)
+            result['models'].append({'candidate':label,'model_sha256':model_hash,
+                'reviewed_crops':count,'unique_verified_strings':len(unique_labels),
+                'candidate_coverage':covered/count if count else 0.0,
+                'exact_matches':exact,'exact_match_rate':exact/count if count else 0.0,
+                'mean_normalized_edit_similarity':sum(similarities)/count if count else 0.0})
+    return result
+
+
 def crop_file(library,mission,crop_id):
     root,folder,db=_paths(library,mission)
     with _connect(db) as conn:row=conn.execute('SELECT crop_file,crop_sha256 FROM crops WHERE id=?',(crop_id,)).fetchone()

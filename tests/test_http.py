@@ -163,6 +163,7 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="learningReport"',page)
             self.assertIn('id="plateWorkflow"',page)
             self.assertIn('id="plateCrops"',page)
+            self.assertIn('id="plateOcrMetrics"',page)
             self.assertIn('id="detectCurrentPlates"',page)
             self.assertIn('id="objectSearchQuery"',page)
             self.assertIn('id="confirmObjectSearch"',page)
@@ -197,7 +198,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(exc.exception.code,403)
 
     def test_plate_text_search_api_matches_normalized_ocr_and_verified_text(self):
-        from road_traffic.plate_review import _connect, _paths, list_crops, normalize_plate_text
+        from road_traffic.plate_review import _connect, _paths, list_crops, normalize_plate_text, review, review_text
         from road_traffic.store import Library
         with tempfile.TemporaryDirectory() as output_dir:
             with self.request('/api/missions',{'name':'Plate search','country':'Lebanon',
@@ -223,6 +224,15 @@ class HttpTests(unittest.TestCase):
             self.assertEqual([row['id'] for row in rows],[crop_id])
             self.assertEqual(rows[0]['ocr_text'],original)
             self.assertEqual(len(list_crops(library,mission,search='٠٠١٢-ب/34')),1)
+            review(library,mission,crop_id,0,'approved','HTTP reviewer')
+            review_text(library,mission,crop_id,0,'accepted',original,'HTTP reviewer')
+            with self.request(f'/api/plates/metrics?mission={mission}') as response:
+                metrics=json.load(response)
+            self.assertEqual(metrics['country'],'Lebanon')
+            self.assertEqual(metrics['reviewed_crops'],1)
+            primary=next(row for row in metrics['models'] if row['candidate']=='primary')
+            self.assertEqual(primary['exact_match_rate'],1)
+            self.assertIn('not a protected held-out evaluation',metrics['scope'])
     def test_cross_origin_write_rejected(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},headers={'Origin':'http://external.invalid'})
         self.assertEqual(exc.exception.code,403)
