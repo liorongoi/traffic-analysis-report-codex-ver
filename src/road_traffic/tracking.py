@@ -301,7 +301,10 @@ class VideoTrackManager:
     def _restore(self, state):
         if not isinstance(state, dict) or state.get('version') != self.STATE_VERSION or state.get('run_id') != self.run_id:
             raise ValueError('Incompatible video tracker checkpoint')
-        if state.get('policy') != self._policy_state():
+        saved_policy=state.get('policy')
+        if isinstance(saved_policy,dict) and 'scene_cut_threshold' not in saved_policy:
+            saved_policy={**saved_policy,'scene_cut_threshold':None}
+        if saved_policy != self._policy_state():
             raise ValueError('Tracker policy changed since this video checkpoint')
         next_id = state.get('next_id')
         if isinstance(next_id, bool) or not isinstance(next_id, int) or next_id < 1:

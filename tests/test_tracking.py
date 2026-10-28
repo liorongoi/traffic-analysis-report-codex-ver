@@ -104,6 +104,17 @@ class VideoTrackManagerTests(unittest.TestCase):
         self.assertTrue(closed[0].association_uncertain)
         self.assertIn('scene_cut_boundary',closed[0].uncertainty_reasons)
 
+    def test_pre_scene_cut_checkpoint_resumes_with_scene_detection_disabled(self):
+        configured=policy()
+        manager=VideoTrackManager(configured,run_id='legacy-run')
+        first=manager.update(timestamp(0),[detection(.2)]).assignments[0]
+        checkpoint=json.loads(json.dumps(manager.state()))
+        checkpoint['policy'].pop('scene_cut_threshold')
+        resumed=VideoTrackManager(configured,run_id='legacy-run',state=checkpoint)
+        next_item=resumed.update(timestamp(40),[detection(.21)]).assignments[0]
+        self.assertTrue(next_item.matched_existing)
+        self.assertEqual(next_item.track.track_id,first.track.track_id)
+
 
 if __name__ == '__main__':
     unittest.main()
