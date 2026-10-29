@@ -14,5 +14,4 @@ reports/private/
 /model-packs/sam3.1-unsloth/*
 !/model-packs/sam3.1-unsloth/README.md
 
-staging/
 dist/
