@@ -41,7 +41,7 @@ class VehicleDetector:
         if not .01<=threshold<=.9:raise ValueError('Invalid confidence threshold')
         if type(cpu_threads) is not int or not 1<=cpu_threads<=64:raise ValueError('CPU thread limit must be between 1 and 64')
         self.cv,self.np=cv2,np
-        self.path,self.sha=model_pack(pack)
+        self.path,self.sha=model_pack(Path(pack))
         metadata=json.loads((self.path.parent/'manifest.json').read_text())
         trained_classes=metadata.get('classes')
         if trained_classes is not None:

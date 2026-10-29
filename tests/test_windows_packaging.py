@@ -65,6 +65,7 @@ class WindowsPackagingTests(unittest.TestCase):
         if kind == 'vehicle':
             files = {}
             for name, content in (('model.onnx', b'vehicle'), ('LICENSE', b'vehicle license'),
+                    ('yolox_s_coco_pretrained.pth', b'vehicle checkpoint'),
                     ('upstream-README.md', b'vehicle provenance')):
                 (pack / name).write_bytes(content)
                 files[name] = {'sha256': hashlib.sha256(content).hexdigest(), 'bytes': len(content)}

@@ -9,8 +9,15 @@ MAX_CANDIDATES = 8
 
 def _model_dir(project_root=None):
     root = Path(project_root or Path(__file__).resolve().parents[2])
-    return Path(os.environ.get('ROAD_TRAFFIC_SAM3_DIR',
-        root / 'model-packs' / 'sam3.1-unsloth'))
+    override = os.environ.get('ROAD_TRAFFIC_SAM3_DIR')
+    if override:
+        return Path(override)
+    local_app_data = os.environ.get('LOCALAPPDATA')
+    if local_app_data:
+        user_pack = Path(local_app_data) / 'RoadTrafficAnalysis' / 'Models' / 'sam3.1-unsloth'
+        if user_pack.is_dir():
+            return user_pack
+    return root / 'model-packs' / 'sam3.1-unsloth'
 
 
 @lru_cache(maxsize=1)

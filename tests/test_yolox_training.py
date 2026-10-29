@@ -1,10 +1,13 @@
 import json
 from pathlib import Path
+import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 import zipfile
+from unittest.mock import patch
 
-from road_traffic.yolox_training import prepare_yolox_coco
+from road_traffic.yolox_training import finetune_yolox, prepare_yolox_coco
 
 
 def _archive(path, *, validation_boxes=True, unsafe=False):
@@ -72,6 +75,39 @@ class YoloxTrainingDatasetTests(unittest.TestCase):
             _archive(archive, validation_boxes=False)
             with self.assertRaisesRegex(ValueError, 'Validation split has no reviewed vehicle boxes'):
                 prepare_yolox_coco(archive, root / 'stage')
+
+    def test_training_orchestration_exports_importable_pack_without_using_test_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / 'dataset.zip'
+            _archive(archive)
+            output = root / 'training-output'
+            torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+            calls = []
+
+            def run(command, **kwargs):
+                calls.append(command)
+                if '-m' in command and command[command.index('-m') + 1] == 'yolox.tools.train':
+                    checkpoint = output / 'YOLOX_outputs' / 'roadloom_yolox_finetune' / 'best_ckpt.pth'
+                    checkpoint.parent.mkdir(parents=True)
+                    checkpoint.write_bytes(b'best checkpoint')
+                else:
+                    model = Path(command[command.index('--output-name') + 1])
+                    model.write_bytes(b'exported onnx')
+
+            with (patch.dict(sys.modules, {'torch': torch, 'yolox': SimpleNamespace()}),
+                    patch('road_traffic.yolox_training.subprocess.run', side_effect=run)):
+                result = finetune_yolox(archive, output, epochs=2, batch_size=1)
+
+            pack = Path(result['model_pack'])
+            manifest = json.loads((pack / 'manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(result['classes'], ['car'])
+            self.assertEqual(manifest['classes'], ['car'])
+            self.assertEqual(len(calls), 2)
+            self.assertIn('--ckpt', calls[0])
+            self.assertIn('--no-onnxsim', calls[1])
+            self.assertFalse((output / 'test2017').exists())
+            self.assertFalse(result['dataset']['splits']['test']['used'])
 
 
 if __name__ == '__main__':

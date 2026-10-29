@@ -9,5 +9,10 @@ staging/
 models/
 reports/private/
 
+# Optional offline SAM add-on is downloaded separately; its 1.68 GB weights
+# and tokenizer artifacts must never enter the application repository.
+/model-packs/sam3.1-unsloth/*
+!/model-packs/sam3.1-unsloth/README.md
+
 staging/
 dist/
