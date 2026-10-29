@@ -21,10 +21,13 @@ class DetectorMathTests(unittest.TestCase):
                 self.options=sess_options;self.providers=providers
             def get_providers(self):return self.providers
             def get_inputs(self):return [FakeInput()]
-        with (patch('road_traffic.detector.model_pack',return_value=('fixture','fixture-sha')),
-                patch('onnxruntime.InferenceSession',FakeSession)):
-            from road_traffic.detector import VehicleDetector
-            detector=VehicleDetector('unused',cpu_threads=3)
+        with tempfile.TemporaryDirectory() as root:
+            model_path=Path(root)/'model.onnx'
+            (Path(root)/'manifest.json').write_text(json.dumps({'classes':['car']}),encoding='utf-8')
+            with (patch('road_traffic.detector.model_pack',return_value=(model_path,'fixture-sha')),
+                    patch('onnxruntime.InferenceSession',FakeSession)):
+                from road_traffic.detector import VehicleDetector
+                detector=VehicleDetector('unused',cpu_threads=3)
         self.assertEqual(detector.session.options.intra_op_num_threads,3)
         self.assertEqual(detector.session.options.inter_op_num_threads,1)
         with self.assertRaisesRegex(ValueError,'CPU thread limit'):
