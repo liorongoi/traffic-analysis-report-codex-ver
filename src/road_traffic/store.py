@@ -257,7 +257,8 @@ class Library:
                     output_root TEXT NOT NULL DEFAULT '',
                     export_formats TEXT NOT NULL DEFAULT '["csv"]',
                     continuous_video_policy TEXT NOT NULL DEFAULT '',
-                    resource_profile TEXT NOT NULL DEFAULT 'auto'
+                    resource_profile TEXT NOT NULL DEFAULT 'auto',
+                    vehicle_model_id TEXT NOT NULL DEFAULT 'base'
                 );
                 INSERT OR IGNORE INTO mission_settings(mission_id)
                 SELECT id FROM mission;
@@ -267,6 +268,8 @@ class Library:
             conn.execute("ALTER TABLE mission_settings ADD COLUMN continuous_video_policy TEXT NOT NULL DEFAULT ''")
         if 'resource_profile' not in settings_columns:
             conn.execute("ALTER TABLE mission_settings ADD COLUMN resource_profile TEXT NOT NULL DEFAULT 'auto'")
+        if 'vehicle_model_id' not in settings_columns:
+            conn.execute("ALTER TABLE mission_settings ADD COLUMN vehicle_model_id TEXT NOT NULL DEFAULT 'base'")
         conn.execute('''CREATE TABLE IF NOT EXISTS exports(
             id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
             inference_run TEXT, format TEXT NOT NULL, output_path TEXT NOT NULL,
@@ -391,6 +394,7 @@ class Library:
         analysis_mode = settings.get('analysis_mode', 'general_traffic')
         processing_mode = settings.get('processing_mode', 'once')
         resource_profile = settings.get('resource_profile', 'auto')
+        vehicle_model_id = settings.get('vehicle_model_id', 'base')
         export_formats = settings.get('export_formats', ['csv'])
         if isinstance(export_formats, str):
             export_formats = {'csv': ['csv'], 'xlsx': ['xlsx'], 'both': ['csv', 'xlsx']}.get(export_formats, [])
@@ -403,6 +407,8 @@ class Library:
             raise ValueError('Processing mode must be once or continuous')
         if resource_profile not in ('auto', 'conservative', 'expanded'):
             raise ValueError('Resource profile must be auto, conservative, or expanded')
+        if vehicle_model_id != 'base':
+            raise ValueError('New missions start with the bundled base vehicle model')
         if type(settings.get('include_subdirectories', True)) is not bool:
             raise ValueError('include_subdirectories must be a boolean')
         if not isinstance(export_formats, list) or not export_formats or any(not isinstance(value, str) or value not in ('csv', 'xlsx') for value in export_formats) or len(set(export_formats)) != len(export_formats):
@@ -434,14 +440,14 @@ class Library:
                     saved_mission = conn.execute('SELECT name,country,zone FROM mission WHERE id=?',
                         (mission,)).fetchone()
                     saved_settings = conn.execute('SELECT input_type,analysis_mode,location,source_root,'
-                        'include_subdirectories,processing_mode,output_root,export_formats,resource_profile '
+                        'include_subdirectories,processing_mode,output_root,export_formats,resource_profile,vehicle_model_id '
                         'FROM mission_settings WHERE mission_id=?',(mission,)).fetchone()
             except (sqlite3.Error, ValueError) as exc:
                 raise ValueError('Mission request ID is already in use') from exc
             expected_mission=(name.strip(),country,zone)
             expected_settings=(input_type,analysis_mode,location.strip(),source_root,
                 int(settings.get('include_subdirectories',True)),processing_mode,output_root,
-                json.dumps(export_formats),resource_profile)
+                json.dumps(export_formats),resource_profile,vehicle_model_id)
             if (saved_mission is not None and saved_settings is not None and
                     tuple(saved_mission)==expected_mission and tuple(saved_settings)==expected_settings):
                 return mission
@@ -471,7 +477,8 @@ class Library:
                     output_root TEXT NOT NULL,
                     export_formats TEXT NOT NULL,
                     continuous_video_policy TEXT NOT NULL DEFAULT '',
-                    resource_profile TEXT NOT NULL DEFAULT 'auto'
+                    resource_profile TEXT NOT NULL DEFAULT 'auto',
+                    vehicle_model_id TEXT NOT NULL DEFAULT 'base'
                 );
                 CREATE TABLE exports(
                     id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
@@ -537,10 +544,10 @@ class Library:
                 CREATE TRIGGER immutable_reviews_delete BEFORE DELETE ON reviews BEGIN SELECT RAISE(ABORT,'append-only review'); END;
                 ''')
                 conn.execute('INSERT INTO mission VALUES (?,?,?,?,?)', (mission, name.strip(), country, zone, now()))
-                conn.execute('INSERT INTO mission_settings(mission_id,input_type,analysis_mode,location,source_root,include_subdirectories,processing_mode,output_root,export_formats,continuous_video_policy,resource_profile) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                conn.execute('INSERT INTO mission_settings(mission_id,input_type,analysis_mode,location,source_root,include_subdirectories,processing_mode,output_root,export_formats,continuous_video_policy,resource_profile,vehicle_model_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                     (mission, input_type, analysis_mode, location.strip(), source_root,
                      int(settings.get('include_subdirectories', True)), processing_mode,
-                     output_root, json.dumps(export_formats), '', resource_profile))
+                     output_root, json.dumps(export_formats), '', resource_profile, vehicle_model_id))
             conn.close()
             conn = None
             staging.replace(folder)

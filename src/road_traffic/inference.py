@@ -106,9 +106,15 @@ class InferenceService:
     def _spawn(self,mission,run):
         folder=self.library.location(mission)/'inference'/run;folder.mkdir(parents=True,exist_ok=True)
         try:
+            with self.library.connect(mission) as conn:
+                row=conn.execute('SELECT config FROM inference_runs WHERE id=?',(run,)).fetchone()
+            if not row:raise ValueError('Inference run not found')
+            config=json.loads(row['config'])
+            from .model_registry import resolve_model
+            pack=resolve_model(self.library,self.pack,config.get('vehicle_model_id','base'))
             with (folder/'worker.log').open('ab') as log:
                 process=subprocess.Popen([sys.executable,str(Path(__file__).resolve().parents[2]/'scripts'/'run-inference.py'),'--workspace',str(self.library.root),
-                    '--mission',mission,'--run',run,'--pack',str(self.pack)],stdout=log,stderr=subprocess.STDOUT)
+                    '--mission',mission,'--run',run,'--pack',str(pack)],stdout=log,stderr=subprocess.STDOUT)
             self.processes[(mission,run)]=process
             self._watch_worker(process)
         except Exception as exc:
@@ -143,6 +149,7 @@ class InferenceService:
 
     def start(self,mission,threshold=.18,tiled=True,night_lights=True,night_head_id=None,source_run=None,resource_profile='auto'):
         from .detector import model_pack,VERSION
+        from .model_registry import resolve_model
         from .hardware import resolve_resource_profile
         settings = self.library.settings(mission)
         if settings['input_type'] != 'images' or settings['analysis_mode'] != 'general_traffic':
@@ -150,10 +157,12 @@ class InferenceService:
         if type(threshold) not in (float,int) or not .01<=threshold<=.9:raise ValueError('Threshold must be 0.01–0.90')
         if type(tiled) is not bool or type(night_lights) is not bool:raise ValueError('Expected boolean settings')
         resources=resolve_resource_profile(resource_profile)
-        _,sha=model_pack(self.pack)
-        config={'adapter':VERSION,'model_sha256':sha,'threshold':threshold,'tiled':tiled,'night_lights':night_lights,
+        model_id=settings.get('vehicle_model_id') or 'base'
+        selected_pack=resolve_model(self.library,self.pack,model_id)
+        _,sha=model_pack(selected_pack)
+        config={'adapter':VERSION,'model_sha256':sha,'vehicle_model_id':model_id,'threshold':threshold,'tiled':tiled,'night_lights':night_lights,
             'device':resources['device'],'cpu_threads':resources['cpu_threads'],'resource_profile':resources,
-            'training_supported':False,'training_capabilities':{'yolox_s':'unsupported','night_light_head':'refit from explicit labels'},'policy':'All automatic results require human confirmation'}
+            'training_supported':True,'training_capabilities':{'yolox_s':'external_optional_fine_tuning_and_operator_selection','night_light_head':'refit from explicit labels'},'policy':'All automatic results require human confirmation'}
         if night_head_id:
             from .learning import load_head
             _,head_hash=load_head(self.library,mission,night_head_id)
@@ -170,6 +179,7 @@ class InferenceService:
 
     def rerun_roi(self,mission,run,operator):
         from .detector import model_pack,VERSION
+        from .model_registry import resolve_model
         settings=self.library.settings(mission)
         if settings['input_type']!='images' or settings['analysis_mode']!='general_traffic':
             raise ValueError('ROI reruns currently support still-image General Traffic missions only')
@@ -182,7 +192,8 @@ class InferenceService:
                 if not row:raise ValueError('Inference run not found')
                 if self._has_active_worker():raise InferenceBusy('An inference worker is already running')
                 config=json.loads(row['config'])
-                _,sha=model_pack(self.pack)
+                selected_pack=resolve_model(self.library,self.pack,config.get('vehicle_model_id','base'))
+                _,sha=model_pack(selected_pack)
                 if config.get('adapter')!=VERSION or config.get('model_sha256')!=sha:
                     raise ValueError('The source model changed; start a new run to apply the current ROI')
                 if config.get('night_head_id'):
@@ -221,6 +232,7 @@ class InferenceService:
 
     def resume(self,mission,run):
         from .detector import model_pack,VERSION
+        from .model_registry import resolve_model
         with self.lock:
             yielded=self._claim_worker_slot()
             try:
@@ -232,7 +244,8 @@ class InferenceService:
                     if self._pid_alive(job['worker_pid']):raise ValueError('The previous worker is still stopping; retry in a moment')
                     config=json.loads(job['config'])
                     if config.get('adapter')!=VERSION:raise ValueError('Adapter version changed; start a new run')
-                    _,sha=model_pack(self.pack)
+                    selected_pack=resolve_model(self.library,self.pack,config.get('vehicle_model_id','base'))
+                    _,sha=model_pack(selected_pack)
                     if sha!=config.get('model_sha256'):raise ValueError('Model changed since this run; start a new run')
                     completed=conn.execute('SELECT COUNT(*) FROM predictions WHERE inference_id=?',(run,)).fetchone()[0]
                     if completed>=job['total']:raise ValueError('This run has no unfinished image inputs')

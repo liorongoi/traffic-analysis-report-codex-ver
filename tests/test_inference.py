@@ -200,6 +200,7 @@ class InferenceRecoveryTests(unittest.TestCase):
         gib=1024**3
         service=InferenceService(self.lib,self.root/'model-pack')
         with (patch('road_traffic.detector.model_pack',return_value=('fixture','fixture-sha')),
+                patch('road_traffic.model_registry.resolve_model',return_value=self.root/'model-pack'),
                 patch('road_traffic.hardware._memory',return_value=(16*gib,12*gib)),
                 patch.object(service,'_has_active_worker',return_value=False),
                 patch.object(service,'_spawn') as spawn):
@@ -237,6 +238,7 @@ class InferenceRecoveryTests(unittest.TestCase):
         service=InferenceService(self.lib,self.root/'model-pack')
         process=Mock();process.poll.return_value=None
         with (patch('road_traffic.detector.model_pack',return_value=('fixture','fixture-sha')),
+                patch('road_traffic.model_registry.resolve_model',return_value=self.root/'model-pack'),
                 patch('road_traffic.inference.subprocess.Popen',return_value=process)):
             result=service.resume(self.mission,run)
         self.assertEqual(result,{'run':run,'status':'queued','remaining':1})

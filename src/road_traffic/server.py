@@ -312,6 +312,12 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         'evaluation':evaluation_status(library,m),'governance':governance_status(library,m),
                         'tasks':tasks,
                         'capabilities':capability_inventory()})
+                if parsed.path == '/api/detector/models':
+                    from .model_registry import list_models, decision_history
+                    m=query['mission'][0]
+                    result=list_models(library,inference.pack,m)
+                    result['history']=decision_history(library,m)
+                    return self.reply(200,result)
                 if parsed.path == '/api/learning/dataset':
                     return self.download_learning_dataset(query)
                 if parsed.path == '/api/inference':
@@ -558,6 +564,13 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                             scope_snapshot=snapshot)
                 elif self.path == '/api/inference/start':
                     result=inference.start(data['mission'],data.get('threshold',.18),data.get('tiled',True),data.get('night_lights',True),data.get('night_head_id'),resource_profile=data.get('resource_profile','auto'))
+                elif self.path == '/api/detector/models/import':
+                    from .model_registry import import_candidate
+                    result=import_candidate(library,data.get('path',''))
+                elif self.path == '/api/detector/models/select':
+                    from .model_registry import select_model
+                    result=select_model(library,inference.pack,data['mission'],data.get('model_id'),
+                        data.get('operator'),data.get('reason'))
                 elif self.path == '/api/inference/roi-rerun':
                     result=inference.rerun_roi(data['mission'],data['run'],data['operator'])
                 elif self.path == '/api/inference/resume':

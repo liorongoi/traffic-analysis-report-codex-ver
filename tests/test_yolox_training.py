@@ -1,0 +1,78 @@
+import json
+from pathlib import Path
+import tempfile
+import unittest
+import zipfile
+
+from road_traffic.yolox_training import prepare_yolox_coco
+
+
+def _archive(path, *, validation_boxes=True, unsafe=False):
+    categories = [
+        {'id': 1, 'name': 'vehicle:car', 'kind': 'vehicle', 'label': 'car'},
+        {'id': 2, 'name': 'light:headlight', 'kind': 'light', 'label': 'headlight'},
+    ]
+    files = {'dataset-manifest.json': json.dumps({'format': 'RoadLoom COCO dataset v1'}),
+        'training/annotations.json': json.dumps({'images': [
+            {'id': 1, 'file_name': '../escape.jpg', 'width': 10, 'height': 10},
+            {'id': 2, 'file_name': 'images/negative.jpg', 'width': 10, 'height': 10}],
+            'annotations': [{'id': 1, 'image_id': 1, 'category_id': 1,
+                'bbox': [1, 1, 3, 3]}, {'id': 2, 'image_id': 1, 'category_id': 2,
+                'bbox': [1, 1, 2, 2]}], 'categories': categories}),
+        'validation/annotations.json': json.dumps({'images': [
+            {'id': 3, 'file_name': 'images/val.jpg', 'width': 10, 'height': 10}],
+            'annotations': ([{'id': 3, 'image_id': 3, 'category_id': 1,
+                'bbox': [2, 2, 3, 3]}] if validation_boxes else []), 'categories': categories}),
+        'test/annotations.json': json.dumps({'images': [
+            {'id': 4, 'file_name': 'images/test.jpg', 'width': 10, 'height': 10}],
+            'annotations': [{'id': 4, 'image_id': 4, 'category_id': 1,
+                'bbox': [1, 1, 3, 3]}], 'categories': categories})}
+    files.update({'training/images/negative.jpg': b'neg', 'validation/images/val.jpg': b'val',
+        'test/images/test.jpg': b'test'})
+    if not unsafe:
+        files['training/images/escape.jpg'] = b'pos'
+        files['training/annotations.json'] = files['training/annotations.json'].replace('../escape.jpg', 'images/positive.jpg')
+        files['training/images/positive.jpg'] = files.pop('training/images/escape.jpg')
+    with zipfile.ZipFile(path, 'w') as archive:
+        for name, value in files.items():
+            archive.writestr(name, value)
+
+
+class YoloxTrainingDatasetTests(unittest.TestCase):
+    def test_stages_vehicle_only_and_keeps_reviewed_negative_images(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / 'dataset.zip'
+            _archive(archive)
+            output = root / 'stage'
+            summary = prepare_yolox_coco(archive, output)
+            self.assertEqual(summary['classes'], ['car'])
+            self.assertEqual(summary['splits']['training']['images'], 2)
+            self.assertEqual(summary['splits']['training']['positive_images'], 1)
+            self.assertEqual(summary['splits']['training']['vehicle_annotations'], 1)
+            self.assertFalse((output / 'test2017').exists())
+            train = json.loads((output / 'annotations/instances_train2017.json').read_text())
+            self.assertEqual(train['categories'], [{'id': 1, 'name': 'car'}])
+            self.assertEqual([item['category_id'] for item in train['annotations']], [1])
+            self.assertEqual({item['file_name'] for item in train['images']},
+                {'images/positive.jpg', 'images/negative.jpg'})
+
+    def test_rejects_unsafe_archive_image_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / 'dataset.zip'
+            _archive(archive, unsafe=True)
+            with self.assertRaisesRegex(ValueError, 'Unsafe dataset path'):
+                prepare_yolox_coco(archive, root / 'stage')
+
+    def test_requires_reviewed_vehicle_labels_in_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / 'dataset.zip'
+            _archive(archive, validation_boxes=False)
+            with self.assertRaisesRegex(ValueError, 'Validation split has no reviewed vehicle boxes'):
+                prepare_yolox_coco(archive, root / 'stage')
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -26,7 +26,7 @@ For each assigned manual camera view or explicit Fintraffic source-view key in a
 6. Use opacity/zoom for inspection; these do not change source pixels or saved scientific coordinates.
 7. **Inference report** downloads configuration, original outputs, review lineage and source hashes as JSON. **Export** writes the mission's configured CSV and/or XLSX snapshots to the output folder with mission/source lineage, source checksums, review revisions, original predictions and a stored snapshot hash. Rejected annotations remain in audit data and are excluded from counts. Both still-image export formats are implemented; insufficient output capacity can still interrupt a large export, which is recorded as failed or partial.
 
-Runs expose durable stage, done/total, errors and a progress bar. **Stop** cancels after the current image; cancellation and failed runs retain completed predictions. Closing the browser does not stop its worker. Automatic retraining is not implemented; no corrections are silently used for training.
+Runs expose durable stage, done/total, errors and a progress bar. **Stop** cancels after the current image; cancellation and failed runs retain completed predictions. Closing the browser does not stop its worker. Corrections are never used silently. An optional external YOLOX-S fine-tuning CLI can consume the protected reviewed COCO export; the app can import the exported ONNX pack and explicitly select it for future still-image runs in that mission. Saved runs retain their original model ID and hash. Video remains on the bundled baseline. Target-GPU training and held-out detector evaluation have not been validated.
 
 ## Executed evidence
 

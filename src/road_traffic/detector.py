@@ -7,6 +7,7 @@ from .ort_session import create_session
 
 VEHICLES={1:'bicycle',2:'car',3:'motorcycle',5:'bus',7:'truck'}
 VERSION='yolox-s-coco+night-lights-v6+region-mask-v1'
+SUPPORTED_LABELS=set(VEHICLES.values())
 
 
 def model_pack(root):
@@ -41,6 +42,16 @@ class VehicleDetector:
         if type(cpu_threads) is not int or not 1<=cpu_threads<=64:raise ValueError('CPU thread limit must be between 1 and 64')
         self.cv,self.np=cv2,np
         self.path,self.sha=model_pack(pack)
+        metadata=json.loads((self.path.parent/'manifest.json').read_text())
+        trained_classes=metadata.get('classes')
+        if trained_classes is not None:
+            if (not isinstance(trained_classes,list) or not trained_classes
+                    or any(label not in SUPPORTED_LABELS for label in trained_classes)
+                    or len(set(trained_classes))!=len(trained_classes)):
+                raise ValueError('Invalid vehicle class list in model manifest')
+            self.class_labels={index:label for index,label in enumerate(trained_classes)}
+        else:
+            self.class_labels=VEHICLES
         self.session=create_session(ort,self.path,cpu_threads)
         self.input=self.session.get_inputs()[0].name
         self.threshold,self.tiled,self.cpu_threads=threshold,tiled,cpu_threads
@@ -59,12 +70,13 @@ class VehicleDetector:
         canvas[:resized.shape[0],:resized.shape[1]]=resized
         tensor=np.ascontiguousarray(canvas.transpose(2,0,1)[None])
         raw=self.session.run(None,{self.input:tensor})[0][0]
-        if raw.shape!=(8400,85):raise ValueError('Unexpected YOLOX output schema')
+        if raw.ndim!=2 or raw.shape[0]!=8400 or raw.shape[1]<6:
+            raise ValueError('Unexpected YOLOX output schema')
         centers=(raw[:,:2]+self.grid)*self.strides
         sizes=np.exp(np.clip(raw[:,2:4],-16,16))*self.strides
         classes=np.argmax(raw[:,5:],axis=1)
         scores=raw[:,4]*np.max(raw[:,5:],axis=1)
-        mask=np.isin(classes,list(VEHICLES))&(scores>=self.threshold)&np.isfinite(scores)
+        mask=np.isin(classes,list(self.class_labels))&(scores>=self.threshold)&np.isfinite(scores)
         ow,oh=whole or (w,h)
         result=[]
         for center,size,score,cls in zip(centers[mask],sizes[mask],scores[mask],classes[mask]):
@@ -73,7 +85,7 @@ class VehicleDetector:
             if x2<=x1 or y2<=y1:continue
             box=[(x1/coordinate_scale+offset[0])/ow,(y1/coordinate_scale+offset[1])/oh,
                 (x2-x1)/(coordinate_scale*ow),(y2-y1)/(coordinate_scale*oh)]
-            result.append({'kind':'candidate','suggested_kind':'vehicle','label':VEHICLES[int(cls)],'box':box,
+            result.append({'kind':'candidate','suggested_kind':'vehicle','label':self.class_labels[int(cls)],'box':box,
                 'score':float(score),'origin':'model','evidence':'yolox-s','coordinate_system':'normalized-original-image'})
         return result
 
