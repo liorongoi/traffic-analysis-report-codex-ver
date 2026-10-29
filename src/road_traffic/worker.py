@@ -147,7 +147,9 @@ def execute(library,mission,run,pack):
                     'role':r.get('role','analysis')} for r in view_regions],
                     'summary':region_summary,'policy':'exclusions override analysis-area inclusion polygons; road surfaces only provide vehicle proximity cues'}
                 for item in predictions:item['prediction_id']=str(uuid.uuid4())
-                details['detections']=sum(x['evidence']=='yolox-s' for x in predictions)
+                details['detections']=sum(x.get('evidence','').startswith('yolox-s') for x in predictions)
+                details['standard_vehicle_proposals']=sum(x.get('evidence')=='yolox-s' for x in predictions)
+                details['night_top_zoom_proposals_kept']=sum(x.get('evidence')=='yolox-s-night-top-zoom' for x in predictions)
                 details['lights_count']=sum(x['kind']=='light' for x in predictions)
             except Exception as exc:
                 predictions=[];error=f'{type(exc).__name__}: {exc}'

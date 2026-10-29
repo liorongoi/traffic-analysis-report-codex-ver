@@ -6,7 +6,7 @@ import math
 from .ort_session import create_session
 
 VEHICLES={1:'bicycle',2:'car',3:'motorcycle',5:'bus',7:'truck'}
-VERSION='yolox-s-coco+night-lights-v5'
+VERSION='yolox-s-coco+night-lights-v6+region-mask-v1'
 
 
 def model_pack(root):

@@ -76,6 +76,9 @@ def includes_box(box, regions):
 def filter_proposals(proposals, regions):
     road_regions=[r for r in regions if r.get('role')=='road_surface']
     if not regions:
+        for item in proposals:
+            if item.get('kind')=='vehicle' or item.get('evidence','').startswith('yolox-s'):
+                item['road_relation']=classify_road_relation(item['box'],road_regions)
         return proposals, {'input':len(proposals),'excluded':0,'included':0}
     kept=[item for item in proposals if includes_box(item['box'],regions)]
     for item in kept:

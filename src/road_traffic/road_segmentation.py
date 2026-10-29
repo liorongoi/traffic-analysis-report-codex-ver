@@ -54,7 +54,7 @@ def propose_road_masks(rgb, project_root=None):
     masks = result.get('masks')
     scores = result.get('scores')
     if masks is None:
-        return {'candidates': [], 'model': 'SAM 3.1 Unsloth Transformers INT8/BF16 pack',
+        return {'candidates': [], 'model': 'SAM 3.1 Unsloth Transformers local model pack',
             'prompt': 'road surface', 'automatic_vehicle_detection_changed': False, 'review_required': True}
     if hasattr(masks, 'detach'):
         masks = masks.detach().cpu().numpy()

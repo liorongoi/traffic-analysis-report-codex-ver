@@ -39,7 +39,10 @@ class RegionGeometryTests(unittest.TestCase):
         self.assertEqual(kept,rows)
         self.assertEqual([row['road_relation']['label'] for row in kept],['on_road','near_road','off_road'])
         self.assertEqual(summary['road_surface_regions'],1)
-        self.assertEqual(classify_road_relation([.1,.1,.1,.1],[] )['label'],'unknown')
+        self.assertEqual(classify_road_relation([.1,.1,.1,.1],[])['label'],'unknown')
+        unreferenced=[{'kind':'candidate','box':[.1,.1,.1,.1],'evidence':'yolox-s'}]
+        filter_proposals(unreferenced,[])
+        self.assertEqual(unreferenced[0]['road_relation']['label'],'unknown')
 
     def test_analysis_inclusions_mask_model_input_but_road_surface_does_not(self):
         import numpy as np
