@@ -21,8 +21,22 @@ def _load_sam(model_dir):
     except ImportError as exc:
         raise RuntimeError('Optional SAM 3.1 Transformers runtime is not installed. YOLO vehicle detection remains available.') from exc
     model_path = Path(model_dir)
-    if not (model_path / 'config.json').is_file() or not (model_path / 'model.safetensors').is_file():
-        raise RuntimeError('Optional SAM 3.1 model pack is not installed. YOLO vehicle detection remains available.')
+    if not (model_path / 'config.json').is_file():
+        raise RuntimeError('Optional SAM 3.1 model pack is missing config.json. YOLO vehicle detection remains available.')
+    if not (model_path / 'model.safetensors').is_file():
+        quantized = next((name for name in (
+            'sam3.1-INT8.safetensors',
+            'sam3.1-INT8-ConvRot.safetensors',
+            'sam3.1-FP8.safetensors',
+        ) if (model_path / name).is_file()), None)
+        if quantized:
+            raise RuntimeError(
+                f'The optional SAM 3.1 pack contains {quantized}, which this app cannot load yet. '
+                'Use Unsloth model.safetensors (BF16) for the current CPU-compatible loader. '
+                'YOLO vehicle detection remains available.')
+        raise RuntimeError(
+            'Optional SAM 3.1 weights are missing. Add Unsloth model.safetensors (BF16); '
+            'YOLO vehicle detection remains available.')
     try:
         model = Sam3Model.from_pretrained(str(model_path), dtype=torch.float32, local_files_only=True)
         processor = Sam3Processor.from_pretrained(str(model_path), local_files_only=True)
