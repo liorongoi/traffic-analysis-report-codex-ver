@@ -44,6 +44,13 @@ class VideoInferenceServiceTests(unittest.TestCase):
     def source(self):
         return register_video(self.library, self.mission, 'clip.mp4')
 
+    def test_worker_launcher_is_safe_when_reloaded_as_a_spawn_main_module(self):
+        import runpy
+        launcher=Path(__file__).resolve().parents[1]/'scripts'/'run-video-analysis.py'
+        with patch('sys.argv',['run-video-analysis.py']):
+            namespace=runpy.run_path(str(launcher),run_name='__mp_main__')
+        self.assertIn('main',namespace)
+
     def test_video_adapter_persists_provider_fallback_only_when_state_changes(self):
         from road_traffic.video_inference import VehicleProposalAdapter
         class Detector:
