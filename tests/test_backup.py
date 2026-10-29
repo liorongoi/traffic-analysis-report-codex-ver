@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -108,7 +109,7 @@ class MissionBackupTests(unittest.TestCase):
         with restored.connect(mission) as conn:
             self.assertEqual(conn.execute("SELECT output_path FROM exports WHERE id='backup-export'").fetchone()[0],
                 str(restored_root.resolve() / "traffic-report.csv"))
-        with sqlite3.connect(restored_root / "plate-crops" / mission / "review.sqlite3") as conn:
+        with closing(sqlite3.connect(restored_root / "plate-crops" / mission / "review.sqlite3")) as conn:
             self.assertEqual(conn.execute("SELECT decision FROM reviewed_chip WHERE id='chip-1'").fetchone()[0], "approved")
 
 
