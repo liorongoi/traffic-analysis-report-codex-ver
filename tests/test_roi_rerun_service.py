@@ -30,6 +30,7 @@ class RoiRerunServiceTests(unittest.TestCase):
             library.update_view_region(mission,region['region_key'],'exclude',[[.2,.2],[.8,.2],[.8,.8],[.2,.8]],'Operator B')
             service=InferenceService(library,root/'pack')
             with patch('road_traffic.detector.model_pack',return_value=(root/'pack','fixture-hash')), \
+                 patch('road_traffic.model_registry.resolve_model',return_value=root/'pack'), \
                  patch.object(service,'_spawn') as spawn:
                 result=service.rerun_roi(mission,source_run,'Operator C')
             self.assertEqual(result['rerun_of'],source_run)
@@ -56,7 +57,8 @@ class RoiRerunServiceTests(unittest.TestCase):
                 conn.execute("UPDATE inference_runs SET status='completed',stage='finished',done=1 WHERE id=?",(source_run,))
             library.update_view_region(mission,region['region_key'],'exclude',[[.2,.2],[.8,.2],[.8,.8],[.2,.8]],'Operator B')
             service=InferenceService(library,root/'pack')
-            with patch('road_traffic.detector.model_pack',return_value=(root/'pack','new-hash')):
+            with patch('road_traffic.detector.model_pack',return_value=(root/'pack','new-hash')), \
+                 patch('road_traffic.model_registry.resolve_model',return_value=root/'pack'):
                 with self.assertRaisesRegex(ValueError,'source model changed'):
                     service.rerun_roi(mission,source_run,'Operator C')
             self.assertIsNone(roi_review_state(library,mission,source_run)['acknowledgment'])

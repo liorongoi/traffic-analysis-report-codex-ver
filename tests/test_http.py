@@ -123,6 +123,34 @@ class HttpTests(unittest.TestCase):
         self.assertIn("fetch('/timezone-cities.json')",script)
         self.assertIn("fetch('/timezone-zones.json')",script)
         self.assertIn('function chooseTimezoneLocation(country,zone,lon,lat)',script)
+
+    def test_vehicle_model_pack_import_and_mission_selection_api(self):
+        from road_traffic.store import Library
+        import hashlib
+        root=Path(self.tmp.name)
+        library=Library(root)
+        mission=library.create('Vehicle model API','Lebanon','Asia/Beirut')
+        pack=root/'trained-model-pack';pack.mkdir()
+        payload=b'fixture onnx payload'
+        (pack/'model.onnx').write_bytes(payload)
+        (pack/'manifest.json').write_text(json.dumps({'name':'Reviewed car model',
+            'classes':['car'],'files':{'model.onnx':{'sha256':hashlib.sha256(payload).hexdigest(),
+            'bytes':len(payload)}}}),encoding='utf-8')
+        with self.request('/api/detector/models/import',{'path':str(pack)}) as response:
+            imported=json.load(response)
+        self.assertRegex(imported['id'],r'^candidate-[a-f0-9]{12}$')
+        with self.request('/api/detector/models?mission='+mission) as response:
+            listing=json.load(response)
+        self.assertEqual(listing['selected_id'],'base')
+        self.assertIn(imported['id'],{item['id'] for item in listing['models']})
+        with self.request('/api/detector/models/select',{'mission':mission,
+                'model_id':imported['id'],'operator':'Operator','reason':'Reviewed held-out examples'}) as response:
+            selected=json.load(response)
+        self.assertEqual(selected['selected_id'],imported['id'])
+        with self.request('/api/detector/models?mission='+mission) as response:
+            listing=json.load(response)
+        self.assertEqual(listing['selected_id'],imported['id'])
+        self.assertEqual(listing['history'][0]['reason'],'Reviewed held-out examples')
         self.assertIn('timezone boundary',script.lower())
         self.assertIn('function timezoneCityMatches(query)',script)
         self.assertIn('function applyTimezoneCity(city)',script)
