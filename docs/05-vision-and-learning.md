@@ -26,3 +26,7 @@ The UI and `/api/learning/capabilities` endpoint expose a structured declaration
 ## Reviewed image dataset export
 
 The learning panel can package the latest still-image review snapshot as COCO JSON plus copied source images. It keeps training, validation, and test roles separate, includes complete reviews only, and includes only explicit human reviewed non-rejected boxes. Full reviewed images with no accepted human regions remain negative examples; partial reviews are excluded instead of assigning negatives to their unmarked areas. Model proposals, OCR suggestions, and bulk approvals are never labels. Export stops when identical source hashes or a known camera/hour group span multiple roles. Each package has a manifest with source hashes, review revisions, split counts, category schema, a deterministic evidence-version SHA-256, and the capture snapshot boundary. This is generic image dataset packaging; it does not fine-tune YOLOX or claim model quality.
+
+## Optional offline vehicle training
+
+The fine-tuning CLI uses only protected training and validation roles; the held-out test split is excluded. A separate stager packages a preprepared Windows CUDA/PyTorch runtime and YOLOX source without enlarging the single app installer. The transfer bundle carries a file-hash manifest and a target-side CUDA smoke command. It performs no downloads or sign-in. A real target-GPU training run and detector holdout evaluation remain unverified.
