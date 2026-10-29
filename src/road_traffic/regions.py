@@ -66,16 +66,72 @@ def includes_box(box, regions):
         return True
     x,y,w,h=box
     center=(x+w/2,y+h/2)
-    included=[r for r in regions if r['kind']=='include']
-    excluded=[r for r in regions if r['kind']=='exclude']
+    included=[r for r in regions if r['kind']=='include' and r.get('role','analysis')!='road_surface']
+    excluded=[r for r in regions if r['kind']=='exclude' and r.get('role','analysis')!='road_surface']
     if any(point_in_polygon(center,r['polygon']) for r in excluded):
         return False
     return not included or any(point_in_polygon(center,r['polygon']) for r in included)
 
 
 def filter_proposals(proposals, regions):
+    road_regions=[r for r in regions if r.get('role')=='road_surface']
     if not regions:
         return proposals, {'input':len(proposals),'excluded':0,'included':0}
     kept=[item for item in proposals if includes_box(item['box'],regions)]
+    for item in kept:
+        if item.get('kind')=='vehicle' or item.get('evidence','').startswith('yolox-s'):
+            item['road_relation']=classify_road_relation(item['box'],road_regions)
     return kept, {'input':len(proposals),'excluded':len(proposals)-len(kept),'included':len(kept),
-        'coordinate_system':'normalized-original-image','exclusion_overrides_inclusion':True}
+        'coordinate_system':'normalized-original-image','exclusion_overrides_inclusion':True,
+        'road_surface_regions':len(road_regions),'road_relation_basis':'operator-drawn or operator-approved road polygons; heuristic bbox geometry'}
+
+
+def classify_road_relation(box, road_regions):
+    """Relate a vehicle box to operator road polygons using bottom-center contact geometry."""
+    if not road_regions:
+        return {'label':'unknown','basis':'no approved road-surface polygon'}
+    x,y,w,h=box; contact=(x+w/2,y+h)
+    if any(point_in_polygon(contact,r['polygon']) for r in road_regions):
+        return {'label':'on_road','basis':'vehicle box bottom-center lies inside an approved road polygon'}
+    # A box crossing the road edge is near/on boundary even when its bottom-center
+    # falls just outside due to an imperfect detector box.
+    points=[(x,y),(x+w,y),(x,y+h),(x+w,y+h),(x+w/2,y+h/2)]
+    if any(point_in_polygon(p,r['polygon']) for p in points for r in road_regions):
+        return {'label':'near_road','basis':'vehicle box intersects an approved road polygon'}
+    tolerance=max(.01,min(.06,h*.5))
+    if _distance_to_regions(contact,road_regions)<=tolerance:
+        return {'label':'near_road','basis':'bottom-center within a bounded normalized distance of an approved road polygon'}
+    return {'label':'off_road','basis':'vehicle box is outside the approved road polygons and proximity band'}
+
+
+def mask_analysis_regions(rgb, regions, cv2_module=None):
+    """Neutralize pixels outside operator-approved analysis inclusion polygons."""
+    includes=[r for r in regions if r.get('kind')=='include' and r.get('role','analysis')=='analysis']
+    if not includes:
+        return rgb, {'applied':False,'include_regions':0,'policy':'full frame'}
+    if cv2_module is None:
+        import cv2 as cv2_module
+    import numpy as np
+    height,width=rgb.shape[:2]
+    mask=np.zeros((height,width),dtype=np.uint8)
+    for region in includes:
+        polygon=np.asarray([[round(x*(width-1)),round(y*(height-1))] for x,y in region['polygon']],dtype=np.int32)
+        cv2_module.fillPoly(mask,[polygon],1)
+    prepared=rgb.copy()
+    prepared[mask==0]=114
+    return prepared, {'applied':True,'include_regions':len(includes),
+        'policy':'pixels outside analysis inclusion polygons replaced with neutral 114 before model inference'}
+
+
+def _distance_to_regions(point, regions):
+    if any(point_in_polygon(point,r['polygon']) for r in regions):
+        return 0.0
+    best=float('inf')
+    px,py=point
+    for region in regions:
+        poly=region['polygon']
+        for i,(x1,y1) in enumerate(poly):
+            x2,y2=poly[(i+1)%len(poly)];dx=x2-x1;dy=y2-y1
+            t=max(0.0,min(1.0,((px-x1)*dx+(py-y1)*dy)/(dx*dx+dy*dy or 1)))
+            best=min(best,math.hypot(px-(x1+t*dx),py-(y1+t*dy)))
+    return best

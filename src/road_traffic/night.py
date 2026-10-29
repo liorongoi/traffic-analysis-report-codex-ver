@@ -26,6 +26,10 @@ def classify_component(component):
     """Conservative, explainable subtype; persistent lights remain visible for review."""
     reasons=[];persistence=component.get('persistence');novelty=component.get('novelty')
     aspect=component['aspect'];fill=component['fill']
+    if component.get('large_blob'):
+        return 'uncertain_light',['large connected light/glare blob; it may obscure a vehicle and is not a vehicle box']
+    if component.get('single_pixel'):
+        return 'uncertain_light',['isolated bright point; could be a distant vehicle light, star, sensor artifact, or reflection']
     if aspect>=3.0 and component['area']>=8:
         return 'reflection_suspect',['elongated luminous structure; could also be a light trail']
     if persistence is not None and persistence>=.5:
@@ -48,9 +52,16 @@ def propose(rgb,context,vehicles,head=None):
     count,labels,stats,centers=cv2.connectedComponentsWithStats(mask,8)
     components=[];covered=0
     nearby=cv2.dilate(context['frequency'],np.ones((11,11),np.uint8)) if context else None
+    max_area=max(5000,int(h*w*.06))
     for label in range(1,count):
         x,y,bw,bh,area=map(int,stats[label])
-        if not 2<=area<=5000 or bw>250 or bh>250:continue
+        single_pixel=area==1
+        large_blob=area>5000 or bw>250 or bh>250
+        # Preserve sparse pinpoints and bounded connected glare blobs as review
+        # hypotheses. Oversized regions stay excluded to avoid turning whole
+        # illuminated road/sky areas into one candidate.
+        if area<1 or area>max_area or bw>max(250,int(w*.4)) or bh>max(250,int(h*.4)):continue
+        if single_pixel and int(gray[y:y+bh,x:x+bw].max())<250:continue
         cx,cy=centers[label];box=[x/w,y/h,bw/w,bh/h]
         if any(v['box'][0]-.008<=cx/w<=v['box'][0]+v['box'][2]+.008 and v['box'][1]-.008<=cy/h<=v['box'][1]+v['box'][3]+.008 for v in vehicles):
             covered+=1;continue
@@ -59,15 +70,16 @@ def propose(rgb,context,vehicles,head=None):
         novelty=float(context['novelty'][y:y+bh,x:x+bw][pixels].mean()) if context else None
         c={'box':box,'center':[float(cx),float(cy)],'area':area,'aspect':max(bw,bh)/max(1,min(bw,bh)),
            'fill':area/(bw*bh),'near_recurrence':float(nearby[y:y+bh,x:x+bw][pixels].mean()) if nearby is not None else 0,'persistence':recurrence,'novelty':novelty,'peak':int(gray[y:y+bh,x:x+bw][pixels].max())}
+        c.update(single_pixel=single_pixel,large_blob=large_blob)
         subtype,reasons=classify_component(c);c.update(subtype=subtype,reasons=reasons)
         components.append(c)
     # Mutual-nearest pairing only among compact novel sources; recurring fixtures are not paired.
     closest={}
     for i,a in enumerate(components):
-        if a['subtype']!='headlight_candidate':continue
+        if a['subtype']!='headlight_candidate' or a.get('large_blob') or a.get('single_pixel'):continue
         options=[]
         for j,b in enumerate(components):
-            if i==j or b['subtype']!='headlight_candidate':continue
+            if i==j or b['subtype']!='headlight_candidate' or b.get('large_blob') or b.get('single_pixel'):continue
             dx=abs(a['center'][0]-b['center'][0]);dy=abs(a['center'][1]-b['center'][1])
             if 3<=dx<=min(60,w*.06) and dy<=max(2,dx*.18) and max(a['area'],b['area'])/min(a['area'],b['area'])<=2.5:
                 # A bright bridge between peaks is more consistent with a streak than separated headlights.
@@ -100,4 +112,6 @@ def propose(rgb,context,vehicles,head=None):
     result.sort(key=lambda a:order[a['light_subtype']])
     return result,{'proposals':len(result),'subtypes':{k:sum(a['light_subtype']==k for a in result) for k in order},
         'covered_by_detector':covered,'background_available':context is not None,'truncated':False,
-        'warning':'Subtype suggestions are unvalidated. Recurring lights remain visible so stationary vehicles are not silently removed.'}
+        'single_point_hypotheses':sum(any(component.get('single_pixel') for component in a['light_components']) for a in result),
+        'large_blob_hypotheses':sum(any(component.get('large_blob') for component in a['light_components']) for a in result),
+        'warning':'Lights can be distant-vehicle cues, fixed fixtures, reflections, sensor artifacts, or glare blobs. Every light and pair remains an unconfirmed review hypothesis, never a vehicle box or count.'}

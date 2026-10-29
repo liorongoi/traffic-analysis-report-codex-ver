@@ -21,9 +21,9 @@ def execute(library,mission,run,pack):
         import cv2
         import numpy as np
         from PIL import Image
-        from .detector import VehicleDetector,light_mask,night_proposals,illumination,VERSION
+        from .detector import VehicleDetector,light_mask,night_proposals,illumination,VERSION,suppress
         from .night import propose
-        from .regions import filter_proposals
+        from .regions import filter_proposals,mask_analysis_regions
         head=None
         if config.get('night_head_id'):
             from .learning import load_head
@@ -106,7 +106,14 @@ def execute(library,mission,run,pack):
             try:
                 rgb=load(row);h,w=rgb.shape[:2];gray=cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY)
                 details.update({'width':w,'height':h,**illumination(rgb)})
-                predictions=detector.infer(rgb)
+                view_regions=config.get('view_regions_snapshot',{}).get(row.get('view_id') or '',[])
+                scan_rgb,scan_mask=mask_analysis_regions(rgb,view_regions,cv2)
+                details['analysis_scan_mask']=scan_mask
+                predictions=detector.infer(scan_rgb)
+                if details['scene_period']=='night_like':
+                    far_proposals=detector.infer_night_top(scan_rgb)
+                    predictions=suppress([*predictions,*far_proposals])
+                    details['night_top_zoom_proposals']=len(far_proposals)
                 details['device']=detector.session.provider
                 details['provider_fallback_reason']=detector.session.fallback_reason
                 if config.get('night_lights') and details['low_light']:
@@ -126,7 +133,7 @@ def execute(library,mission,run,pack):
                             persistent[~novelty]=1
                             light_context={'frequency':local.astype(np.float32)/n,'novelty':novelty}
                     view_head=head if head and row_view_key(row)==head.data.get('view') else None
-                    lights,light_details=propose(rgb,light_context,predictions,view_head)
+                    lights,light_details=propose(scan_rgb,light_context,predictions,view_head)
                     predictions.extend(lights);details['lights']=light_details
                     details['lights']['background_used']=light_context is not None
                     details['night_head_id']=config.get('night_head_id') if view_head else None
@@ -135,10 +142,10 @@ def execute(library,mission,run,pack):
                         details['night_head_skipped_reason']='Selected correction head is bound to a different or unassigned camera view.'
                     details['lights']['view_similarity']=similarity
                     details['lights']['leave_out_image_id']=row['id'] if row['id'] in refindex else None
-                view_regions=config.get('view_regions_snapshot',{}).get(row.get('view_id') or '',[])
                 predictions,region_summary=filter_proposals(predictions,view_regions)
-                details['view_regions']={'regions':[{'id':r['id'],'revision':r['revision'],'kind':r['kind']} for r in view_regions],
-                    'summary':region_summary,'policy':'exclusions override inclusion polygons'}
+                details['view_regions']={'regions':[{'id':r['id'],'revision':r['revision'],'kind':r['kind'],
+                    'role':r.get('role','analysis')} for r in view_regions],
+                    'summary':region_summary,'policy':'exclusions override analysis-area inclusion polygons; road surfaces only provide vehicle proximity cues'}
                 for item in predictions:item['prediction_id']=str(uuid.uuid4())
                 details['detections']=sum(x['evidence']=='yolox-s' for x in predictions)
                 details['lights_count']=sum(x['kind']=='light' for x in predictions)

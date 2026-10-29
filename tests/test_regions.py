@@ -6,7 +6,7 @@ import unittest
 from PIL import Image
 
 from road_traffic.inference_store import create_run,roi_drift,roi_review_state,create_roi_rerun
-from road_traffic.regions import filter_proposals, point_in_polygon, validate_polygon
+from road_traffic.regions import classify_road_relation, filter_proposals, mask_analysis_regions, point_in_polygon, validate_polygon
 from road_traffic.store import Library
 
 
@@ -29,6 +29,35 @@ class RegionGeometryTests(unittest.TestCase):
         self.assertEqual(kept,[proposals[0]])
         self.assertEqual(summary['excluded'],2)
         self.assertTrue(summary['exclusion_overrides_inclusion'])
+
+    def test_road_surface_is_reference_geometry_and_does_not_filter_detections(self):
+        road={'kind':'include','role':'road_surface','polygon':[[.2,.6],[.8,.6],[.95,1],[.05,1]]}
+        rows=[{'kind':'vehicle','box':[.4,.55,.1,.12],'evidence':'yolox-s'},
+              {'kind':'vehicle','box':[.4,.47,.1,.1],'evidence':'yolox-s'},
+              {'kind':'vehicle','box':[.9,.1,.05,.1],'evidence':'yolox-s'}]
+        kept,summary=filter_proposals(rows,[road])
+        self.assertEqual(kept,rows)
+        self.assertEqual([row['road_relation']['label'] for row in kept],['on_road','near_road','off_road'])
+        self.assertEqual(summary['road_surface_regions'],1)
+        self.assertEqual(classify_road_relation([.1,.1,.1,.1],[] )['label'],'unknown')
+
+    def test_analysis_inclusions_mask_model_input_but_road_surface_does_not(self):
+        import numpy as np
+        class CV2Stub:
+            @staticmethod
+            def fillPoly(mask, polygons, value):
+                points=polygons[0]
+                mask[points[:,1].min():points[:,1].max()+1,points[:,0].min():points[:,0].max()+1]=value
+        rgb=np.full((20,20,3),220,dtype=np.uint8)
+        polygon=[[.25,.25],[.75,.25],[.75,.75],[.25,.75]]
+        analysis=[{'kind':'include','role':'analysis','polygon':polygon}]
+        masked,summary=mask_analysis_regions(rgb,analysis,CV2Stub)
+        self.assertTrue(summary['applied'])
+        self.assertTrue(np.all(masked[0,0]==114))
+        self.assertTrue(np.all(masked[10,10]==220))
+        unchanged,summary=mask_analysis_regions(rgb,[{'kind':'include','role':'road_surface','polygon':polygon}],CV2Stub)
+        self.assertFalse(summary['applied'])
+        self.assertTrue(np.array_equal(unchanged,rgb))
 
 
 class RegionHistoryTests(unittest.TestCase):
@@ -77,12 +106,25 @@ class RegionHistoryTests(unittest.TestCase):
     def test_old_region_table_gets_additive_name_column_migration(self):
         with self.library.connect(self.mission) as conn:
             conn.execute('ALTER TABLE view_region_history DROP COLUMN name')
+            conn.execute('ALTER TABLE view_region_history DROP COLUMN role')
         with self.library.connect(self.mission) as conn:
             columns={row['name'] for row in conn.execute('PRAGMA table_info(view_region_history)')}
         self.assertIn('name',columns)
+        self.assertIn('role',columns)
         created=self.library.add_view_region(self.mission,self.view['id'],'include',
             [[.1,.1],[.9,.1],[.9,.9],[.1,.9]],'Operator','Legacy migration lane')
         self.assertEqual(created['name'],'Legacy migration lane')
+        self.assertEqual(created['role'],'analysis')
+
+    def test_road_surface_role_is_versioned_and_must_use_include_geometry(self):
+        polygon=[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]
+        with self.assertRaisesRegex(ValueError,'inclusion mode'):
+            self.library.add_view_region(self.mission,self.view['id'],'exclude',polygon,'Operator','Road',role='road_surface')
+        region=self.library.add_view_region(self.mission,self.view['id'],'include',polygon,'Operator','Road',role='road_surface')
+        updated=self.library.update_view_region(self.mission,region['region_key'],'include',polygon,'Operator B','Main road')
+        self.assertEqual((region['role'],updated['role']),('road_surface','road_surface'))
+        self.assertEqual([row['role'] for row in self.library.view_region_history(self.mission,self.view['id'])],
+            ['road_surface','road_surface'])
 
     def test_inference_run_keeps_region_snapshot_after_later_edits(self):
         polygon=[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]

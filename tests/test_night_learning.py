@@ -30,6 +30,23 @@ class ContextLightTests(unittest.TestCase):
         rgb=self.frame();rgb[40:43,70:73]=255
         proposals,_=propose(rgb,self.context(),[])
         self.assertEqual(len(proposals),1);self.assertEqual(proposals[0]['light_subtype'],'headlight_candidate')
+    def test_isolated_saturated_point_is_kept_as_uncertain_distant_light(self):
+        rgb=self.frame();rgb[12,160]=255
+        proposals,details=propose(rgb,self.context(),[])
+        self.assertEqual(len(proposals),1)
+        self.assertEqual(proposals[0]['light_subtype'],'uncertain_light')
+        self.assertIn('isolated bright point',proposals[0]['reasons'][0])
+        self.assertEqual(details['single_point_hypotheses'],1)
+        self.assertEqual(proposals[0]['kind'],'light')
+    def test_large_night_glare_blob_is_kept_as_one_uncertain_hypothesis(self):
+        rgb=np.full((400,400,3),20,np.uint8);rgb[90:170,130:210]=255
+        context={'frequency':np.zeros((400,400),np.float32),'novelty':np.ones((400,400),bool)}
+        proposals,details=propose(rgb,context,[])
+        self.assertEqual(len(proposals),1)
+        self.assertEqual(proposals[0]['light_subtype'],'uncertain_light')
+        self.assertIn('large connected light/glare blob',proposals[0]['reasons'][0])
+        self.assertEqual(details['large_blob_hypotheses'],1)
+        self.assertEqual(proposals[0]['kind'],'light')
     def test_elongated_reflection_is_not_headlight_pair(self):
         rgb=self.frame();rgb[35:55,70:73]=255
         proposals,_=propose(rgb,self.context(),[])

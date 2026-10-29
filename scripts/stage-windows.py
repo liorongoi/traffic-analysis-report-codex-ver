@@ -93,7 +93,7 @@ def validate_model_pack(pack, kind):
         raise ValueError(f'{kind} model pack manifest must be a JSON object')
     if kind == 'vehicle':
         expected = manifest.get('files')
-        required = ('model.onnx', 'LICENSE', 'upstream-README.md')
+        required = ('model.onnx', 'yolox_s_coco_pretrained.pth', 'LICENSE', 'upstream-README.md')
         if not isinstance(expected, dict):
             raise ValueError('Vehicle model pack manifest has no files map')
     elif kind == 'plate':

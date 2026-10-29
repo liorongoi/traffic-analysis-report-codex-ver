@@ -489,12 +489,20 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     if library.settings(data['mission'])['input_type'] != 'images':
                         raise ValueError('Camera-view proposals require a still-image mission')
                     result = propose(library, data['mission'])
+                elif self.path == '/api/view-regions/segment-road':
+                    from PIL import Image
+                    import numpy as np
+                    from .road_segmentation import propose_road_masks
+                    image_path=library.image_path(data['mission'],data['image_id'])
+                    with Image.open(image_path) as image:
+                        result=propose_road_masks(np.asarray(image.convert('RGB')),
+                            Path(web).parent)
                 elif self.path == '/api/view-regions':
                     action=data.get('action')
                     if action == 'create':
-                        result=library.add_view_region(data['mission'],data['view_id'],data['kind'],data['polygon'],data['operator'],data.get('name'))
+                        result=library.add_view_region(data['mission'],data['view_id'],data['kind'],data['polygon'],data['operator'],data.get('name'),data.get('role','analysis'))
                     elif action == 'update':
-                        result=library.update_view_region(data['mission'],data['region_id'],data['kind'],data['polygon'],data['operator'],data.get('name'))
+                        result=library.update_view_region(data['mission'],data['region_id'],data['kind'],data['polygon'],data['operator'],data.get('name'),data.get('role'))
                     elif action == 'delete':
                         result=library.delete_view_region(data['mission'],data['region_id'],data['operator'])
                     else:

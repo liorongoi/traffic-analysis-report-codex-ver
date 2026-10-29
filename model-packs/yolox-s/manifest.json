@@ -16,6 +16,19 @@
       "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/object_detection_yolox/README.md",
       "sha256": "389c9198224f76b1b662902efcd5d563cb748baf2b22b304670dc12eb75fab9d",
       "bytes": 5848
+    },
+    "yolox_s_coco_pretrained.pth": {
+      "url": "https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.pth",
+      "sha256": "f55ded7181e1b0c13285c56e7790b8f0e8f8db590fe4edb37f0b7f345c913a30",
+      "bytes": 72089125,
+      "role": "COCO-pretrained PyTorch baseline for supervised YOLOX fine-tuning; not used directly by inference"
     }
+  },
+  "training": {
+    "architecture": "YOLOX-S",
+    "dataset": "COCO",
+    "checkpoint": "yolox_s_coco_pretrained.pth",
+    "training_source": "https://github.com/Megvii-BaseDetection/YOLOX",
+    "checkpoint_release": "0.1.1rc0"
   }
 }

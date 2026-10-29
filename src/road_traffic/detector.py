@@ -51,7 +51,7 @@ class VehicleDetector:
             grids.append(grid);strides.append(np.full((len(grid),1),stride))
         self.grid=np.concatenate(grids).astype(np.float32);self.strides=np.concatenate(strides).astype(np.float32)
 
-    def pass_image(self,rgb,offset=(0,0),whole=None):
+    def pass_image(self,rgb,offset=(0,0),whole=None,coordinate_scale=1.0):
         cv,np=self.cv,self.np
         h,w=rgb.shape[:2];ratio=min(640/w,640/h)
         canvas=np.full((640,640,3),114,dtype=np.float32)
@@ -71,7 +71,8 @@ class VehicleDetector:
             x1=max(0,float((center[0]-size[0]/2)/ratio));y1=max(0,float((center[1]-size[1]/2)/ratio))
             x2=min(w,float((center[0]+size[0]/2)/ratio));y2=min(h,float((center[1]+size[1]/2)/ratio))
             if x2<=x1 or y2<=y1:continue
-            box=[(x1+offset[0])/ow,(y1+offset[1])/oh,(x2-x1)/ow,(y2-y1)/oh]
+            box=[(x1/coordinate_scale+offset[0])/ow,(y1/coordinate_scale+offset[1])/oh,
+                (x2-x1)/(coordinate_scale*ow),(y2-y1)/(coordinate_scale*oh)]
             result.append({'kind':'candidate','suggested_kind':'vehicle','label':VEHICLES[int(cls)],'box':box,
                 'score':float(score),'origin':'model','evidence':'yolox-s','coordinate_system':'normalized-original-image'})
         return result
@@ -89,13 +90,34 @@ class VehicleDetector:
                 for x in xs:result.extend(self.pass_image(rgb[y:y+size,x:x+size],(x,y),(w,h)))
         return suppress(result)
 
+    def infer_night_top(self,rgb):
+        """Search the far/top image band at a bounded zoom for tiny vehicle proposals."""
+        import cv2
+        import numpy as np
+        h,w=rgb.shape[:2]
+        band_h=max(1,int(h*.55))
+        band=rgb[:band_h,:]
+        source_pixels=band_h*w
+        # Bound the zoom input even for maximum-sized source images.
+        scale=min(2.0,math.sqrt(2_500_000/max(1,source_pixels)))
+        if scale<1.12:
+            return []
+        enlarged=cv2.resize(band,None,fx=scale,fy=scale,interpolation=cv2.INTER_CUBIC)
+        proposals=self.pass_image(enlarged,whole=(w,h),coordinate_scale=scale)
+        for item in proposals:
+            item['evidence']='yolox-s-night-top-zoom'
+            item['proposal_context']='upper-image detail pass; distant object hypothesis requiring review'
+        return proposals
+
 
 def light_mask(gray):
     import cv2
     import numpy as np
     # Local contrast avoids labelling every bright road surface as a light.
     local=cv2.morphologyEx(gray,cv2.MORPH_TOPHAT,cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(21,21)))
-    return ((gray>=215)&(local>=35)).astype(np.uint8)
+    # Keep isolated saturated points and solid glare cores as hypotheses too;
+    # connected-component bounds in night.propose prevent unbounded blobs.
+    return (((gray>=215)&(local>=35))|(gray>=248)).astype(np.uint8)
 
 
 def night_proposals(rgb,persistent,vehicles):
@@ -145,6 +167,16 @@ def illumination(rgb):
     gray=cv2.cvtColor(rgb,cv2.COLOR_RGB2GRAY)
     saturation=cv2.cvtColor(rgb,cv2.COLOR_RGB2HSV)[:,:,1]
     mean_luma=float(gray.mean());mean_saturation=float(saturation.mean())
+    monochrome=mean_saturation<5
+    # Label this as a review hint, not astronomical truth: underexposed daytime
+    # scenes can look night-like and bright urban nights can look day-like.
+    if mean_luma<85 or (monochrome and mean_luma<175):
+        period='night_like'
+    elif mean_luma>=140 or (mean_luma>=115 and mean_saturation>=12):
+        period='day_like'
+    else:
+        period='uncertain'
     return {'mean_luma':mean_luma,'mean_saturation':mean_saturation,
-        'low_light':mean_luma<95 or mean_saturation<5,
-        'illumination_rule':'mean luma <95 OR mean saturation <5; includes monochrome camera mode; not an astronomical night label'}
+        'low_light':mean_luma<95 or monochrome,'scene_period':period,
+        'scene_period_basis':'heuristic mean-luminance and saturation; review hint, not capture-time ground truth',
+        'illumination_rule':'mean luma <95 OR mean saturation <5; routes monochrome night camera mode to light proposals'}

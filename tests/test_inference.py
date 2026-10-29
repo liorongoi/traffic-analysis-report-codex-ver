@@ -35,11 +35,33 @@ class DetectorMathTests(unittest.TestCase):
         b={'box':[.11,.11,.2,.2],'label':'truck','score':.6}
         self.assertGreater(iou(a['box'],b['box']),.7)
         self.assertEqual(suppress([b,a]),[a])
+    def test_night_top_zoom_is_bounded_and_records_far_detail_source(self):
+        import cv2
+        import numpy as np
+        from road_traffic.detector import VehicleDetector
+        detector=VehicleDetector.__new__(VehicleDetector);detector.cv=cv2
+        observed={}
+        def fake_pass(image,**kwargs):
+            observed['shape']=image.shape;observed.update(kwargs)
+            return [{'kind':'candidate','label':'car','box':[.1,.1,.1,.1],'evidence':'yolox-s'}]
+        detector.pass_image=fake_pass
+        image=np.zeros((1000,2000,3),np.uint8)
+        result=detector.infer_night_top(image)
+        self.assertLessEqual(observed['shape'][0]*observed['shape'][1],2_600_000)
+        self.assertGreater(observed['shape'][0],550)
+        self.assertEqual(observed['whole'],(2000,1000))
+        self.assertGreater(observed['coordinate_scale'],1)
+        self.assertEqual(result[0]['evidence'],'yolox-s-night-top-zoom')
     def test_bright_monochrome_night_is_not_skipped(self):
         import numpy as np
-        self.assertTrue(illumination(np.full((30,30,3),120,np.uint8))['low_light'])
+        mono=illumination(np.full((30,30,3),120,np.uint8))
+        self.assertTrue(mono['low_light'])
+        self.assertEqual(mono['scene_period'],'night_like')
         colorful=np.zeros((30,30,3),np.uint8);colorful[:,:,1]=220;colorful[:,:,0]=120
         self.assertFalse(illumination(colorful)['low_light'])
+        self.assertEqual(illumination(colorful)['scene_period'],'day_like')
+        uncertain=np.full((30,30,3),105,np.uint8);uncertain[:,:,1]=112
+        self.assertEqual(illumination(uncertain)['scene_period'],'uncertain')
     def test_single_to_pair_is_not_two_confirmed_vehicles(self):
         import numpy as np
         rgb=np.zeros((100,200,3),np.uint8);rgb[50:53,80:83]=255
