@@ -470,9 +470,9 @@ The first supervised-worker run on the exploratory 266-frame intersection clip e
 
 Repeating the test in a disposable mission completed all 266 frames, saved 100 events, and left UTC unset on every event. Runtime details recorded `CPUExecutionProvider` with one CPU thread. The temporary mission, imported clip, and database were removed after the run. `tests.test_video_pipeline` plus the spawn-reload regression passed (8 tests). The full `tests.test_video_inference` module could not pass its child-process resident-memory assertion in this sandbox, where process usage inspection is unavailable; the Windows CI run remains the authoritative check for that coverage.
 
-## Windows offline installer verification — 2026-10-29
+## Windows offline installer verification — 2026-10-30
 
-GitHub Actions run [40931225228](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/40931225228) passed the full **337-test** Python suite (234.119 seconds), staged the offline runtime, compiled the single current-user setup installer, installed and reinstalled it, verified its receipt, and confirmed uninstall preserved workspace data. The preview installer artifact is 269,951,508 bytes (SHA-256 `d652a24c9ae6392fc5a4fc3c07c1d71560455d23398bb82d96cfe70cdca71d4f`; artifact ID `12923311925`). GitHub retains it through 2026-11-05 18:40 UTC. This hosted-runner check does not establish acceptance on the user's target Windows machine.
+GitHub Actions Windows run [`40968735917`](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/40968735917) passed all **346 tests** in 347.879 seconds, staged the offline runtime, compiled the single current-user setup installer, installed and reinstalled it, verified its receipt, and confirmed workspace data survived uninstall. Preview installer artifact [`12938644348`](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/40968735917/artifacts/12938644348) is 269,925,350 bytes (SHA-256 `94c19f364c20452d6c6952d853aa46c32b9d821a99c66083541da07ba6805c0e`) and expires 2026-11-05 22:59 UTC. The hosted run verifies CI packaging and lifecycle only; it does not establish acceptance on the target Windows workstation.
 
 ## Optional offline YOLOX training bundle — 2026-10-30
 
