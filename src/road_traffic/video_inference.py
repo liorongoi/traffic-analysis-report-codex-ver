@@ -250,9 +250,7 @@ def execute_worker(library, mission, run_id, pack):
         def report_runtime():
             details={'requested_device':'auto','plate_detector':{
                 'execution_provider':plate_detector.session.provider,
-                'fallback_reason':(plate_detector.session.fallback_reason or '')[:1000] or None},
-                'plate_ocr':{'execution_provider':plate_detector.recognizer.session.provider,
-                'fallback_reason':(plate_detector.recognizer.session.fallback_reason or '')[:1000] or None}}
+                'fallback_reason':(plate_detector.session.fallback_reason or '')[:1000] or None}}
             if details!=runtime_state[0]:
                 video_store.update_runtime_details(library,mission,run_id,details)
                 runtime_state[0]=details

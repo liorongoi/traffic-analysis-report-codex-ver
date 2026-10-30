@@ -114,8 +114,8 @@ class HttpTests(unittest.TestCase):
         self.assertIn('candidateValidation',script)
         self.assertIn('review_completion',script)
         self.assertIn('candidateTrainingEvidenceStatus',script)
-        self.assertIn('OCR מקומי מציע אותיות וספרות לא מאומתות לבדיקה אנושית נפרדת',script)
-        self.assertNotIn('לא קוראים טקסט',script)
+        self.assertIn('plate-region detection saves image chips for operator approval or rejection and does not read plate text.',script)
+        self.assertNotIn('OCR',script)
         self.assertIn("new Option(tr('promotedLearningModel'),'@promoted')",script)
         self.assertIn("night_head_id=choice==='@promoted'?learningInfo?.governance?.promoted_candidate_id",script)
         self.assertIn('function resolveTimezoneSearch()',script)
@@ -183,7 +183,7 @@ class HttpTests(unittest.TestCase):
             page=response.read().decode('utf-8')
             self.assertIn('RoadLoom',page)
             self.assertNotIn('lanLogout',page)
-            self.assertIn('id="plateSearch"',page)
+            self.assertNotIn('id="plateSearch"',page)
             self.assertIn('name="resource_profile"',page)
             self.assertIn('id="helpPanel"',page)
             self.assertIn('id="videoWorkflow"',page)
@@ -212,7 +212,9 @@ class HttpTests(unittest.TestCase):
             self.assertIn('id="learningReport"',page)
             self.assertIn('id="plateWorkflow"',page)
             self.assertIn('id="plateCrops"',page)
-            self.assertIn('id="plateOcrMetrics"',page)
+            self.assertNotIn('plateOcrMetrics',page)
+            self.assertNotIn('plateSearch',page)
+            self.assertNotIn('OCR',page)
             self.assertIn('id="detectCurrentPlates"',page)
             self.assertIn('id="objectSearchQuery"',page)
             self.assertIn('id="confirmObjectSearch"',page)
@@ -276,52 +278,24 @@ class HttpTests(unittest.TestCase):
         finally:
             archive.unlink(missing_ok=True)
 
-    def test_plate_text_search_api_matches_normalized_ocr_and_verified_text(self):
-        from road_traffic.plate_review import _connect, _paths, list_crops, normalize_plate_text, review, review_text
-        from road_traffic.store import Library
+    def test_plate_review_api_is_chip_only(self):
         with tempfile.TemporaryDirectory() as output_dir:
-            with self.request('/api/missions',{'name':'Plate search','country':'Lebanon',
+            with self.request('/api/missions',{'name':'Plate chips only','country':'Lebanon',
                     'zone':'Asia/Beirut','input_type':'images','analysis_mode':'license_plate',
                     'output_root':output_dir}) as response:
                 mission=json.load(response)['id']
-            library=Library(Path(self.tmp.name))
-            _,folder,db=_paths(library,mission)
-            crop_id='00000000-0000-4000-8000-000000000123'
-            crop=folder/(crop_id+'.jpg');crop.write_bytes(b'fixture crop')
-            original='٠٠١٢-ب/34'
-            with _connect(db) as conn:
-                conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,
-                    crop_sha256,bbox,confidence,model_sha256,created,ocr_text,ocr_confidence,
-                    ocr_model_sha256,ocr_search_text) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
-                    crop_id,'image-1','source.jpg','a'*64,crop.name,
-                    __import__('hashlib').sha256(crop.read_bytes()).hexdigest(),'{}',.8,'b'*64,
-                    '2026-10-27T00:00:00+00:00',original,.7,'c'*64,
-                    normalize_plate_text(original)))
-            query=urllib.parse.quote('0012ب34')
-            with self.request(f'/api/plates?mission={mission}&q={query}') as response:
-                rows=json.load(response)
-            self.assertEqual([row['id'] for row in rows],[crop_id])
-            self.assertEqual(rows[0]['ocr_text'],original)
-            self.assertEqual(len(list_crops(library,mission,search='٠٠١٢-ب/34')),1)
-            with self.request(f'/api/plates/page?mission={mission}&limit=1&offset=0&q={query}') as response:
+            with self.request(f'/api/plates?mission={mission}') as response:
+                self.assertEqual(json.load(response),[])
+            with self.request(f'/api/plates/page?mission={mission}&limit=10&offset=0') as response:
                 page=json.load(response)
-            self.assertEqual((page['total'],page['limit'],len(page['items'])),(1,1,1))
-            self.assertEqual(page['items'][0]['id'],crop_id)
-            review(library,mission,crop_id,0,'approved','HTTP reviewer')
-            review_text(library,mission,crop_id,0,'accepted',original,'HTTP reviewer')
-            with self.request(f'/api/plates/metrics?mission={mission}') as response:
-                metrics=json.load(response)
-            self.assertEqual(metrics['country'],'Lebanon')
-            self.assertEqual(metrics['reviewed_crops'],1)
-            primary=next(row for row in metrics['models'] if row['candidate']=='primary')
-            self.assertEqual(primary['exact_match_rate'],1)
-            self.assertEqual(primary['near_duplicate_groups'],1)
-            self.assertEqual(primary['near_duplicate_grouped']['reviewed_crops'],1)
-            self.assertIn('not a protected held-out evaluation',metrics['scope'])
-            with self.request('/api/plates/export',{'mission':mission}) as response:
-                exported=json.load(response)
-            self.assertEqual(exported['row_count'],1)
-            self.assertIn(original,Path(exported['path']).read_text(encoding='utf-8-sig'))
+            self.assertEqual((page['total'],page['items']),(0,[]))
+            for path,payload in ((f'/api/plates/metrics?mission={mission}',None),
+                    ('/api/plates/text-review',{'mission':mission,'crop_id':'x',
+                        'expected_revision':0,'decision':'accepted','verified_text':'ABC','operator':'Reviewer'})):
+                with self.assertRaises(urllib.error.HTTPError) as exc:
+                    self.request(path,payload)
+                self.assertEqual(exc.exception.code,404)
+
     def test_cross_origin_write_rejected(self):
         with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},headers={'Origin':'http://external.invalid'})
         self.assertEqual(exc.exception.code,403)
@@ -356,7 +330,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(capabilities['night-light.multinomial-correction-head']['methods'][
             'downstream_classifier_training'],'supported')
         self.assertEqual(capabilities['vehicle-detector.yolox-s-coco']['methods']['fine_tuning'],
-            'not_implemented')
+            'supported')
         with self.request('/api/export?mission='+mission) as response:
             rows=list(csv.reader(io.StringIO(response.read().decode('utf-8-sig'))))
         self.assertEqual(len(rows),1)

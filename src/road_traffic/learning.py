@@ -284,9 +284,9 @@ def reviewed_evidence_inventory(library, mission):
     """Summarize explicit human image labels by saved evidence role.
 
     This is an inspection report, not a training-data export or a declaration
-    that a detector has a working training adapter. Model predictions, OCR
-    suggestions, bulk approvals, and unmarked content in partial reviews are
-    never counted as labels.
+    that a detector has a working training adapter. Model predictions, plate
+    crop proposals, bulk approvals, and unmarked content in partial reviews
+    are never counted as labels.
     """
     result = {
         'source': 'current mission only',

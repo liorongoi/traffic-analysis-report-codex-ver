@@ -98,13 +98,10 @@ def validate_model_pack(pack, kind):
             raise ValueError('Vehicle model pack manifest has no files map')
     elif kind == 'plate':
         model_name = manifest.get('model')
-        ocr = manifest.get('ocr_artifacts')
-        if model_name != 'plate_yolox_tiny_640.onnx' or manifest.get('ocr_assets_included') is not True or not isinstance(ocr, dict):
-            raise ValueError('Plate model manifest must include the detector and matched OCR models/configurations')
-        expected = {model_name: {'sha256': manifest.get('sha256'), 'bytes': manifest.get('bytes')}, **ocr}
-        required = (model_name, 'plate_ocr_arabic_ppocrv3_mobile.onnx', 'plate_ocr_arabic_dict.json',
-            'plate_ocr_global_cct_s_v2.onnx', 'plate_ocr_global_cct_s_v2_plate_config.yaml',
-            'plate_ocr_global_cct_s_v2_model_config.yaml', 'LICENSE', 'NOTICE', 'README.md')
+        if model_name != 'plate_yolox_tiny_640.onnx':
+            raise ValueError('Plate model manifest must identify the plate-region detector')
+        expected = {model_name: {'sha256': manifest.get('sha256'), 'bytes': manifest.get('bytes')}}
+        required = (model_name, 'LICENSE', 'NOTICE', 'README.md')
     else:
         raise ValueError('Unknown model pack kind')
     for name in required:
@@ -162,8 +159,7 @@ def stage(project, runtime):
         shutil.copytree(plate_pack, output / 'model-packs' / 'license-plate-yolox')
         (output / 'PREVIEW-LIMITATIONS.txt').write_text(
             'This is a preview build, not an accepted production deployment.\n'
-            'Plate handling locates regions, saves chips, and shows primary Arabic/Persian+Latin OCR alongside an optional Latin-only global OCR suggestion. '
-            'Operators separately approve/correct/reject text; Persian digit recognition and target-country accuracy are unvalidated.\n'
+            'Plate handling locates regions and saves image chips for operator approval or rejection. It does not read plate text or infer vehicle identity.\n'
             'Vehicle and plate detector accuracy, Windows execution, offline install/update, '
             'LAN deployment, GPU support, and target-hardware performance are not accepted.\n'
             'The application includes still-image monitoring, CSV/XLSX export, video event review, '
@@ -176,7 +172,7 @@ def stage(project, runtime):
         shutil.rmtree(output, ignore_errors=True)
         raise
     print('Staged offline preview media:', output)
-    print('The bundle includes vehicle and plate detection/OCR models plus all runtime worker entry points.')
+    print('The bundle includes vehicle and plate-region detection models plus all runtime worker entry points.')
     print('Compile installer/windows/traffic-analysis.iss on Windows, inspect extracted payload, then test offline on a no-admin Windows account.')
     return output
 

@@ -33,7 +33,7 @@ class DatasetExportTests(unittest.TestCase):
             {'kind': 'vehicle', 'label': 'bus', 'box': [.4, .2, .2, .4],
              'origin': 'model', 'reviewed': True},
             {'kind': 'vehicle', 'label': 'bus', 'box': [.1, .1, .2, .2],
-             'origin': 'ocr', 'reviewed': True},
+             'origin': 'legacy-model-proposal', 'reviewed': True},
         ], 'Reviewer', role=role, status=status)
 
     def test_coco_export_preserves_roles_and_only_exports_human_boxes(self):

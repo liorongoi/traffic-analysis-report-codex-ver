@@ -31,7 +31,7 @@ class LearningCapabilityTests(unittest.TestCase):
             'background_model_refitting'], 'supported')
         self.assertIn('excluded', ' '.join(by_id['night-light.multinomial-correction-head']['limitations']))
         plate_limitations = ' '.join(by_id['plate-region.yolox-tiny']['limitations'])
-        self.assertIn('unverified suggestion', plate_limitations)
+        self.assertIn('no plate text', plate_limitations)
         self.assertIn('Identity lookup is excluded', plate_limitations)
 
 

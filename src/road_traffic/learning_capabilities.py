@@ -82,8 +82,7 @@ _CAPABILITIES = [
         },
         'available_controls': ['run-scoped detection threshold'],
         'limitations': ['No project training adapter or country-specific accuracy evidence.',
-            'Arabic/Persian and Latin OCR plus a second Latin-only global model are unverified suggestions; human review is recorded separately.',
-            'The global model is not used for Iran missions and does not provide a Lebanon region label.',
+            'Crop proposals require human approval; no plate text or region is inferred.',
             'Identity lookup is excluded.'],
     },
     {

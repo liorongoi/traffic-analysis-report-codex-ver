@@ -36,11 +36,10 @@ class UiBootstrapTests(unittest.TestCase):
         first_override = source.index('Object.assign(en,')
         self.assertLess(declaration, first_override)
 
-    def test_plate_ocr_help_describes_suggestions_without_overstating_accuracy(self):
+    def test_plate_help_describes_chip_approval_without_text_recognition(self):
         source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
-        self.assertIn('local OCR offers unverified letter/digit suggestions in Latin and Arabic/Persian scripts for human review', source)
-        self.assertIn('real-camera accuracy is not yet validated', source)
-        self.assertNotIn('no validated Persian/Arabic support', source)
+        self.assertIn('Plate-region detection saves image chips for operator approval or rejection; it does not read plate text.', source)
+        self.assertNotIn('OCR', source)
 
     def test_plate_crop_country_is_presented_as_mission_context_not_inference(self):
         source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')

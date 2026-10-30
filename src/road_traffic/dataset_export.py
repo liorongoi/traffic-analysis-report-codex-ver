@@ -185,7 +185,7 @@ def build(library, mission):
             manifest = {'format': 'RoadLoom COCO dataset v1', 'mission_id': mission,
                 'created_utc': datetime.now(timezone.utc).isoformat(), 'source_snapshot_max_rowid': snapshot_rowid,
                 'evidence_version_sha256': evidence_hash.hexdigest(),
-                'label_policy': 'Latest full image reviews only; explicit human reviewed non-rejected boxes only. Model proposals, OCR suggestions and bulk approvals are excluded. Partial reviews are excluded, not treated as negatives.',
+                'label_policy': 'Latest full image reviews only; explicit human reviewed non-rejected boxes only. Model proposals and bulk approvals are excluded. Partial reviews are excluded, not treated as negatives.',
                 'split_policy': 'Training, validation and test are preserved. Export stops on cross-split duplicate source hashes or known camera/hour overlap.',
                 'partial_reviews_excluded': partial_count, 'roles': counts, 'categories': category_rows,
                 'vehicle_identity_inference': False, 'source_images_are_copies': True}

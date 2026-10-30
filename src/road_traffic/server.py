@@ -281,16 +281,13 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 if parsed.path == '/api/plates':
                     from .plate_review import list_crops
                     return self.reply(200, list_crops(library,query['mission'][0],
-                        query.get('image',[None])[0],query.get('q',[''])[0]))
+                        query.get('image',[None])[0]))
                 if parsed.path == '/api/plates/page':
                     from .plate_review import list_crops_page
                     return self.reply(200,list_crops_page(library,query['mission'][0],
                         offset=int(query.get('offset',['0'])[0]),
                         limit=int(query.get('limit',['40'])[0]),
-                        image_id=query.get('image',[None])[0],search=query.get('q',[''])[0]))
-                if parsed.path == '/api/plates/metrics':
-                    from .plate_review import ocr_quality_report
-                    return self.reply(200,ocr_quality_report(library,query['mission'][0]))
+                        image_id=query.get('image',[None])[0]))
                 if parsed.path == '/api/plate-crop':
                     from .plate_review import crop_file
                     path=crop_file(library,query['mission'][0],query['crop'][0])
@@ -521,9 +518,6 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 elif self.path == '/api/plates/review':
                     from .plate_review import review
                     result=review(library,data['mission'],data['crop_id'],data['expected_revision'],data['decision'],data['operator'])
-                elif self.path == '/api/plates/text-review':
-                    from .plate_review import review_text
-                    result=review_text(library,data['mission'],data['crop_id'],data.get('expected_revision',0),data['decision'],data.get('verified_text',''),data['operator'])
                 elif self.path == '/api/plates/export':
                     from .plate_review import export_crops_csv
                     result=export_crops_csv(library,data['mission'])

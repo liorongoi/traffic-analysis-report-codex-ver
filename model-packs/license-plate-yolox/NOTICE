@@ -5,10 +5,3 @@ plate_yolox_tiny_640.onnx
 Produced by the open-lpr contributors. Architecture from YOLOX (Megvii-BaseDetection/YOLOX), under Apache-2.0. The model was pretrained on COCO and fine-tuned on an annotated license-plate corpus plus community-contributed images pseudo-labelled by a teacher model.
 
 The publisher states that some community-contributed photos containing real plates, faces, and vehicles were uploaded without consent obtained. Those source images are not published or included here. Ultralytics YOLO weights are not used or redistributed.
-
-plate_ocr_arabic_ppocrv3_mobile.onnx
-plate_ocr_arabic_dict.json
--------------------------------------
-The ONNX file is a format conversion of PaddleOCR's official `arabic_PP-OCRv3_mobile_rec` inference model, not a retrained model. Conversion provenance and immutable source revision are documented in `manifest.json`. PaddleOCR and its released model are Apache-2.0. The character dictionary is from the official PaddleOCR repository, with its Git blob pinned in the manifest.
-
-The model and dictionary are a matched pair. The dictionary has 161 characters; CTC output class count is 163 (blank, dictionary characters, and space). The model can suggest Latin and Arabic/Persian letters and digits. PaddleOCR's reported 73.55% accuracy is for general Arabic text, not license plates. Persian digit forms and country-specific plate text accuracy are unvalidated. Every suggestion needs human review.
