@@ -19,9 +19,12 @@ class LearningCapabilityTests(unittest.TestCase):
             self.assertTrue(algorithm['available_controls'])
             self.assertTrue(algorithm['limitations'])
 
-    def test_only_reviewed_light_classifier_and_background_builder_claim_learning(self):
+    def test_yolox_cli_and_reviewed_light_classifier_declare_their_learning_paths(self):
         by_id = {item['id']: item for item in inventory()}
-        self.assertEqual(by_id['vehicle-detector.yolox-s-coco']['methods']['fine_tuning'], 'not_implemented')
+        yolox = by_id['vehicle-detector.yolox-s-coco']
+        self.assertEqual(yolox['methods']['fine_tuning'], 'supported')
+        self.assertTrue(any('fine-tuning CLI' in item for item in yolox['available_controls']))
+        self.assertTrue(any('outside the in-app learning worker' in item for item in yolox['limitations']))
         self.assertEqual(by_id['night-light.multinomial-correction-head']['methods'][
             'downstream_classifier_training'], 'supported')
         self.assertEqual(by_id['night-background.per-view-reference']['methods'][

@@ -6,7 +6,7 @@ RoadLoom includes a COCO-pretrained YOLOX-S PyTorch baseline and can export an e
 
 1. In the app's learning panel, assign reviewed images to training, validation or test. Review each training and validation image completely; partial reviews are excluded. Keep related camera/hour captures in one split.
 2. Download **Export reviewed learning dataset** from the same panel.
-3. Install Python 3.10, CUDA-enabled PyTorch 2.5.1/torchvision 0.20.1, and the official YOLOX 0.3.0 package in a separate environment. The YOLOX source tree can also be used with `--yolox-root`. Install the YOLOX runtime's remaining requirements there, including ONNX and COCO evaluation dependencies. Use YOLOX's Windows JIT build requirements when training on Windows.
+3. Prepare Windows x64 Python 3.11 or 3.12, CUDA-enabled PyTorch 2.5.1/torchvision 0.20.1, and official YOLOX 0.3.0 in a separate environment. The offline bundle stager accepts only Python 3.11 and 3.12. The YOLOX source tree can also be used with `--yolox-root`. Install the YOLOX runtime's remaining requirements there, including ONNX and COCO evaluation dependencies. Use YOLOX's Windows JIT build requirements when training on Windows.
 4. From the repository root, run:
 
 ```powershell
