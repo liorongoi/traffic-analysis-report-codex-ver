@@ -60,10 +60,11 @@ def build(library, mission):
     partial_count = 0
     try:
         mission_settings = library.settings(mission)
-        target_country = mission_settings.get('country')
         if mission_settings['input_type'] != 'images':
             raise ValueError('Reviewed image datasets can only be exported from still-image missions')
         with library.connect(mission) as db:
+            mission_row = db.execute('SELECT country FROM mission WHERE id=?', (mission,)).fetchone()
+            target_country = mission_row['country'] if mission_row else None
             snapshot_rowid = db.execute('SELECT COALESCE(MAX(rowid),0) FROM images').fetchone()[0]
         categories = set()
         for row in library.iter_images(mission, batch_size=200, snapshot_rowid=snapshot_rowid):
