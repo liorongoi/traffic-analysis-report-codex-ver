@@ -127,7 +127,7 @@ class HttpTests(unittest.TestCase):
         self.assertIn('function timezoneCityMatches(query)',script)
         self.assertIn('function applyTimezoneCity(city)',script)
         self.assertNotIn('Continuous video monitoring is not implemented.',script)
-        self.assertIn('Continuous video monitoring can be enabled after an explicit detector and tracker policy is saved.',script)
+        self.assertIn('Continuous video monitoring requires an explicit saved detector and tracker policy',script)
         self.assertIn('correct_timing',script)
         self.assertIn('videoMetadataUnavailable',script)
         self.assertIn("action:'merge'",script)
