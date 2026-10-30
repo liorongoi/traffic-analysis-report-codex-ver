@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 15352)
-Total output lines: 953
-
 import csv
 import hashlib
 import io
@@ -237,7 +234,560 @@ class HttpTests(unittest.TestCase):
             self.assertIn('expanded',hardware['resource_profiles'])
             self.assertEqual(hardware['resource_profiles']['conservative']['workers'],1)
             self.assertEqual(hardware['storage_performance']['state'],'measured')
-            self.assertGreater…9352 tokens truncated…  self.assertEqual(report['images'][0]['predictions'],original)
+            self.assertGreater(hardware['storage_performance']['write_mib_s'],0)
+            with self.request('/api/learning/capabilities') as response:
+                capabilities=json.load(response)
+            self.assertIn('camera-view.geometry-proposer',{item['id'] for item in capabilities})
+            with self.request('/api/timezones') as response:
+                zones=json.load(response)
+            self.assertIn('Asia/Tehran',zones)
+            self.assertIn('Europe/Riga',zones)
+            for key in ('keyboardHelp','helpImport','helpSchedule','helpViews','helpReview','helpScope'):
+                self.assertIn(f'data-t="{key}"',page)
+    def test_write_requires_session_token(self):
+        with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},token=False)
+        self.assertEqual(exc.exception.code,403)
+
+    def test_mission_backup_api_creates_and_verifies_archive_outside_workspace(self):
+        from road_traffic.backup import create_backup
+        with self.request('/api/missions',{'name':'Backup API','country':'Latvia','zone':'Europe/Riga'}) as response:
+            mission=json.load(response)['id']
+        archive=Path(self.tmp.name).parent/f'roadloom-test-{uuid.uuid4()}.zip'
+        try:
+            with self.request('/api/missions/backup',{'mission':mission,'destination':str(archive)}) as response:
+                created=json.load(response)
+            self.assertTrue(archive.is_file())
+            self.assertEqual(created['mission_id'],mission)
+            with self.request('/api/missions/verify-backup',{'archive':str(archive)}) as response:
+                verified=json.load(response)
+            self.assertTrue(verified['valid'])
+            self.assertEqual(verified['mission_id'],mission)
+
+            source_library=Library(Path(self.tmp.name)/'backup-source-workspace')
+            restore_mission=source_library.create('Restore API','Iran','Asia/Tehran')
+            restore_archive=Path(self.tmp.name).parent/f'roadloom-restore-test-{uuid.uuid4()}.zip'
+            try:
+                create_backup(source_library,restore_mission,restore_archive)
+                with self.request('/api/missions/restore',{'archive':str(restore_archive)}) as response:
+                    restored=json.load(response)
+                self.assertEqual(restored['mission_id'],restore_mission)
+                with self.request('/api/session') as response:
+                    self.assertIn(restore_mission,{item['id'] for item in json.load(response)['missions']})
+            finally:
+                restore_archive.unlink(missing_ok=True)
+        finally:
+            archive.unlink(missing_ok=True)
+
+    def test_plate_review_api_is_chip_only(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            with self.request('/api/missions',{'name':'Plate chips only','country':'Lebanon',
+                    'zone':'Asia/Beirut','input_type':'images','analysis_mode':'license_plate',
+                    'output_root':output_dir}) as response:
+                mission=json.load(response)['id']
+            with self.request(f'/api/plates?mission={mission}') as response:
+                self.assertEqual(json.load(response),[])
+            with self.request(f'/api/plates/page?mission={mission}&limit=10&offset=0') as response:
+                page=json.load(response)
+            self.assertEqual((page['total'],page['items']),(0,[]))
+            for path,payload in ((f'/api/plates/metrics?mission={mission}',None),
+                    ('/api/plates/text-review',{'mission':mission,'crop_id':'x',
+                        'expected_revision':0,'decision':'accepted','verified_text':'ABC','operator':'Reviewer'})):
+                with self.assertRaises(urllib.error.HTTPError) as exc:
+                    self.request(path,payload)
+                self.assertEqual(exc.exception.code,404)
+
+    def test_cross_origin_write_rejected(self):
+        with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'Test'},headers={'Origin':'http://external.invalid'})
+        self.assertEqual(exc.exception.code,403)
+    def test_rebinding_host_rejected(self):
+        with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/session',headers={'Host':'external.invalid'})
+        self.assertEqual(exc.exception.code,403)
+    def test_create_empty_mission_and_export(self):
+        payload={'name':'בדיקת משימה','country':'Israel','zone':'Asia/Jerusalem','request_id':str(uuid.uuid4())}
+        try:
+            response=self.request('/api/missions',payload)
+        except (OSError,urllib.error.URLError):
+            # A socket may close after the server commits but before the client
+            # receives the response. Reissue the same idempotency key safely.
+            response=self.request('/api/missions',payload)
+        with response:
+            mission=json.load(response)['id']
+        with self.request('/api/missions',payload) as response:
+            self.assertEqual(json.load(response)['id'],mission)
+        with self.request('/api/images?mission='+mission) as response:self.assertEqual(json.load(response),[])
+        with self.request('/api/source-reconciliation?mission='+mission) as response:
+            self.assertEqual(json.load(response),{'candidates':[],'history':[]})
+        with self.request('/api/night-learning?mission='+mission) as response:
+            learning=json.load(response)
+        self.assertEqual(learning['evidence_inventory']['source'],'current mission only')
+        self.assertFalse(learning['evidence_inventory']['model_predictions_used_as_labels'])
+        self.assertEqual(learning['evidence_inventory']['roles']['training']['images'],0)
+        self.assertEqual(learning['evaluation']['test_regions'],0)
+        self.assertFalse(learning['evaluation']['already_evaluated'])
+        self.assertIsNone(learning['governance']['promoted_candidate_id'])
+        self.assertEqual(learning['governance']['history'],[])
+        capabilities={item['id']:item for item in learning['capabilities']}
+        self.assertEqual(capabilities['night-light.multinomial-correction-head']['methods'][
+            'downstream_classifier_training'],'supported')
+        self.assertEqual(capabilities['vehicle-detector.yolox-s-coco']['methods']['fine_tuning'],
+            'supported')
+        with self.request('/api/export?mission='+mission) as response:
+            rows=list(csv.reader(io.StringIO(response.read().decode('utf-8-sig'))))
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0][0],'image')
+
+    def test_learning_training_endpoint_queues_and_persists_background_job(self):
+        with self.request('/api/missions',{'name':'Background learning','country':'Israel',
+                'zone':'Asia/Jerusalem','request_id':str(uuid.uuid4())}) as response:
+            mission=json.load(response)['id']
+        with self.request('/api/night-learning/train',{'mission':mission}) as response:
+            queued=json.load(response)
+        self.assertEqual(queued['status'],'queued')
+        self.assertEqual(queued['kind'],'train')
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            with self.request('/api/night-learning?mission='+mission) as response:
+                info=json.load(response)
+            task=next(item for item in info['tasks'] if item['id']==queued['id'])
+            if task['status'] not in ('queued','running'):
+                break
+            time.sleep(.05)
+        self.assertEqual(task['status'],'completed')
+        self.assertEqual(task['result_status'],'needs_labels')
+
+    def test_heldout_evaluation_endpoint_returns_before_failure_is_recorded(self):
+        with self.request('/api/missions',{'name':'Background evaluation','country':'Israel',
+                'zone':'Asia/Jerusalem','request_id':str(uuid.uuid4())}) as response:
+            mission=json.load(response)['id']
+        with self.request('/api/night-learning/evaluate-test',{
+                'mission':mission,'candidate_id':'missing-candidate','operator':'Reviewer'}) as response:
+            queued=json.load(response)
+        self.assertEqual(queued['status'],'queued')
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            with self.request('/api/night-learning?mission='+mission) as response:
+                info=json.load(response)
+            task=next(item for item in info['tasks'] if item['id']==queued['id'])
+            if task['status'] not in ('queued','running'):
+                break
+            time.sleep(.05)
+        self.assertEqual(task['status'],'failed')
+        self.assertIn('No eligible independent test labels',task['error'])
+
+    def test_download_reviewed_learning_dataset(self):
+        from road_traffic.store import Library
+        workspace=Library(self.tmp.name)
+        mission=workspace.create('HTTP learning dataset','Israel','Asia/Jerusalem')
+        with tempfile.TemporaryDirectory() as external:
+            source=Path(external)
+            write_test_image(source/'17052026-1604-human.jpg')
+            workspace.import_folder(mission,source,'camera')
+        image=workspace.images(mission)[0]
+        workspace.review(mission,image['id'],0,[{'kind':'vehicle','label':'car',
+            'box':[.1,.1,.2,.2],'origin':'human','reviewed':True}],
+            'HTTP reviewer',role='training',status='reviewed')
+        with self.request('/api/learning/dataset?mission='+mission) as response:
+            self.assertEqual(response.headers['Content-Type'],'application/zip')
+            self.assertIn('RoadLoom-Learning-Dataset.zip',response.headers['Content-Disposition'])
+            package=zipfile.ZipFile(io.BytesIO(response.read()))
+        with package:
+            manifest=json.loads(package.read('dataset-manifest.json'))
+            labels=json.loads(package.read('training/annotations.json'))
+        self.assertEqual(manifest['roles']['training']['images'],1)
+        self.assertEqual(manifest['roles']['training']['annotations'],1)
+        self.assertEqual(labels['categories'][0]['name'],'vehicle:car')
+
+    def test_video_source_and_run_status_api(self):
+        with tempfile.TemporaryDirectory() as external:
+            source_root=Path(external)/'video-api-source'
+            source_root.mkdir()
+            (source_root/'intersection.mkv').write_bytes(b'video-fixture')
+            with self.request('/api/missions',{'name':'Video API fixture','country':'Israel','zone':'Asia/Jerusalem',
+                'input_type':'videos','analysis_mode':'video_traffic','source_root':str(source_root)}) as response:
+                mission=json.load(response)['id']
+            with self.request('/api/video/sources',{'mission':mission,'relative_path':'intersection.mkv',
+                'recording_start_utc':'2026-05-17T16:04:00+00:00','origin_provenance':'test metadata'}) as response:
+                source=json.load(response)
+            self.assertEqual(source['recording_start_utc'],'2026-05-17T16:04:00+00:00')
+            library=Library(Path(self.tmp.name))
+            run=video_store.create_run(library,mission,source['id'],{
+                'detector':{'version':'test','sha256':'test'},
+                'tracker_policy':{'max_gap_seconds':[1,2],'minimum_iou':.2,
+                    'max_center_distance':.2,'association_margin':.05,'compatible_label_groups':[]}})
+            event_id='clip-estimate-api-event'
+            with library.connect(mission) as conn:
+                conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                    first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,
+                    last_time_base_den,first_offset_num,first_offset_den,last_offset_num,last_offset_den,
+                    first_utc,last_utc,labels,observation_count,association_uncertain,uncertainty_reasons,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (event_id,mission,run['id'],source['id'],'track-a',8,1,10,30,1,10,
+                     4,5,3,1,None,None,'["car"]',2,0,'[]','now'))
+            media_path=f"/api/video/media?mission={mission}&source={source['id']}"
+            with self.request(media_path,headers={'Range':'bytes=1-4'}) as response:
+                self.assertEqual(response.status,206)
+                self.assertEqual(response.headers['Content-Range'],'bytes 1-4/13')
+                self.assertEqual(response.headers['Accept-Ranges'],'bytes')
+                self.assertEqual(response.read(),b'ideo')
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self.request(media_path,headers={'Range':'bytes=99-'})
+            self.assertEqual(exc.exception.code,416)
+            with self.request('/api/video/sources?mission='+mission) as response:
+                self.assertEqual(json.load(response)[0]['id'],source['id'])
+            with self.request('/api/video/runs?mission='+mission) as response:
+                runs=json.load(response)
+            self.assertEqual(len(runs),1)
+            self.assertEqual(runs[0]['id'],run['id'])
+            self.assertEqual(runs[0]['status'],'failed')
+            self.assertIn('worker exited unexpectedly',runs[0]['error'])
+            with self.request('/api/video/clips?mission='+mission) as response:
+                self.assertEqual(json.load(response),[])
+            estimate_path=(f"/api/video/clips/estimate?mission={mission}&event_id={event_id}"
+                '&pre_seconds=0.2&post_seconds=0.2')
+            with self.request(estimate_path) as response:
+                estimate=json.load(response)
+            self.assertIsNone(estimate['estimated_size_bytes'])
+            self.assertEqual(estimate['basis'],'unavailable')
+            estimate_path=f"/api/video/clips/estimate?mission={mission}&event_id=missing&pre_seconds=1&post_seconds=1"
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self.request(estimate_path)
+            self.assertEqual(exc.exception.code,400)
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self.request('/api/video/clips',{'mission':mission,'event_id':'missing',
+                    'pre_seconds':1,'post_seconds':1,'operator':'Operator'})
+            self.assertEqual(exc.exception.code,400)
+
+    def test_continuous_video_requires_and_persists_explicit_policy(self):
+        with tempfile.TemporaryDirectory() as external:
+            source_root=Path(external)/'continuous-video-source';source_root.mkdir()
+            with self.request('/api/missions',{'name':'Continuous video policy','country':'Israel',
+                    'zone':'Asia/Jerusalem','input_type':'videos','analysis_mode':'video_traffic',
+                    'processing_mode':'continuous','source_root':str(source_root)}) as response:
+                mission=json.load(response)['id']
+            state={}
+            for _ in range(40):
+                with self.request('/api/monitoring?mission='+mission) as response:state=json.load(response)
+                if state['status']=='policy_required':break
+                time.sleep(.05)
+            self.assertEqual(state['status'],'policy_required')
+            policy={'mission':mission,'threshold':.2,'tiled':False,'target_labels':['car'],'resource_profile':'expanded',
+                'tracker_policy':{'max_gap_seconds':'1/2','minimum_iou':.2,
+                    'max_center_distance':.15,'association_margin':.05,
+                    'compatible_label_groups':[],'scene_cut_threshold':.65}}
+            with self.request('/api/video/monitor-policy',policy) as response:
+                self.assertTrue(json.load(response)['saved'])
+            from road_traffic.store import Library
+            saved=Library(Path(self.tmp.name)).settings(mission)['continuous_video_policy']
+            self.assertEqual(saved['target_labels'],['car'])
+            self.assertEqual(saved['resource_profile'],'expanded')
+            self.assertEqual(saved['tracker_policy']['max_gap_seconds'],[1,2])
+            self.assertEqual(saved['tracker_policy']['scene_cut_threshold'],.65)
+
+    def test_video_event_table_export_api_writes_and_downloads_configured_formats(self):
+        from road_traffic.store import Library
+        from road_traffic.video_store import create_run, register_video
+        with tempfile.TemporaryDirectory() as external:
+            source_root=Path(external)/'video-sources';source_root.mkdir()
+            output_root=Path(external)/'video-exports';output_root.mkdir()
+            (source_root/'כביש.mp4').write_bytes(b'video API fixture')
+            with self.request('/api/missions',{'name':'Video event export API','country':'Israel',
+                    'zone':'Asia/Jerusalem','input_type':'videos','analysis_mode':'video_traffic',
+                    'source_root':str(source_root),'output_root':str(output_root),
+                    'export_formats':['csv','xlsx']}) as response:
+                mission=json.load(response)['id']
+            library=Library(self.tmp.name)
+            source=register_video(library,mission,'כביש.mp4')
+            run=create_run(library,mission,source['id'],{'detector':{'version':'api','sha256':'api'},
+                'tracker_policy':{'max_gap_seconds':[1,2],'minimum_iou':.2,'max_center_distance':.2,
+                    'association_margin':.05,'compatible_label_groups':[]}})
+            with library.connect(mission) as conn:
+                conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                    first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,last_time_base_den,
+                    first_offset_num,first_offset_den,last_offset_num,last_offset_den,first_utc,last_utc,labels,
+                    observation_count,association_uncertain,uncertainty_reasons,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    ('api-event',mission,run['id'],source['id'],'track-api',0,1,1000,100,1,1000,
+                     0,1,1,10,None,None,'["car"]',2,0,'[]','2026-10-25T00:00:00+00:00'))
+            with self.request('/api/video/event-exports',{'mission':mission,'run':run['id'],
+                    'operator':'API reviewer'}) as response:
+                result=json.load(response)
+            self.assertEqual(result['status'],'completed')
+            self.assertEqual({item['format'] for item in result['files']},{'csv','xlsx'})
+            with self.request('/api/video/event-exports?mission='+mission+'&run='+run['id']) as response:
+                history=json.load(response)
+            self.assertEqual(len(history),2)
+            csv_export=next(item for item in result['files'] if item['format']=='csv')
+            with self.request(csv_export['download_url']) as response:
+                self.assertEqual(response.headers['Content-Type'],'text/csv; charset=utf-8')
+                self.assertIn('api-event',response.read().decode('utf-8-sig'))
+
+    def test_plate_crop_detector_http_flow_uses_local_model_and_output_folder(self):
+        with tempfile.TemporaryDirectory() as external:
+            root=Path(external);source=root/'source';output=root/'output'
+            source.mkdir();output.mkdir();write_test_image(source/'17052026-1604-camera.jpg',(0,0,0))
+            data={'name':'Plate crop API fixture','country':'Israel','zone':'Asia/Jerusalem',
+                'input_type':'images','analysis_mode':'license_plate','source_root':str(source),
+                'output_root':str(output)}
+            with self.request('/api/missions',data) as response:mission=json.load(response)['id']
+            with self.request('/api/import',{'mission':mission,'path':str(source),'preset':'camera'}) as response:
+                json.load(response)
+            with self.request('/api/images?mission='+mission) as response:image=json.load(response)[0]
+            if not local_plate_runtime_available():
+                with self.assertRaises(urllib.error.HTTPError) as exc:
+                    self.request('/api/plates/detect',{'mission':mission,'image_id':image['id']})
+                self.assertEqual(exc.exception.code,400)
+                self.assertIn("module 'cv2'",exc.exception.read().decode())
+                return
+            with self.request('/api/plates/detect',{'mission':mission,'image_id':image['id']}) as response:
+                proposals=json.load(response)
+            with self.request('/api/plates?mission='+mission) as response:saved=json.load(response)
+            self.assertEqual(len(proposals),len(saved))
+            self.assertTrue((output/'plate-crops'/mission/'review.sqlite3').is_file())
+            for crop in saved:
+                self.assertEqual(crop['source_name'],image['name'])
+                self.assertEqual((crop['mission_country_context'],crop['country_context_basis']),
+                    ('Israel','mission_configuration'))
+                self.assertNotIn('text',crop);self.assertNotIn('ocr',crop)
+                with self.request(f"/api/plate-crop?mission={mission}&crop={crop['id']}") as response:
+                    self.assertEqual(response.headers['Content-Type'],'image/jpeg')
+                    self.assertTrue(response.read())
+
+    def test_invalid_body_returns_error(self):
+        with self.assertRaises(urllib.error.HTTPError) as exc:self.request('/api/missions',{'name':'x','country':'Israel','zone':'bad/zone'})
+        self.assertEqual(exc.exception.code,400)
+
+    def test_offline_object_search_interpret_confirm_and_execute(self):
+        with self.request('/api/missions',{'name':'Search fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        with self.request('/api/object-search/interpret',{'mission':mission,'query':'Find red pickup trucks'}) as response:
+            spec=json.load(response)['spec']
+        self.assertEqual(spec['categories'],['truck'])
+        self.assertTrue(spec['operator_confirmation_required'])
+        self.assertIsNone(spec['scope_snapshot'])
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            self.request('/api/object-search/execute',{'mission':mission,'spec':spec,'confirmed':False})
+        self.assertEqual(exc.exception.code,400)
+        with self.request('/api/object-search/execute',{'mission':mission,'spec':spec,'confirmed':True}) as response:
+            result=json.load(response)
+        self.assertEqual(result['matched_images'],0)
+        self.assertEqual(result['matched_objects'],0)
+
+    def test_video_object_search_interpret_confirm_and_open_saved_event(self):
+        with tempfile.TemporaryDirectory() as video_input:
+            root=Path(video_input)
+            (root/'traffic.mkv').write_bytes(b'http-video-search-fixture')
+            self._assert_video_object_search_api(root)
+
+    def _assert_video_object_search_api(self, root):
+        library=Library(self.tmp.name)
+        mission=library.create('Video search API','Israel','Asia/Jerusalem',{
+            'input_type':'videos','analysis_mode':'video_traffic','source_root':str(root),'output_root':''})
+        source=video_store.register_video(library,mission,'traffic.mkv',
+            recording_start_utc=datetime(2026,5,17,14,0,tzinfo=timezone.utc),
+            origin_provenance='operator confirmed from recorder log')
+        run=video_store.create_run(library,mission,source['id'],{
+            'detector':{'version':'fixture','sha256':'fixture'},
+            'tracker_policy':{'max_gap_seconds':[1,2],'minimum_iou':.2,'max_center_distance':.15,
+                'association_margin':.05,'compatible_label_groups':[]}})
+        event_id='video-search-api-event'
+        with library.connect(mission) as conn:
+            conn.execute("UPDATE video_runs SET status='completed',stage='completed' WHERE id=?",(run['id'],))
+            conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
+                first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,last_time_base_den,
+                first_offset_num,first_offset_den,last_offset_num,last_offset_den,first_utc,last_utc,labels,
+                observation_count,association_uncertain,representative_box,uncertainty_reasons,created)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (event_id,mission,run['id'],source['id'],'video-search-track',1800,1,1,1800,1,1,1800,1,1800,1,
+                 '2026-05-17T14:30:00+00:00','2026-05-17T14:30:00+00:00','["truck"]',2,0,
+                 '[0.1,0.1,0.2,0.2]','[]','2026-05-17T14:00:00+00:00'))
+        with self.request('/api/object-search/interpret',{'mission':mission,'run':run['id'],
+                'query':'Find trucks on Sunday between 17:00 and 20:00'}) as response:
+            spec=json.load(response)['spec']
+        self.assertEqual(spec['media_type'],'videos')
+        self.assertEqual(spec['scope_snapshot']['run_id'],run['id'])
+        with self.request('/api/object-search/execute',{'mission':mission,'run':run['id'],
+                'spec':spec,'confirmed':True}) as response:
+            result=json.load(response)
+        self.assertEqual(result['matched_events'],1)
+        self.assertEqual(result['results'][0]['event_id'],event_id)
+        self.assertEqual(result['results'][0]['source_relative_path'],'traffic.mkv')
+
+    def test_view_proposals_route_is_local_and_still_image_scoped(self):
+        with self.request('/api/missions',{'name':'View proposal fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        if not local_view_runtime_available():
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                self.request('/api/views/proposals',{'mission':mission})
+            self.assertEqual(exc.exception.code,400)
+            self.assertIn('Local OpenCV/NumPy runtime is required',exc.exception.read().decode())
+        else:
+            with self.request('/api/views/proposals',{'mission':mission}) as response:
+                result=json.load(response)
+            self.assertEqual(result['available_images'],0)
+            self.assertEqual(result['groups'],[])
+        with self.request('/api/missions',{'name':'Video view fixture','country':'Israel','zone':'Asia/Jerusalem',
+                'input_type':'videos','analysis_mode':'video_traffic'}) as response:
+            video_mission=json.load(response)['id']
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            self.request('/api/views/proposals',{'mission':video_mission})
+        self.assertEqual(exc.exception.code,400)
+
+    def test_scan_window_api_round_trip_and_validation(self):
+        with self.request('/api/missions',{'name':'Schedule fixture','country':'Latvia','zone':'Europe/Riga'}) as response:
+            mission=json.load(response)['id']
+        window={'weekdays':[6],'start_date':'2026-01-01','end_date':'2026-12-31',
+            'start_time':'17:00','end_time':'05:00'}
+        with self.request('/api/scan-windows',{'mission':mission,'window':window}) as response:
+            created=json.load(response)
+        with self.request('/api/scan-windows?mission='+mission) as response:
+            rows=json.load(response)
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['id'],created['id'])
+        self.assertEqual(rows[0]['weekdays'],[6])
+        with self.assertRaises(urllib.error.HTTPError) as exc:
+            self.request('/api/scan-windows',{'mission':mission,'window':{**window,'end_time':'17:00'}})
+        self.assertEqual(exc.exception.code,400)
+        with self.request('/api/scan-windows',{'mission':mission,'action':'delete','id':created['id']}) as response:
+            self.assertTrue(json.load(response)['deleted'])
+        with self.request('/api/scan-windows?mission='+mission) as response:
+            self.assertEqual(json.load(response),[])
+
+    def test_camera_view_api_records_assignment_history(self):
+        from road_traffic.store import Library
+        with self.request('/api/missions',{'name':'View fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        lib=Library(self.tmp.name)
+        with tempfile.TemporaryDirectory() as source:
+            write_test_image(Path(source)/'17052026-1604-view.jpg')
+            lib.import_folder(mission,source,'camera')
+        image=lib.images(mission)[0]['id']
+        with self.request('/api/views',{'mission':mission,'action':'create','name':'Gate A','operator':'Operator'}) as response:
+            view=json.load(response)
+        with self.request('/api/views',{'mission':mission,'action':'assign','image_id':image,'view_id':view['id'],'operator':'Operator'}) as response:
+            self.assertEqual(json.load(response)['revision'],1)
+        with self.request('/api/view-history?mission='+mission+'&image='+image) as response:
+            history=json.load(response)
+        self.assertEqual(history[0]['view_name'],'Gate A')
+        with self.request('/api/images?mission='+mission) as response:
+            result=json.load(response)[0]
+        self.assertEqual(result['view_name'],'Gate A')
+        self.assertEqual(result['review_status'],'unreviewed')
+        self.assertEqual(result['inference_status'],'not_run')
+        with self.request('/api/views?mission='+mission) as response:
+            self.assertEqual(json.load(response)[0]['image_count'],1)
+
+    def test_batch_camera_view_api_assignment(self):
+        from road_traffic.store import Library
+        with self.request('/api/missions',{'name':'Batch view fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        lib=Library(self.tmp.name)
+        with tempfile.TemporaryDirectory() as source:
+            write_test_image(Path(source)/'17052026-1604-view-a.jpg')
+            write_test_image(Path(source)/'17052026-1605-view-b.jpg',(55,85,125))
+            lib.import_folder(mission,source,'camera')
+        images=lib.images(mission)
+        with self.request('/api/views',{'mission':mission,'action':'create','name':'Approach A','operator':'Operator'}) as response:
+            view=json.load(response)
+        with self.request('/api/views',{'mission':mission,'action':'assign_many','image_ids':[row['id'] for row in images],
+            'view_id':view['id'],'operator':'Operator'}) as response:
+            self.assertEqual(json.load(response)['changed'],2)
+        with self.request('/api/views?mission='+mission) as response:
+            self.assertEqual(json.load(response)[0]['image_count'],2)
+        for row in images:
+            with self.request('/api/view-history?mission='+mission+'&image='+row['id']) as response:
+                self.assertEqual(json.load(response)[0]['view_name'],'Approach A')
+
+    def test_camera_view_merge_api_archives_source_and_keeps_assignment_audit(self):
+        from road_traffic.store import Library
+        with self.request('/api/missions',{'name':'Merge view fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        lib=Library(self.tmp.name)
+        with tempfile.TemporaryDirectory() as source:
+            write_test_image(Path(source)/'17052026-1604-view-a.jpg')
+            write_test_image(Path(source)/'17052026-1605-view-b.jpg',(55,85,125))
+            lib.import_folder(mission,source,'camera')
+        images=lib.images(mission)
+        views=[]
+        for name in ('North','South'):
+            with self.request('/api/views',{'mission':mission,'action':'create','name':name,'operator':'Operator'}) as response:
+                views.append(json.load(response))
+        with self.request('/api/views',{'mission':mission,'action':'assign','image_id':images[0]['id'],
+            'view_id':views[0]['id'],'operator':'Operator'}) as response:json.load(response)
+        with self.request('/api/views',{'mission':mission,'action':'merge','source_id':views[0]['id'],
+            'target_id':views[1]['id'],'operator':'Reviewer'}) as response:
+            self.assertEqual(json.load(response)['moved_images'],1)
+        with self.request('/api/views?mission='+mission) as response:
+            groups={item['id']:item for item in json.load(response)}
+        self.assertEqual(groups[views[0]['id']]['merged_into'],views[1]['id'])
+        self.assertEqual(groups[views[1]['id']]['image_count'],1)
+        with self.request('/api/view-history?mission='+mission+'&image='+images[0]['id']) as response:
+            history=json.load(response)
+        self.assertEqual([item['view_id'] for item in history],[views[0]['id'],views[1]['id']])
+
+    def test_view_region_api_round_trip_and_append_only_history(self):
+        from road_traffic.store import Library
+        with self.request('/api/missions',{'name':'Region fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        lib=Library(self.tmp.name)
+        with tempfile.TemporaryDirectory() as source:
+            write_test_image(Path(source)/'17052026-1604-region.jpg')
+            lib.import_folder(mission,source,'camera')
+        image=lib.images(mission)[0]['id']
+        with self.request('/api/views',{'mission':mission,'action':'create','name':'Gate B','operator':'Operator'}) as response:
+            view=json.load(response)
+        with self.request('/api/views',{'mission':mission,'action':'assign','image_id':image,'view_id':view['id'],'operator':'Operator'}) as response:
+            self.assertEqual(json.load(response)['revision'],1)
+        polygon=[[.1,.1],[.9,.1],[.9,.9],[.1,.9]]
+        with self.request('/api/view-regions',{'mission':mission,'action':'create','view_id':view['id'],
+            'kind':'include','name':'Northbound lane','polygon':polygon,'operator':'Operator'}) as response:
+            region=json.load(response)
+        self.assertEqual(region['name'],'Northbound lane')
+        with self.request('/api/view-regions?mission='+mission+'&view_id='+view['id']) as response:
+            self.assertEqual(json.load(response)[0]['region_key'],region['region_key'])
+        with self.request('/api/view-regions',{'mission':mission,'action':'update','region_id':region['region_key'],
+            'kind':'exclude','name':'Bus bay','polygon':polygon,'operator':'Operator'}) as response:
+            updated=json.load(response)
+        self.assertEqual((updated['revision'],updated['name']),(2,'Bus bay'))
+        with self.request('/api/view-region-history?mission='+mission+'&view_id='+view['id']) as response:
+            history=json.load(response)
+        self.assertEqual([entry['action'] for entry in history],['upsert','upsert'])
+        self.assertEqual([entry['name'] for entry in history],['Northbound lane','Bus bay'])
+        with self.request('/api/view-regions',{'mission':mission,'action':'delete','region_id':region['region_key'],
+            'operator':'Operator'}) as response:
+            self.assertTrue(json.load(response)['deleted'])
+        with self.request('/api/view-regions?mission='+mission+'&view_id='+view['id']) as response:
+            self.assertEqual(json.load(response),[])
+
+    def test_selected_report_and_rejected_export_counts(self):
+        from road_traffic.store import Library
+        from road_traffic.inference_store import create_run
+        with self.request('/api/missions',{'name':'Export fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
+            mission=json.load(response)['id']
+        lib=Library(self.tmp.name)
+        with tempfile.TemporaryDirectory() as source:
+            write_test_image(Path(source)/'17052026-1604-fixture.jpg')
+            lib.import_folder(mission,source,'camera')
+        image=lib.images(mission)[0]['id'];run=create_run(lib,mission,{'adapter':'explicit-test-fixture'})
+        original=[{'kind':'candidate','label':'car','box':[.1,.1,.1,.1],'origin':'model'},
+                  {'kind':'candidate','label':'truck','box':[.5,.5,.1,.1],'origin':'model'}]
+        with lib.connect(mission) as conn:
+            conn.execute('INSERT INTO predictions VALUES (?,?,?,?,?,?)',(run,image,json.dumps(original),'{}',.1,None))
+            conn.execute("UPDATE inference_runs SET status='completed' WHERE id=?",(run,))
+        review=[{**original[0],'kind':'vehicle'},{**original[1],'kind':'vehicle','rejected':True}]
+        with self.request('/api/review',{'mission':mission,'image':image,'revision':0,'annotations':review,
+            'operator':'=formula-test','role':'none','status':'partial','prediction_run':run}) as response:
+            self.assertEqual(json.load(response)['revision'],1)
+        with self.request('/api/export?mission='+mission+'&run='+run) as response:
+            rows=list(csv.DictReader(io.StringIO(response.read().decode('utf-8-sig'))))
+        self.assertEqual(rows[0]['confirmed_vehicles'],'1')
+        self.assertEqual(rows[0]['prediction_run'],run)
+        self.assertEqual(rows[0]['review_prediction_run'],run)
+        self.assertEqual(rows[0]['operator'],"'=formula-test")
+        self.assertEqual(json.loads(rows[0]['original_predictions']),original)
+        with self.request('/api/inference/report?mission='+mission+'&run='+run) as response:
+            report=json.load(response)
+        self.assertEqual(report['run']['id'],run)
+        self.assertEqual(report['images'][0]['predictions'],original)
 
     def test_inference_report_rejects_unknown_run(self):
         with self.request('/api/missions',{'name':'Report fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:
