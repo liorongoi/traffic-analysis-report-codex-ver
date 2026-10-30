@@ -39,12 +39,17 @@ class DatasetExportTests(unittest.TestCase):
     def test_coco_export_preserves_roles_and_only_exports_human_boxes(self):
         self._label(self.images[0], 'training')
         self._label(self.images[1], 'validation')
+        view = self.library.create_view(self.mission, 'North entrance', 'Reviewer')
+        self.library.assign_view(self.mission, self.images[0]['id'], view['id'], 'Reviewer')
         temporary, archive_path = build(self.library, self.mission)
         try:
             with zipfile.ZipFile(archive_path) as archive:
                 manifest = json.loads(archive.read('dataset-manifest.json'))
                 training = json.loads(archive.read('training/annotations.json'))
                 validation = json.loads(archive.read('validation/annotations.json'))
+                self.assertEqual(training['images'][0]['country'], 'Israel')
+                self.assertEqual(training['images'][0]['country_context_basis'], 'mission_configuration')
+                self.assertEqual(training['images'][0]['camera_view'], view['id'])
                 self.assertIn('training/images/', '\n'.join(archive.namelist()))
                 self.assertEqual(manifest['roles']['training']['images'], 1)
                 self.assertEqual(manifest['roles']['training']['annotations'], 1)

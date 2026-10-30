@@ -54,12 +54,14 @@ def build(library, mission):
     conn.execute('''CREATE TABLE records (
         role TEXT NOT NULL, image_id TEXT NOT NULL, sha256 TEXT NOT NULL,
         name TEXT NOT NULL, capture_utc TEXT NOT NULL, revision INTEGER NOT NULL,
-        annotations TEXT NOT NULL, view_hour TEXT, PRIMARY KEY(role, image_id))''')
+        annotations TEXT NOT NULL, view_hour TEXT, view_id TEXT, PRIMARY KEY(role, image_id))''')
     conn.execute('CREATE INDEX record_hash ON records(sha256)')
     snapshot_rowid = 0
     partial_count = 0
     try:
-        if library.settings(mission)['input_type'] != 'images':
+        mission_settings = library.settings(mission)
+        target_country = mission_settings.get('country')
+        if mission_settings['input_type'] != 'images':
             raise ValueError('Reviewed image datasets can only be exported from still-image missions')
         with library.connect(mission) as db:
             snapshot_rowid = db.execute('SELECT COALESCE(MAX(rowid),0) FROM images').fetchone()[0]
@@ -78,9 +80,10 @@ def build(library, mission):
             if not view and json.loads(row.get('provenance') or '{}').get('preset') == 'fintraffic':
                 view = Path(row['name']).stem.split('_')[0]
             view_hour = f"{view}\0{row['capture_utc'][:13]}" if view else None
-            conn.execute('INSERT OR IGNORE INTO records VALUES (?,?,?,?,?,?,?,?)',
+            conn.execute('INSERT OR IGNORE INTO records VALUES (?,?,?,?,?,?,?,?,?)',
                 (role, row['id'], row['sha256'], row['name'], row['capture_utc'],
-                 row['revision'], json.dumps(regions, ensure_ascii=False, separators=(',', ':')), view_hour))
+                 row['revision'], json.dumps(regions, ensure_ascii=False, separators=(',', ':')),
+                 view_hour, view or None))
         conn.commit()
         if not categories:
             raise ValueError('No explicit reviewed human labels are available for dataset export')
@@ -114,8 +117,8 @@ def build(library, mission):
                 with archive.open(images_member, 'w') as stream:
                     stream.write(b'[')
                     first = True
-                    for image_id, sha, name, capture_utc, revision in conn.execute(
-                            'SELECT image_id,sha256,name,capture_utc,revision FROM records WHERE role=? ORDER BY capture_utc,name,image_id', (role,)):
+                    for image_id, sha, name, capture_utc, revision, view_id in conn.execute(
+                            'SELECT image_id,sha256,name,capture_utc,revision,view_id FROM records WHERE role=? ORDER BY capture_utc,name,image_id', (role,)):
                         source = library.image_path(mission, image_id)
                         from PIL import Image
                         with Image.open(source) as image:
@@ -123,7 +126,10 @@ def build(library, mission):
                         item = {'id': _image_numeric_id(image_id), 'file_name': f'images/{image_id}{source.suffix.lower()}',
                             'width': width, 'height': height, 'capture_utc': capture_utc,
                             'source_id': image_id, 'source_sha256': sha,
-                            'review_revision': revision, 'review_role': role}
+                            'review_revision': revision, 'review_role': role,
+                            'country': target_country, 'mission_country_context': target_country,
+                            'camera_view': view_id, 'view_id': view_id,
+                            'country_context_basis': 'mission_configuration'}
                         if not first:
                             stream.write(b',')
                         stream.write(json.dumps(item, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
@@ -135,8 +141,8 @@ def build(library, mission):
                     stream.write(b'{"images":')
                     stream.write(b'[')
                     first_image = True
-                    for image_id, sha, capture_utc, revision in conn.execute(
-                            'SELECT image_id,sha256,capture_utc,revision FROM records WHERE role=? ORDER BY capture_utc,name,image_id', (role,)):
+                    for image_id, sha, capture_utc, revision, view_id in conn.execute(
+                            'SELECT image_id,sha256,capture_utc,revision,view_id FROM records WHERE role=? ORDER BY capture_utc,name,image_id', (role,)):
                         source = library.image_path(mission, image_id)
                         from PIL import Image
                         with Image.open(source) as image:
@@ -145,7 +151,10 @@ def build(library, mission):
                             'file_name': f'images/{image_id}{source.suffix.lower()}',
                             'width': width, 'height': height, 'capture_utc': capture_utc,
                             'source_id': image_id, 'source_sha256': sha,
-                            'review_revision': revision, 'review_role': role}
+                            'review_revision': revision, 'review_role': role,
+                            'country': target_country, 'mission_country_context': target_country,
+                            'camera_view': view_id, 'view_id': view_id,
+                            'country_context_basis': 'mission_configuration'}
                         if not first_image:
                             stream.write(b',')
                         stream.write(json.dumps(item, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
@@ -186,6 +195,7 @@ def build(library, mission):
                 'created_utc': datetime.now(timezone.utc).isoformat(), 'source_snapshot_max_rowid': snapshot_rowid,
                 'evidence_version_sha256': evidence_hash.hexdigest(),
                 'label_policy': 'Latest full image reviews only; explicit human reviewed non-rejected boxes only. Model proposals and bulk approvals are excluded. Partial reviews are excluded, not treated as negatives.',
+                'country_context_basis': 'mission_configuration; not inferred from image contents',
                 'split_policy': 'Training, validation and test are preserved. Export stops on cross-split duplicate source hashes or known camera/hour overlap.',
                 'partial_reviews_excluded': partial_count, 'roles': counts, 'categories': category_rows,
                 'vehicle_identity_inference': False, 'source_images_are_copies': True}

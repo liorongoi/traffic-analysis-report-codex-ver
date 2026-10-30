@@ -50,3 +50,14 @@ Compare a simple baseline with compatible pretrained vehicle/small-object detect
 Frozen dataset manifests: source identifier, retrieval date, file checksums, split IDs, camera/view/time groups, label schema and transformation versions. Keep train/validation/test disjoint by related captures, recordings, and near-duplicate plate strings. Background warm-up rules must be declared; no hidden use of future test frames or labels.
 
 Report vehicle Precision/Recall/F1/AP, per-image count error, candidate false alarms/acceptance, tracking identity consistency/duplicate events, plate-chip crop precision/recall and human approval/rejection, throughput/latency/peak RAM/VRAM/storage. Break down by view/country/condition/profile. Do not use algorithm scores as measured accuracy. Acceptance thresholds await operator agreement.
+
+## Offline detection benchmark commands
+
+Use a frozen RoadLoom COCO ZIP split to generate predictions and score them without network access:
+
+```powershell
+python scripts/predict-detection-benchmark.py --dataset-zip D:\\RoadLoom\\reviewed.zip --model-pack model-packs\\yolox-s --model-kind vehicle --split test --hardware-profile 16GB --output D:\\RoadLoom\\vehicle-predictions.json
+python scripts/evaluate-detection-benchmark.py --ground-truth D:\\RoadLoom\\reviewed.zip --predictions D:\\RoadLoom\\vehicle-predictions.json --split test --report D:\\RoadLoom\\vehicle-report.json
+```
+
+For plate-region chips, set `--model-kind plate` and select the plate-localization model pack. The evaluator reports box precision/recall/F1, AP50 and mAP50:95, false alarms per image, per-image count error, and available country/condition/view/hardware strata. An optional per-image metadata JSON can supply `country`, `condition`, `camera_view`, and `hardware_profile`. The vehicle prediction command measures the standalone YOLOX detector; it does not measure the separate night-light hypotheses, background logic, scan masks, ROI restriction, road masks, or complete traffic pipeline. Plate scoring measures region localization only and never reads plate text. These commands calculate metrics but do not establish accuracy until run against a complete, independently labeled representative test split.
