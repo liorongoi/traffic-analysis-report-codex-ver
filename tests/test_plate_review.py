@@ -3,6 +3,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 from PIL import Image
 import numpy as np
@@ -122,7 +123,7 @@ class PlateCropReviewTests(unittest.TestCase):
             def cvtColor(image,_):return image[:,:,0]
             @staticmethod
             def Laplacian(gray,_):return gray.astype(float)
-        value=_laplacian_variance(CV,np.dstack([np.arange(100).reshape(10,10)]*3))
+        value=_laplacian_variance(CV,np,np.dstack([np.arange(100).reshape(10,10)]*3))
         self.assertGreater(value,0)
 
     def test_video_frame_crops_keep_pts_utc_and_context(self):
