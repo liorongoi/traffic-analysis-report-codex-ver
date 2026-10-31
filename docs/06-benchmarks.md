@@ -41,7 +41,14 @@ These sources are technical leads only. Their camera view, actual files, labels,
 - The [TIme Square Intersection dataset](https://personal.ie.cuhk.edu.hk/~ccloy/downloads_qmul_TISI_dataset.html) provides GMT-named image sequences at approximately 10 Hz rather than video clips.
 - The official [AAU MTID page](https://vap.aau.dk/mtid/) links to a multi-view traffic dataset hosted through Kaggle; timezone-aware capture/PTS mapping is not established in the public description.
 
-No candidate has been acquired or accepted as a representative fixed-camera/verified-UTC fixture. No further reuse-rights research is part of this project task.
+### Additional source review (2026-10-31)
+
+- [ForeSpeed](https://github.com/ampedsoftware/forespeed) describes 322 CCTV videos of 14 physical vehicle passes across six camera systems, preserving presentation timestamps for variable-frame-rate videos where available. The repository reports per-pass speed ground truth in the paper appendix. It could support codec/PTS and event-lifecycle smoke checks after inspecting the actual files, but it is not a traffic-volume benchmark and the repository page does not establish absolute capture UTC or dense per-frame traffic labels.
+- [Intersection Monitoring](https://zenodo.org/records/7727882) describes two fixed infrastructure-camera image sequences at 25 fps with synchronized 20 Hz GNSS vehicle traces and camera calibration. The published time field is HHMMSSss; the record does not establish a date, timezone, or absolute UTC origin, and the GNSS trace covers the test vehicle rather than dense traffic labels. It could support a narrow geometry/timing smoke check after image-to-log alignment, but it is not representative traffic-accuracy or UTC acceptance data.
+
+Neither source closes the need for authorized representative fixed-camera recordings with independently verified UTC-to-PTS origin and independently labeled traffic events. No candidate has been acquired or accepted as the representative acceptance fixture.
+
+No further reuse-rights research is part of this project task.
 
 ## Selection and evidence
 
