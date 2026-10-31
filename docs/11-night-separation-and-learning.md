@@ -43,3 +43,10 @@ At the night-v5 checkpoint, 50 focused tests passed, and the full suite later gr
 Browser verification in an isolated QA workspace confirmed that explicit night class and confidence survive save/reload and that review-only labels do not unlock training. The live main app showed 90 night/monochrome frames, separate recurring-light/headlight filters, and zero eligible training regions. Existing correction preservation and original read-only prediction tests also remain passing.
 
 Evidence: `reports/night-v5-tests.txt`, `reports/night-v5-real-run.json`, `reports/inference-v5-worker.log`. The Windows CI package lifecycle is verified by run [40576622511](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/40576622511); native target hardware and GPU execution remain unverified.
+
+
+## Geometry-only pairing when no view background is available — 2026-10-31
+
+When the camera has no compatible per-view background, two compact light components can now be grouped under the existing spatial, size-ratio, and bright-gap checks. The result is a single `possible paired vehicle lights` proposal. Its subtype stays `uncertain_light` because recurrence and novelty cannot be assessed. Isolated points, oversized glare blobs, streaks, and recurring fixtures are not promoted into that pair path. A lone light remains separate. Pairing is still a review hypothesis, never a vehicle detection or count.
+
+Three Windows regression cases cover context-free pairing, single-light behavior, and the invariant that these outputs remain lights. Full run [41179497846](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/41179497846) passed 357 tests and completed the hosted installer lifecycle. Representative nighttime footage and independent labels are still required to measure false pairs, missed pairs, or vehicle-count effects.
