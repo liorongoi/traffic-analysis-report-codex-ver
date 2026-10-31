@@ -744,3 +744,7 @@ Still-image Object Search missions can now run the bundled vehicle detector to c
 ## Plate gallery live refresh — 2026-10-31
 
 When the still-image plate approval page is open, a continuous batch status change now refreshes the crop list so newly extracted chips appear without reopening the page. The full Python suite passed **434 tests in 13.092 seconds**; `node --check web/app.js` and `git diff --check` passed. This verifies the refresh trigger and plate batch flow; operator acceptance on target video/image sources remains open.
+
+## Loopback startup smoke — 2026-10-31
+
+Launched RoadLoom against a fresh temporary workspace at `http://127.0.0.1:8877`. The in-app browser loaded the Hebrew first-visit screen and fetched the bundled stylesheet, logo, JavaScript, timezone data, session endpoint, and learning-capabilities endpoint with HTTP 200 responses. It showed the three-step mission wizard and no sign-in prompt. No mission was created. This checks initial startup and local assets only; mission creation and end-to-end review interaction still need a fresh browser acceptance pass.
