@@ -46,6 +46,7 @@ class SamPackSetupTests(unittest.TestCase):
 
         def download(destination):
             calls.append(('weights', Path(destination)))
+            self.assertIn(str(model_dir / 'runtime'), sys.path)
             return Path(destination)
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -53,6 +54,7 @@ class SamPackSetupTests(unittest.TestCase):
             result = module['setup'](model_dir, install_runtime, download)
             self.assertEqual(result, model_dir)
         self.assertEqual(calls, [('runtime', model_dir), ('weights', model_dir)])
+        self.assertNotIn(str(model_dir / 'runtime'), sys.path)
 
     def test_runtime_setup_pins_cpu_model_stack_and_rejects_old_python(self):
         script = Path(__file__).resolve().parents[1] / 'scripts' / 'setup-sam3.1.py'

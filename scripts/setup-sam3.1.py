@@ -50,7 +50,12 @@ def setup(destination=None, runtime_installer=None, downloader=None):
     installer(target)
     if downloader is None:
         downloader = runpy.run_path(str(Path(__file__).with_name("download-sam3.1.py")))["download"]
-    return downloader(target)
+    runtime = str(target / "runtime")
+    sys.path.insert(0, runtime)
+    try:
+        return downloader(target)
+    finally:
+        sys.path.remove(runtime)
 
 
 def main():
