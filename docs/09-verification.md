@@ -713,3 +713,7 @@ The 10-second `roadloom-sc10-static-roundabout.mp4` sample (150,058,280 bytes; S
 ## Keyboard-focus visibility in RoadLoom — 2026-10-31
 
 Extended the visible focus treatment to links, disclosure summaries, the keyboard-focusable timezone map, and other focusable controls. In an empty temporary RoadLoom workspace on loopback, keyboard navigation visibly focused the “Create a mission” disclosure and then the timezone-map SVG with the existing mint focus ring. The map remained reachable by Tab after moving through the location controls. No mission was submitted or saved. The focused `test_ui_bootstrap.py` suite passed **13 tests**, `node --check web/app.js` passed, and `git diff --check` passed. This verifies the focused controls only; full operator, screen-reader, and accessibility acceptance remains open.
+
+## Full local verification after keyboard-focus update — 2026-10-31
+
+The complete Python 3.12 suite passed **424 tests in 13.118 seconds** with `PYTHONPATH=src` and loopback socket access enabled. The sandboxed attempt could not bind ephemeral localhost ports in `test_http` and `test_lan_security`; rerunning with the required loopback permission completed both integration modules. `node --check web/app.js` and `git diff --check` passed. Windows preview run [41222398480](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/41222398480) for commit `92b89252df4e0934cc216272559926615ab66a89` is still in progress; Windows packaging and installed lifecycle are not yet verified for this update.
