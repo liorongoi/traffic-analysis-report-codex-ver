@@ -1,4 +1,6 @@
 from pathlib import Path
+import hashlib
+import json
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -80,7 +82,8 @@ class VideoInferenceServiceTests(unittest.TestCase):
         run_id = result['run']
         process = self.inference.processes[(self.mission, run_id)]
         self.assertIsNone(process.poll())
-        live=self.service.status(self.mission)[0]
+        with patch('road_traffic.hardware._process_sample',return_value=(0.0,12345)):
+            live=self.service.status(self.mission)[0]
         self.assertEqual(live['status'], 'queued')
         self.assertEqual(live['resource_usage']['state'],'measured')
         self.assertGreater(live['resource_usage']['resident_memory_bytes'],0)
@@ -124,7 +127,32 @@ class VideoInferenceServiceTests(unittest.TestCase):
         self.assertEqual(result['status'],'queued')
         self.assertEqual(result['config']['detector']['target_labels'],['truck'])
         model_pack.assert_called_once_with(self.pack)
-        spawn.assert_called_once_with(mission,result['run'])
+        spawn.assert_called_once_with(mission,result['run'],self.pack)
+
+    def test_video_run_uses_selected_candidate_and_resume_keeps_its_frozen_model(self):
+        from road_traffic.model_registry import import_candidate,select_model
+        source=self.source()
+        candidate=self.root/'trained-candidate'
+        candidate.mkdir()
+        content=b'test candidate model'
+        (candidate/'model.onnx').write_bytes(content)
+        (candidate/'manifest.json').write_text(json.dumps({'name':'Reviewed candidate',
+            'classes':['car','truck'],'files':{'model.onnx':{'sha256':hashlib.sha256(content).hexdigest(),
+            'bytes':len(content)}}}),encoding='utf-8')
+        imported=import_candidate(self.library,candidate)
+        select_model(self.library,self.pack,self.mission,imported['id'],'Operator','Use reviewed video weights')
+        selected_pack=self.library.root/'models'/'yolox-candidates'/imported['id']
+        with patch.object(self.service,'_spawn') as spawn:
+            result=self.service.start(self.mission,source['id'],self.tracker_policy(),
+                threshold=.18,tiled=False,target_labels=['car'])
+            self.assertEqual(result['config']['detector']['model_id'],imported['id'])
+            self.assertEqual(result['config']['detector']['sha256'],imported['sha256'])
+            spawn.assert_called_once_with(self.mission,result['run'],selected_pack.resolve())
+            transition(self.library,self.mission,result['run'],'failed',error='synthetic restart')
+            select_model(self.library,self.pack,self.mission,'base','Operator','Restore baseline for new runs')
+            resumed=self.service.resume(self.mission,result['run'])
+            self.assertEqual(resumed['run'],result['run'])
+            self.assertEqual(spawn.call_args.args,(self.mission,result['run'],selected_pack.resolve()))
 
     def test_video_proposal_adapter_filters_to_the_saved_target_classes(self):
         class Detector:

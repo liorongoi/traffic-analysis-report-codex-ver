@@ -103,6 +103,19 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn('.monitoring-panel[hidden]{display:none}', styles)
         self.assertIn('.empty-workflow[hidden]{display:none}', styles)
 
+    def test_vehicle_model_selector_is_available_outside_the_image_only_panel(self):
+        markup = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        detection_panel = markup.index('id="vehicleDetectionPanel"')
+        image_panel_end = markup.index('</details>', detection_panel)
+        model_panel = markup.index('id="vehicleModelPanel"')
+        search_panel = markup.index('id="objectSearchPanel"')
+        self.assertLess(image_panel_end, model_panel)
+        self.assertLess(model_panel, search_panel)
+        self.assertIn("$('vehicleModelPanel').hidden=!selected||selected.analysis_mode==='license_plate'", source)
+        self.assertIn('Model for new still-image and video runs', source)
+        self.assertIn('מודל להרצות תמונה ווידאו חדשות', source)
+
     def test_operator_help_is_translated_to_hebrew(self):
         source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
         for value in (

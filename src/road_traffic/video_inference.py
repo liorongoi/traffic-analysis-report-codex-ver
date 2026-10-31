@@ -37,7 +37,7 @@ class VideoInferenceService:
                     'Resume this run to continue from its verified checkpoint.')
                 video_store.fail_worker(self.library, mission, job['id'], reason)
 
-    def _spawn(self, mission, run_id):
+    def _spawn(self, mission, run_id, pack=None):
         folder = self.library.location(mission) / 'video' / run_id
         folder.mkdir(parents=True, exist_ok=True)
         process = None
@@ -45,7 +45,7 @@ class VideoInferenceService:
             with (folder / 'worker.log').open('ab') as log:
                 process = subprocess.Popen([sys.executable, str(self.worker_script),
                     '--workspace', str(self.library.root), '--mission', mission,
-                    '--run', run_id, '--pack', str(self.pack)],
+                    '--run', run_id, '--pack', str(pack or self.pack)],
                     stdout=log, stderr=subprocess.STDOUT)
             self.inference.processes[(mission, run_id)] = process
             self.inference._watch_worker(process)
@@ -69,6 +69,7 @@ class VideoInferenceService:
         from .detector import VERSION, model_pack
         from .detector import VEHICLES
         from .hardware import resolve_resource_profile
+        from .model_registry import resolve_model
         settings = self.library.settings(mission)
         if settings['input_type'] != 'videos' or settings['analysis_mode'] not in ('video_traffic', 'object_search'):
             raise ValueError('Video analysis requires a Video Traffic or Object Search mission')
@@ -85,10 +86,12 @@ class VideoInferenceService:
             raise ValueError('Choose one or more supported video vehicle classes')
         target_labels=[label for label in supported_labels if label in target_labels]
         resources=resolve_resource_profile(resource_profile)
-        _, sha = model_pack(self.pack)
+        model_id=settings.get('vehicle_model_id') or 'base'
+        selected_pack=resolve_model(self.library,self.pack,model_id)
+        _, sha = model_pack(selected_pack)
         config = {'task': settings['analysis_mode'],
             'night_adapter': {'version': VIDEO_NIGHT_ADAPTER, 'enabled': True},
-            'detector': {'version': VERSION, 'sha256': sha,
+            'detector': {'version': VERSION, 'model_id':model_id,'sha256': sha,
             'threshold': float(threshold), 'tiled': tiled,
             'target_labels':target_labels,
             'device': resources['device'], 'cpu_threads':resources['cpu_threads'],
@@ -98,7 +101,7 @@ class VideoInferenceService:
             try:
                 run = video_store.create_run(self.library, mission, source_id,
                     {**config, 'tracker_policy': tracker_policy})
-                self._spawn(mission, run['id'])
+                self._spawn(mission, run['id'], selected_pack)
             except Exception:
                 if yielded:self.inference._resume_training_after_worker()
                 raise
@@ -171,6 +174,7 @@ class VideoInferenceService:
                     raise ValueError('Only failed or cancelled video runs can be resumed')
                 if self.inference._pid_alive(job['worker_pid']):
                     raise ValueError('The previous video worker is still stopping; retry in a moment')
+                selected_pack=self.pack
                 if job['config'].get('task')=='license_plate':
                     from .plate_review import _model_pack
                     _,sha=_model_pack(self.plate_pack)
@@ -178,12 +182,15 @@ class VideoInferenceService:
                     if detector.get('sha256')!=sha:raise ValueError('Plate detector changed since this run; create a new video run')
                 else:
                     from .detector import model_pack, VERSION
-                    _, sha = model_pack(self.pack)
                     detector = job['config'].get('detector', {})
+                    from .model_registry import resolve_model
+                    model_id=detector.get('model_id') or 'base'
+                    selected_pack=resolve_model(self.library,self.pack,model_id)
+                    _, sha = model_pack(selected_pack)
                     if detector.get('version') != VERSION or detector.get('sha256') != sha:
                         raise ValueError('Detector changed since this run; create a new video run')
                 video_store.transition(self.library, mission, run_id, 'queued')
-                self._spawn(mission, run_id)
+                self._spawn(mission, run_id, selected_pack)
             except Exception:
                 if yielded:self.inference._resume_training_after_worker()
                 raise
