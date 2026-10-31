@@ -50,6 +50,9 @@ class IrLprCornersConversionTests(unittest.TestCase):
         self.assertEqual(truth['annotations'][0]['bbox'], [20, 20, 80, 20])
         self.assertEqual([row.get('day_night') for row in truth['images']], ['day', 'night'])
         self.assertTrue(all(row['country'] == 'Iran' for row in truth['images']))
+        second = self.root / 'second-diagnostic.zip'
+        convert_ir_lpr_corners(self.root, second)
+        self.assertEqual(output.read_bytes(), second.read_bytes())
 
     def test_plate_benchmark_runs_diagnostic_split_and_preserves_tiling_setting(self):
         output = self.root / 'plate-diagnostic.zip'

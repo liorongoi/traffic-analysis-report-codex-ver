@@ -12,6 +12,7 @@ import json
 import math
 import os
 from pathlib import Path, PurePosixPath
+import shutil
 import tempfile
 import zipfile
 
@@ -21,6 +22,18 @@ from PIL import Image
 SOURCE_NAME = 'IR-LPR-corners'
 SOURCE_URL = 'https://huggingface.co/datasets/mahdilotfi/IR-LPR-corners'
 CORNER_COLUMNS = tuple(f'{axis}{index}' for index in range(1, 5) for axis in ('x', 'y'))
+
+
+def _write_member(archive: zipfile.ZipFile, name: str, source=None, content: bytes | None = None) -> None:
+    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+    info.compress_type = zipfile.ZIP_STORED
+    info.external_attr = 0o100644 << 16
+    with archive.open(info, 'w') as target:
+        if source is not None:
+            with source.open('rb') as stream:
+                shutil.copyfileobj(stream, target, length=1024 * 1024)
+        else:
+            target.write(content or b'')
 
 
 def _sha256(path: Path) -> str:
@@ -140,12 +153,12 @@ def convert_ir_lpr_corners(dataset_dir, output_zip) -> dict:
     temporary = Path(temporary_name)
     try:
         with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_STORED) as archive:
-            archive.writestr('diagnostic/annotations.json',
-                json.dumps(coco, ensure_ascii=False, separators=(',', ':')))
-            archive.writestr('diagnostic-manifest.json',
-                json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
+            _write_member(archive, 'diagnostic/annotations.json', content=
+                json.dumps(coco, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+            _write_member(archive, 'diagnostic-manifest.json', content=
+                (json.dumps(manifest, ensure_ascii=False, indent=2) + '\n').encode('utf-8'))
             for source, member in members:
-                archive.write(source, member)
+                _write_member(archive, member, source=source)
         os.replace(temporary, output_zip)
     finally:
         temporary.unlink(missing_ok=True)
