@@ -93,6 +93,38 @@ class DetectionBenchmarkTests(unittest.TestCase):
         self.assertEqual(report['overall']['count_error']['mae_objects_per_image'], 1.)
         self.assertAlmostEqual(report['overall']['categories']['vehicle:car']['ap50'], 51 / 101)
 
+    def test_class_agnostic_matching_scores_boxes_without_subtype_labels(self):
+        truth = sample_truth()
+        truth['categories'] = [{'id': 1, 'name': 'vehicle'}]
+        truth['annotations'] = [dict(truth['annotations'][0])]
+        predictions = [{'image_id': 1, 'category_id': 7, 'bbox': [10, 10, 20, 20], 'score': .9}]
+        report = evaluate_coco(truth, predictions, class_agnostic=True,
+            prediction_categories=[{'id': 7, 'name': 'vehicle:truck'}])
+        self.assertEqual(report['category_matching'], 'class-agnostic; all categories mapped to object')
+        self.assertEqual(report['overall']['micro']['tp'], 1)
+        self.assertEqual(report['overall']['micro']['fp'], 0)
+        self.assertEqual(report['overall']['micro']['fn'], 0)
+        self.assertEqual(set(report['categories']), {'object'})
+
+    def test_class_agnostic_mode_allows_prediction_taxonomy_id_name_collision(self):
+        truth = sample_truth()
+        report = evaluate_coco(truth,
+            [{'image_id': 1, 'category_id': 1, 'bbox': [10, 10, 20, 20], 'score': .9}],
+            prediction_categories=[{'id': 1, 'name': 'vehicle:truck'}], class_agnostic=True)
+        self.assertEqual(report['overall']['micro']['tp'], 1)
+        with self.assertRaisesRegex(ValueError, 'conflicts with ground-truth taxonomy'):
+            evaluate_coco(truth,
+                [{'image_id': 1, 'category_id': 1, 'bbox': [10, 10, 20, 20], 'score': .9}],
+                prediction_categories=[{'id': 1, 'name': 'vehicle:truck'}])
+
+    def test_candidate_comparison_rejects_different_category_matching_modes(self):
+        predictions = [{'image_id': 1, 'category_id': 1, 'bbox': [10, 10, 20, 20], 'score': .9}]
+        baseline = self._comparison_report(predictions, 'a' * 64)
+        candidate = self._comparison_report(predictions, 'b' * 64)
+        candidate['category_matching'] = 'class-agnostic; all categories mapped to object'
+        with self.assertRaisesRegex(ValueError, 'same category-matching mode'):
+            compare_detection_reports(baseline, candidate)
+
     def test_ap_and_count_metrics_for_perfect_predictions(self):
         predictions = [
             {'image_id': 1, 'category_id': 1, 'bbox': [10, 10, 20, 20], 'score': .95},

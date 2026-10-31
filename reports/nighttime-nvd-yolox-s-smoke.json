@@ -1,0 +1,331 @@
+{
+  "schema": "roadloom-detection-benchmark-v1",
+  "category_matching": "class-agnostic; all categories mapped to object",
+  "metrics": {
+    "operating_iou": 0.5,
+    "ap_iou_thresholds": [
+      0.5,
+      0.55,
+      0.6,
+      0.65,
+      0.7,
+      0.75,
+      0.8,
+      0.85,
+      0.9,
+      0.95
+    ],
+    "matching": "class-agnostic greedy matching by descending prediction score, one-to-one within each image",
+    "ap": "101-point interpolated AP; macro mean over categories with ground-truth instances",
+    "count": "all predicted and ground-truth instances across categories per image",
+    "scope_note": "Metrics are only meaningful when every image has complete independent labels; unmarked objects are not assumed negative."
+  },
+  "metadata": {
+    "prediction": {
+      "model_kind": "vehicle",
+      "model_sha256": "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063",
+      "model_pack": "yolox-s",
+      "threshold": 0.18,
+      "tiled": true,
+      "inference_provider": "CPUExecutionProvider",
+      "pipeline_scope": "YOLOX vehicle detector only; excludes night-light, persistent-background, mission ROI and road-mask logic",
+      "split": "test",
+      "source_dataset_sha256": "e6bb45557bfcf2248c863790e5ca87d250f9586f862174678b82d049304053f3",
+      "storage_bytes": {
+        "source_dataset": 8801569,
+        "model_pack": 107965829,
+        "prediction_json": 22986
+      },
+      "performance": {
+        "images_processed": 57,
+        "model_initialization_seconds": 0.07399837503908202,
+        "processing_wall_seconds": 18.241045082977507,
+        "images_per_second": 3.124820959583738,
+        "per_image_latency": {
+          "mean_seconds": 0.3200147493003067,
+          "p50_seconds": 0.3191315419971943,
+          "p95_seconds": 0.32997245801379904,
+          "max_seconds": 0.3565621660090983
+        },
+        "peak_process_rss_bytes": 327548928,
+        "peak_vram_bytes": null,
+        "peak_vram_note": "Not exposed portably by the configured ONNX Runtime provider; measure on target hardware.",
+        "measurement_scope": "one prediction process over one frozen split; includes image read/decode and detector inference"
+      },
+      "created_utc": "2026-10-31T13:15:40.510321+00:00",
+      "categories": [
+        {
+          "id": 2,
+          "name": "vehicle:bicycle",
+          "kind": "vehicle",
+          "label": "bicycle"
+        },
+        {
+          "id": 3,
+          "name": "vehicle:car",
+          "kind": "vehicle",
+          "label": "car"
+        },
+        {
+          "id": 4,
+          "name": "vehicle:motorcycle",
+          "kind": "vehicle",
+          "label": "motorcycle"
+        },
+        {
+          "id": 5,
+          "name": "vehicle:bus",
+          "kind": "vehicle",
+          "label": "bus"
+        },
+        {
+          "id": 6,
+          "name": "vehicle:truck",
+          "kind": "vehicle",
+          "label": "truck"
+        }
+      ],
+      "image_metadata": {},
+      "strata": {
+        "hardware_profile": "16GB"
+      }
+    },
+    "ground_truth_sha256": "e6bb45557bfcf2248c863790e5ca87d250f9586f862174678b82d049304053f3",
+    "predictions_sha256": "d54c3aa1cabd57389f7494049ca33ffbd2fd6c8a367f53234ab74c6d0fd5e8f5",
+    "storage_bytes": {
+      "ground_truth": 8801569,
+      "predictions": 22986
+    },
+    "ground_truth_file": "nvd-adapted.zip",
+    "predictions_file": "nvd-adapted-predictions.json",
+    "split": "test"
+  },
+  "images": 57,
+  "categories": {
+    "object": {
+      "ground_truth": 66,
+      "predictions": 92,
+      "tp": 13,
+      "fp": 79,
+      "fn": 53,
+      "precision": 0.14130434782608695,
+      "recall": 0.19696969696969696,
+      "f1": 0.16455696202531644,
+      "false_alarms_per_image": 1.3859649122807018,
+      "ap50": 0.06688242610800493,
+      "map50_95": 0.012612949225382548
+    }
+  },
+  "overall": {
+    "images": 57,
+    "categories": {
+      "object": {
+        "ground_truth": 66,
+        "predictions": 92,
+        "tp": 13,
+        "fp": 79,
+        "fn": 53,
+        "precision": 0.14130434782608695,
+        "recall": 0.19696969696969696,
+        "f1": 0.16455696202531644,
+        "false_alarms_per_image": 1.3859649122807018,
+        "ap50": 0.06688242610800493,
+        "map50_95": 0.012612949225382548
+      }
+    },
+    "micro": {
+      "tp": 13,
+      "fp": 79,
+      "fn": 53,
+      "precision": 0.14130434782608695,
+      "recall": 0.19696969696969696,
+      "f1": 0.16455696202531644,
+      "false_alarms_per_image": 1.3859649122807018,
+      "ap50_macro": 0.06688242610800493,
+      "map50_95_macro": 0.012612949225382548
+    },
+    "count_error": {
+      "mae_objects_per_image": 0.9122807017543859,
+      "mean_signed_objects_per_image": 0.45614035087719296,
+      "exact_count_images_fraction": 0.42105263157894735
+    }
+  },
+  "groups": {
+    "condition": {
+      "night": {
+        "images": 57,
+        "categories": {
+          "object": {
+            "ground_truth": 66,
+            "predictions": 92,
+            "tp": 13,
+            "fp": 79,
+            "fn": 53,
+            "precision": 0.14130434782608695,
+            "recall": 0.19696969696969696,
+            "f1": 0.16455696202531644,
+            "false_alarms_per_image": 1.3859649122807018,
+            "ap50": 0.06688242610800493,
+            "map50_95": 0.012612949225382548
+          }
+        },
+        "micro": {
+          "tp": 13,
+          "fp": 79,
+          "fn": 53,
+          "precision": 0.14130434782608695,
+          "recall": 0.19696969696969696,
+          "f1": 0.16455696202531644,
+          "false_alarms_per_image": 1.3859649122807018,
+          "ap50_macro": 0.06688242610800493,
+          "map50_95_macro": 0.012612949225382548
+        },
+        "count_error": {
+          "mae_objects_per_image": 0.9122807017543859,
+          "mean_signed_objects_per_image": 0.45614035087719296,
+          "exact_count_images_fraction": 0.42105263157894735
+        }
+      }
+    },
+    "hardware_profile": {
+      "16GB": {
+        "images": 57,
+        "categories": {
+          "object": {
+            "ground_truth": 66,
+            "predictions": 92,
+            "tp": 13,
+            "fp": 79,
+            "fn": 53,
+            "precision": 0.14130434782608695,
+            "recall": 0.19696969696969696,
+            "f1": 0.16455696202531644,
+            "false_alarms_per_image": 1.3859649122807018,
+            "ap50": 0.06688242610800493,
+            "map50_95": 0.012612949225382548
+          }
+        },
+        "micro": {
+          "tp": 13,
+          "fp": 79,
+          "fn": 53,
+          "precision": 0.14130434782608695,
+          "recall": 0.19696969696969696,
+          "f1": 0.16455696202531644,
+          "false_alarms_per_image": 1.3859649122807018,
+          "ap50_macro": 0.06688242610800493,
+          "map50_95_macro": 0.012612949225382548
+        },
+        "count_error": {
+          "mae_objects_per_image": 0.9122807017543859,
+          "mean_signed_objects_per_image": 0.45614035087719296,
+          "exact_count_images_fraction": 0.42105263157894735
+        }
+      }
+    }
+  },
+  "experiment": {
+    "evaluated_utc": "2026-10-31T13:15:58.561008+00:00",
+    "dataset": "University of Nevada, Reno Nighttime Vehicle Detection Dataset",
+    "dataset_url": "https://github.com/ntnu-arl/vehicles-nighttime",
+    "source_annotation_sha256": "da7b3b635cb2ed8ebf860dd22aa80e89da30366855109df3f60a67b5b144486c",
+    "source_image_ids": [
+      2007,
+      2008,
+      2009,
+      2010,
+      2011,
+      2012,
+      2015,
+      2016,
+      2017,
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025,
+      2026,
+      2027,
+      2028,
+      2029,
+      2030,
+      2031,
+      2032,
+      2033,
+      2034,
+      2035,
+      2036,
+      8248,
+      8249,
+      8250,
+      8251,
+      8252,
+      8253,
+      8254,
+      8255,
+      8256,
+      8257,
+      8258,
+      8259,
+      8260,
+      8261,
+      8262,
+      8263,
+      8264,
+      8265,
+      8266,
+      8267,
+      8268,
+      8269,
+      8270,
+      8271,
+      8272,
+      8273,
+      8274,
+      8275,
+      8276,
+      8277
+    ],
+    "excluded_complete_images": {
+      "2013": "one source box extends 1 pixel beyond the 1280px image width",
+      "2014": "one source box extends 1 pixel beyond the 1280px image width",
+      "2022": "one source box extends 1 pixel beyond the 1280px image width"
+    },
+    "ground_truth_images": 57,
+    "ground_truth_vehicles": 66,
+    "prediction_count": 92,
+    "class_matching": "class-agnostic; all vehicle detector classes and single-class labels mapped to object",
+    "scope": "small selected monochrome nighttime still-image smoke; detector only; not system acceptance",
+    "reproduction": [
+      "python scripts/convert-nighttime-vehicle-dataset.py --labels <dataset>/gt10913.txt --images-dir <dataset>/data --split-range test=2007-2036 --split-range test=8248-8277 --exclude-image-id 2013 --exclude-image-id 2014 --exclude-image-id 2022 --output nvd-test.zip",
+      "python scripts/predict-detection-benchmark.py --dataset-zip nvd-test.zip --model-pack model-packs/yolox-s --model-kind vehicle --split test --hardware-profile 16GB --output predictions.json",
+      "python scripts/evaluate-detection-benchmark.py --ground-truth nvd-test.zip --predictions predictions.json --split test --class-agnostic --report report.json"
+    ],
+    "prediction_runtime": {
+      "model_sha256": "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063",
+      "provider": "CPUExecutionProvider",
+      "threshold": 0.18,
+      "tiled": true,
+      "performance": {
+        "images_processed": 57,
+        "model_initialization_seconds": 0.07399837503908202,
+        "processing_wall_seconds": 18.241045082977507,
+        "images_per_second": 3.124820959583738,
+        "per_image_latency": {
+          "mean_seconds": 0.3200147493003067,
+          "p50_seconds": 0.3191315419971943,
+          "p95_seconds": 0.32997245801379904,
+          "max_seconds": 0.3565621660090983
+        },
+        "peak_process_rss_bytes": 327548928,
+        "peak_vram_bytes": null,
+        "peak_vram_note": "Not exposed portably by the configured ONNX Runtime provider; measure on target hardware.",
+        "measurement_scope": "one prediction process over one frozen split; includes image read/decode and detector inference"
+      }
+    },
+    "dataset_commit": "6e7bc24d466b17a3cec50dae58f89bd894e393c3"
+  }
+}

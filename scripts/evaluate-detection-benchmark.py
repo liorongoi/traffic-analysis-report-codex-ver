@@ -17,10 +17,13 @@ def main():
     parser.add_argument('--split', default='test', choices=('training', 'validation', 'test'))
     parser.add_argument('--operating-iou', default=.5, type=float,
         help='IoU threshold used for the displayed precision/recall/F1 (default: 0.5)')
+    parser.add_argument('--class-agnostic', action='store_true',
+        help='match all detected categories as one object class when ground truth has no subtype labels')
     parser.add_argument('--report', required=True, type=Path, help='Output JSON report path')
     args = parser.parse_args()
     report = evaluate_files(args.ground_truth, args.predictions, args.report,
-        split=args.split, operating_iou=args.operating_iou)
+        split=args.split, operating_iou=args.operating_iou,
+        class_agnostic=args.class_agnostic)
     overall = report['overall']
     print(f"Images: {report['images']}; report: {args.report}")
     print('Micro P/R/F1 at IoU {iou:.2f}: {p} / {r} / {f}'.format(

@@ -246,7 +246,7 @@ def _evaluate(image_ids, categories, truths, predictions, images, operating_iou,
 
 
 def evaluate_coco(ground_truth, predictions, *, operating_iou=.5, metadata=None,
-                  prediction_categories=()):
+                  prediction_categories=(), class_agnostic=False):
     """Evaluate COCO XYWH boxes and report stratified, reproducible metrics.
 
     ``ground_truth`` is a COCO dataset object. ``predictions`` is a COCO result
@@ -257,6 +257,8 @@ def evaluate_coco(ground_truth, predictions, *, operating_iou=.5, metadata=None,
     operating_iou = _finite_number(operating_iou, 'operating_iou')
     if not .1 <= operating_iou <= .95:
         raise ValueError('operating_iou must be between 0.1 and 0.95')
+    if not isinstance(class_agnostic, bool):
+        raise ValueError('class_agnostic must be a boolean')
     if not isinstance(ground_truth, dict) or not all(isinstance(ground_truth.get(k), list)
                                                      for k in ('images', 'annotations', 'categories')):
         raise ValueError('Ground truth must contain COCO images, annotations, and categories arrays')
@@ -279,25 +281,30 @@ def evaluate_coco(ground_truth, predictions, *, operating_iou=.5, metadata=None,
     for row in prediction_categories:
         if not isinstance(row, dict) or row.get('id') is None or not isinstance(row.get('name'), str):
             raise ValueError('Prediction-only categories must have an ID and name')
-        if row['id'] in categories and categories[row['id']] != row['name']:
+        if (not class_agnostic and row['id'] in categories
+                and categories[row['id']] != row['name']):
             raise ValueError('Prediction-only category ID conflicts with ground-truth taxonomy')
         categories[row['id']] = row['name']
     if not images or not categories:
         raise ValueError('Ground truth must contain at least one image and one category')
+    source_category_ids = set(categories)
+    if class_agnostic:
+        categories = {1: 'object'}
     truths = defaultdict(list)
     for row in ground_truth['annotations']:
         image_id, category_id = row.get('image_id'), row.get('category_id')
-        if image_id not in images or category_id not in categories:
+        if image_id not in images or category_id not in source_category_ids:
             raise ValueError('Every ground-truth annotation must reference a known image and category')
         image = images[image_id]
-        truths[(image_id, category_id)].append(_bbox(row.get('bbox'), 'ground-truth bbox',
+        evaluated_category_id = 1 if class_agnostic else category_id
+        truths[(image_id, evaluated_category_id)].append(_bbox(row.get('bbox'), 'ground-truth bbox',
             _finite_number(image['width'], 'image width'), _finite_number(image['height'], 'image height')))
     clean_predictions = []
     for index, row in enumerate(predictions):
         if not isinstance(row, dict):
             raise ValueError('Each prediction must be an object')
         image_id, category_id = row.get('image_id'), row.get('category_id')
-        if image_id not in images or category_id not in categories:
+        if image_id not in images or category_id not in source_category_ids:
             raise ValueError('Every prediction must reference a known image and category')
         image = images[image_id]
         bbox = _bbox(row.get('bbox'), 'prediction bbox',
@@ -305,7 +312,8 @@ def evaluate_coco(ground_truth, predictions, *, operating_iou=.5, metadata=None,
         score = _finite_number(row.get('score'), 'prediction score')
         if not 0 <= score <= 1:
             raise ValueError('Prediction scores must be between 0 and 1')
-        clean_predictions.append({'image_id': image_id, 'category_id': category_id,
+        evaluated_category_id = 1 if class_agnostic else category_id
+        clean_predictions.append({'image_id': image_id, 'category_id': evaluated_category_id,
                                   'bbox': bbox, 'score': score, '_index': index})
     image_ids = set(images)
     report_metadata = metadata or {}
@@ -338,9 +346,12 @@ def evaluate_coco(ground_truth, predictions, *, operating_iou=.5, metadata=None,
             grouped[field] = {value: _evaluate(ids, categories, truths, clean_predictions,
                 images, operating_iou, image_metadata, run_metadata)
                 for value, ids in sorted(groups.items())}
-    return {'schema': 'roadloom-detection-benchmark-v1', 'metrics': {
+    return {'schema': 'roadloom-detection-benchmark-v1', 'category_matching':
+            'class-agnostic; all categories mapped to object' if class_agnostic else 'class-aware', 'metrics': {
             'operating_iou': operating_iou, 'ap_iou_thresholds': list(AP_IOUS),
-            'matching': 'class-aware greedy matching by descending prediction score, one-to-one within each image',
+            'matching': ('class-agnostic greedy matching by descending prediction score, one-to-one within each image'
+                if class_agnostic else
+                'class-aware greedy matching by descending prediction score, one-to-one within each image'),
             'ap': '101-point interpolated AP; macro mean over categories with ground-truth instances',
             'count': 'all predicted and ground-truth instances across categories per image',
             'scope_note': 'Metrics are only meaningful when every image has complete independent labels; unmarked objects are not assumed negative.'},
@@ -348,7 +359,8 @@ def evaluate_coco(ground_truth, predictions, *, operating_iou=.5, metadata=None,
         'overall': overall, 'groups': grouped}
 
 
-def evaluate_files(ground_truth_path, prediction_path, output_path, *, split='test', operating_iou=.5):
+def evaluate_files(ground_truth_path, prediction_path, output_path, *, split='test', operating_iou=.5,
+                   class_agnostic=False):
     ground_truth_path, prediction_path, output_path = map(Path,
         (ground_truth_path, prediction_path, output_path))
     ground_truth = _load_ground_truth(ground_truth_path, split)
@@ -360,6 +372,7 @@ def evaluate_files(ground_truth_path, prediction_path, output_path, *, split='te
         raise ValueError('Prediction categories must be an array')
     report = evaluate_coco(ground_truth, predictions, operating_iou=operating_iou,
         prediction_categories=prediction_categories,
+        class_agnostic=class_agnostic,
         metadata={'prediction': prediction_metadata,
             'ground_truth_sha256': _sha256(ground_truth_path),
             'predictions_sha256': _sha256(prediction_path),
@@ -479,6 +492,8 @@ def compare_detection_reports(baseline, candidate):
     old_prediction=old_meta['prediction'];new_prediction=new_meta['prediction']
     if old_prediction['model_kind']!=new_prediction['model_kind']:
         raise ValueError('Model reports must use the same detector kind')
+    if baseline.get('category_matching', 'class-aware') != candidate.get('category_matching', 'class-aware'):
+        raise ValueError('Model reports must use the same category-matching mode')
     if old_prediction['model_sha256']==new_prediction['model_sha256']:
         raise ValueError('Candidate report must use a different detector model hash')
     if baseline['metrics'].get('operating_iou')!=candidate['metrics'].get('operating_iou'):
