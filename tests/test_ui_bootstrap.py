@@ -65,6 +65,12 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn("plateReviewHelp:'The local detector proposes plate regions only.", source)
         self.assertNotIn("Object.assign(en,{plateReviewHelp:'הגלאי", source)
 
+    def test_open_plate_gallery_refreshes_localized_status_when_language_changes(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn('renderLearningCapabilities();refreshPlateReviewLocale();', source)
+        self.assertIn("$('plateCurrentImage').textContent=isVideo?", source)
+        self.assertIn("refreshPlateCrops().catch(()=>{$('plateNotice').textContent=tr('plateRefreshFailed');});", source)
+
     def test_plate_crop_controls_default_to_sample_supported_score_and_forward_settings(self):
         html=(Path(__file__).resolve().parents[1]/'web'/'index.html').read_text(encoding='utf-8')
         source=(Path(__file__).resolve().parents[1]/'web'/'app.js').read_text(encoding='utf-8')
