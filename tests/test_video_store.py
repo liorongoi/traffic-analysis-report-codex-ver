@@ -19,7 +19,8 @@ from PIL import Image
 from road_traffic.store import Library
 from road_traffic.tracking import TrackerPolicy, VideoTrackManager
 from road_traffic.video_store import (checkpoint, create_run, events, register_video,
-    execute_video_run, event_thumbnail, frame_overlay, review_event, run_detail, runs,
+    execute_video_run, event_thumbnail, frame_overlay, night_candidates, review_night_candidate,
+    review_event, run_detail, runs,
     source_path, transition, update_runtime_details)
 from road_traffic.video_timeline import VideoTimestamp
 
@@ -262,6 +263,39 @@ class VideoStoreTests(unittest.TestCase):
         self.assertEqual(outside['detections'],[])
         with self.assertRaisesRegex(ValueError,'non-negative'):
             frame_overlay(self.library,self.mission,run['id'],-.1)
+
+    def test_night_candidate_review_is_audited_and_never_creates_vehicle_event(self):
+        source=register_video(self.library,self.mission,'clip.mkv')
+        run=create_run(self.library,self.mission,source['id'],self.config(),total_frames=2)
+        transition(self.library,self.mission,run['id'],'running')
+        tracker=VideoTrackManager(TrackerPolicy(max_gap_seconds=Fraction(1,2),minimum_iou=.2,
+            max_center_distance=.15,association_margin=.05),run_id=run['id'])
+        light={'kind':'light','label':'possible vehicle light','box':[.3,.3,.04,.04],
+            'light_subtype':'uncertain_light','pairing':'single','reasons':['review only']}
+        first=tracker.update_review_hypotheses(VideoTimestamp(0,1,1000),[light])[0]
+        checkpoint(self.library,self.mission,run['id'],frame_index=0,timestamp=VideoTimestamp(0,1,1000),
+            tracker_state=tracker.state(),review_hypotheses=[first])
+        light['pairing']='hypothesis'
+        second=tracker.update_review_hypotheses(VideoTimestamp(40,1,1000),[light])[0]
+        checkpoint(self.library,self.mission,run['id'],frame_index=1,timestamp=VideoTimestamp(40,1,1000),
+            tracker_state=tracker.state(),review_hypotheses=[second])
+        listing=night_candidates(self.library,self.mission,run['id'])
+        self.assertEqual(listing['total'],1)
+        item=listing['items'][0]
+        self.assertEqual(item['observation_count'],2)
+        self.assertEqual(len(item['states']),2)
+        self.assertEqual(item['review_status'],'pending')
+        reviewed=review_night_candidate(self.library,self.mission,run['id'],item['candidate_id'],
+            0,'Operator','accept')
+        self.assertEqual(reviewed['review_status'],'accepted')
+        self.assertEqual(night_candidates(self.library,self.mission,run['id'])['items'][0]['review_status'],'accepted')
+        with self.assertRaisesRegex(ValueError,'changed'):
+            review_night_candidate(self.library,self.mission,run['id'],item['candidate_id'],0,
+                'Operator','reject')
+        with self.assertRaisesRegex(ValueError,'not found'):
+            review_night_candidate(self.library,self.mission,run['id'],run['id']+':night-99999999',0,
+                'Operator','accept')
+        self.assertEqual(events(self.library,self.mission,run['id']),[])
 
     def test_mission_isolation_and_run_state_transitions(self):
         other_root = self.root / 'other-videos'

@@ -457,6 +457,42 @@ class HttpTests(unittest.TestCase):
                     'pre_seconds':1,'post_seconds':1,'operator':'Operator'})
             self.assertEqual(exc.exception.code,400)
 
+    def test_video_night_candidate_list_and_review_api(self):
+        with tempfile.TemporaryDirectory() as external:
+            source_root=Path(external)/'night-candidate-api';source_root.mkdir()
+            (source_root/'night.mkv').write_bytes(b'video-fixture')
+            with self.request('/api/missions',{'name':'Night candidate API','country':'Lebanon',
+                'zone':'Asia/Beirut','input_type':'videos','analysis_mode':'video_traffic',
+                'source_root':str(source_root)}) as response:
+                mission=json.load(response)['id']
+            with self.request('/api/video/sources',{'mission':mission,'relative_path':'night.mkv'}) as response:
+                source=json.load(response)
+            library=Library(Path(self.tmp.name))
+            run=video_store.create_run(library,mission,source['id'],{
+                'detector':{'version':'test','sha256':'test'},
+                'tracker_policy':{'max_gap_seconds':[1,2],'minimum_iou':.2,
+                    'max_center_distance':.2,'association_margin':.05,'compatible_label_groups':[]}})
+            candidate_id=run['id']+':night-00000001'
+            with library.connect(mission) as conn:
+                conn.execute('''INSERT INTO video_frame_detections(mission_id,run_id,source_id,frame_index,
+                    pts,time_base_num,time_base_den,offset_seconds,detections,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''',(mission,run['id'],source['id'],0,0,1,1000,0.0,
+                    json.dumps([{'kind':'light','label':'possible vehicle light','box':[.3,.3,.04,.04],
+                        'track_id':None,'light_subtype':'uncertain_light','pairing':'single',
+                        'review_track_id':candidate_id,'review_observation_index':1,
+                        'review_association_uncertain':False,'review_uncertainty_reasons':[]}]),'now'))
+            query=f"/api/video/night-candidates?mission={mission}&run={run['id']}"
+            with self.request(query) as response:
+                listing=json.load(response)
+            self.assertEqual(listing['total'],1)
+            self.assertEqual(listing['items'][0]['candidate_id'],candidate_id)
+            with self.request('/api/video/night-candidates/review',{'mission':mission,'run':run['id'],
+                'candidate_id':candidate_id,'expected_revision':0,'operator':'Operator','action':'reject'}) as response:
+                review=json.load(response)
+            self.assertEqual(review['review_status'],'rejected')
+            with self.request(query) as response:
+                self.assertEqual(json.load(response)['items'][0]['review_status'],'rejected')
+
     def test_continuous_video_requires_and_persists_explicit_policy(self):
         with tempfile.TemporaryDirectory() as external:
             source_root=Path(external)/'continuous-video-source';source_root.mkdir()

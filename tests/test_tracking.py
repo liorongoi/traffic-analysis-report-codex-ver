@@ -14,6 +14,11 @@ def detection(x, label='car', *, y=.2, width=.1, height=.1):
     return {'label': label, 'box': [x, y, width, height]}
 
 
+def light(x, pairing='single', *, subtype='uncertain_light', width=.04):
+    return {'kind':'light','label':'possible vehicle light','box':[x,.3,width,.04],
+        'light_subtype':subtype,'pairing':pairing,'reasons':['review only']}
+
+
 def policy(**changes):
     values = {'max_gap_seconds': Fraction(1, 2), 'minimum_iou': .2,
         'max_center_distance': .12, 'association_margin': .05}
@@ -117,6 +122,55 @@ class VideoTrackManagerTests(unittest.TestCase):
         self.assertTrue(checkpoint_policy_matches(checkpoint['policy'],resumed._policy_state()))
         changed={**resumed._policy_state(),'scene_cut_threshold':.65}
         self.assertFalse(checkpoint_policy_matches(checkpoint['policy'],changed))
+
+    def test_light_hypothesis_transitions_keep_a_separate_review_identity(self):
+        manager=VideoTrackManager(policy(),run_id='night-transition')
+        first=manager.update_review_hypotheses(timestamp(0),[light(.4)])[0]
+        paired=manager.update_review_hypotheses(timestamp(40),[
+            light(.41,'hypothesis',subtype='headlight_candidate')])[0]
+        self.assertEqual(first['review_track_id'],paired['review_track_id'])
+        self.assertEqual(paired['review_observation_index'],2)
+        self.assertEqual(paired['review_state_change'],{
+            'from_subtype':'uncertain_light','from_pairing':'single',
+            'to_subtype':'headlight_candidate','to_pairing':'hypothesis'})
+        self.assertFalse(paired['review_association_uncertain'])
+        self.assertEqual(paired['kind'],'light')
+        self.assertEqual(manager.active_track_count,0)
+        vehicle=manager.update(timestamp(80),[detection(.4)]).assignments[0]
+        self.assertNotEqual(vehicle.track.track_id,paired['review_track_id'])
+
+    def test_review_candidate_identity_survives_checkpoint_and_scene_cut_separates_views(self):
+        configured=policy(scene_cut_threshold=.6)
+        manager=VideoTrackManager(configured,run_id='night-resume')
+        first=manager.update_review_hypotheses(timestamp(0),[light(.3)])[0]
+        checkpoint=json.loads(json.dumps(manager.state()))
+        resumed=VideoTrackManager(configured,run_id='night-resume',state=checkpoint)
+        second=resumed.update_review_hypotheses(timestamp(40),[light(.31)])[0]
+        self.assertEqual(first['review_track_id'],second['review_track_id'])
+        third=resumed.update_review_hypotheses(timestamp(80),[light(.32)],scene_cut=True)[0]
+        self.assertNotEqual(second['review_track_id'],third['review_track_id'])
+        self.assertEqual(third['review_observation_index'],1)
+
+    def test_review_candidate_gaps_and_ambiguous_matches_do_not_force_identity(self):
+        manager=VideoTrackManager(policy(max_center_distance=.25),run_id='night-ambiguous')
+        first=manager.update_review_hypotheses(timestamp(0),[light(.2),light(.6)])
+        current=manager.update_review_hypotheses(timestamp(40),[light(.4)])
+        self.assertNotIn(current[0]['review_track_id'],{item['review_track_id'] for item in first})
+        self.assertTrue(current[0]['review_association_uncertain'])
+        after_gap=manager.update_review_hypotheses(timestamp(600),[light(.4)])
+        self.assertNotEqual(current[0]['review_track_id'],after_gap[0]['review_track_id'])
+
+    def test_vehicle_overlap_emits_review_only_link_to_recent_light_candidate(self):
+        manager=VideoTrackManager(policy(),run_id='night-to-vehicle')
+        candidate=manager.update_review_hypotheses(timestamp(0),[light(.3)])[0]
+        vehicle=detection(.29,y=.29,width=.08,height=.08)
+        assignments=manager.update(timestamp(40),[vehicle]).assignments
+        links=manager.possible_light_candidate_links(timestamp(40),[vehicle],assignments)
+        self.assertEqual(links[0]['possible_light_candidate_id'],candidate['review_track_id'])
+        self.assertEqual(links[0]['possible_light_candidate_vehicle_track_id'],
+            assignments[0].track.track_id)
+        self.assertNotEqual(links[0]['possible_light_candidate_vehicle_track_id'],
+            links[0]['possible_light_candidate_id'])
 
 
 if __name__ == '__main__':

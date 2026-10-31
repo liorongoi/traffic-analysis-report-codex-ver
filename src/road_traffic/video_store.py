@@ -63,6 +63,11 @@ def schema(conn):
       id INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL REFERENCES video_events(id),
       revision INTEGER NOT NULL,operator TEXT NOT NULL,action TEXT NOT NULL,
       payload TEXT NOT NULL,created TEXT NOT NULL,UNIQUE(event_id,revision));
+    CREATE TABLE IF NOT EXISTS video_night_candidate_reviews(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL REFERENCES video_runs(id),
+      candidate_id TEXT NOT NULL,revision INTEGER NOT NULL,operator TEXT NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('accept','reject','reopen')),
+      created TEXT NOT NULL,UNIQUE(run_id,candidate_id,revision));
     CREATE TABLE IF NOT EXISTS video_clip_exports(
       id TEXT PRIMARY KEY,mission_id TEXT NOT NULL REFERENCES mission(id),
       run_id TEXT NOT NULL REFERENCES video_runs(id),event_id TEXT NOT NULL REFERENCES video_events(id),
@@ -90,6 +95,10 @@ def schema(conn):
       BEGIN SELECT RAISE(ABORT,'video event reviews are append-only'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_reviews_d BEFORE DELETE ON video_event_reviews
       BEGIN SELECT RAISE(ABORT,'video event reviews are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_video_night_reviews_u BEFORE UPDATE ON video_night_candidate_reviews
+      BEGIN SELECT RAISE(ABORT,'video night-candidate reviews are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_video_night_reviews_d BEFORE DELETE ON video_night_candidate_reviews
+      BEGIN SELECT RAISE(ABORT,'video night-candidate reviews are append-only'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_run_config BEFORE UPDATE OF id,mission_id,source_id,config,created
       ON video_runs BEGIN SELECT RAISE(ABORT,'video run configuration is immutable'); END;
     ''')
@@ -433,6 +442,27 @@ def _frame_detections(detections, assignments, review_hypotheses=()):
                     or not math.isfinite(score) or not 0 <= score <= 1):
                 raise ValueError('Frame detection score must be between zero and one')
             item['score'] = float(score)
+        candidate_id=detection.get('possible_light_candidate_id')
+        candidate_vehicle_id=detection.get('possible_light_candidate_vehicle_track_id')
+        candidate_basis=detection.get('possible_light_candidate_link_basis')
+        candidate_uncertain=detection.get('possible_light_candidate_link_uncertain')
+        candidate_reason=detection.get('possible_light_candidate_link_reason')
+        if candidate_id is not None:
+            if (not isinstance(candidate_id,str) or not candidate_id
+                    or not isinstance(candidate_vehicle_id,str) or candidate_vehicle_id!=tracks.get(index)
+                    or candidate_basis!='unique_spatial_match_within_tracker_policy'):
+                raise ValueError('Possible light-candidate link fields are invalid')
+            item.update({'possible_light_candidate_id':candidate_id,
+                'possible_light_candidate_vehicle_track_id':candidate_vehicle_id,
+                'possible_light_candidate_link_basis':candidate_basis})
+        if candidate_uncertain is not None:
+            if not isinstance(candidate_uncertain,bool):
+                raise ValueError('Possible light-candidate uncertainty flag must be boolean')
+            item['possible_light_candidate_link_uncertain']=candidate_uncertain
+        if candidate_reason is not None:
+            if not isinstance(candidate_reason,str) or not candidate_reason:
+                raise ValueError('Possible light-candidate link reason must be text')
+            item['possible_light_candidate_link_reason']=candidate_reason
         result.append(item)
     for hypothesis in review_hypotheses:
         if not isinstance(hypothesis, dict) or hypothesis.get('kind') != 'light':
@@ -454,8 +484,34 @@ def _frame_detections(detections, assignments, review_hypotheses=()):
                 or pairing not in ('single','hypothesis') or not isinstance(reasons, (list, tuple))
                 or any(not isinstance(reason, str) for reason in reasons)):
             raise ValueError('Light hypothesis review fields are invalid')
-        result.append({'kind':'light','box':[x,y,width,height],'label':label,'track_id':None,
-            'light_subtype':subtype,'pairing':pairing,'reasons':list(reasons)})
+        item={'kind':'light','box':[x,y,width,height],'label':label,'track_id':None,
+            'light_subtype':subtype,'pairing':pairing,'reasons':list(reasons)}
+        review_track_id=hypothesis.get('review_track_id')
+        observation_index=hypothesis.get('review_observation_index')
+        uncertain=hypothesis.get('review_association_uncertain',False)
+        uncertainty_reasons=hypothesis.get('review_uncertainty_reasons',[])
+        state_change=hypothesis.get('review_state_change')
+        if review_track_id is not None:
+            if (not isinstance(review_track_id,str) or not review_track_id
+                    or isinstance(observation_index,bool) or not isinstance(observation_index,int)
+                    or observation_index < 1 or not isinstance(uncertain,bool)
+                    or not isinstance(uncertainty_reasons,(list,tuple))
+                    or any(not isinstance(reason,str) or not reason for reason in uncertainty_reasons)):
+                raise ValueError('Review candidate identity fields are invalid')
+            item.update({'review_track_id':review_track_id,
+                'review_observation_index':observation_index,
+                'review_association_uncertain':uncertain,
+                'review_uncertainty_reasons':list(uncertainty_reasons)})
+            if state_change is not None:
+                keys=('from_subtype','from_pairing','to_subtype','to_pairing')
+                if (not isinstance(state_change,dict) or set(state_change)!=set(keys)
+                        or state_change['from_subtype'] not in ('headlight_candidate','streetlight_suspect','reflection_suspect','uncertain_light')
+                        or state_change['to_subtype'] not in ('headlight_candidate','streetlight_suspect','reflection_suspect','uncertain_light')
+                        or state_change['from_pairing'] not in ('single','hypothesis')
+                        or state_change['to_pairing'] not in ('single','hypothesis')):
+                    raise ValueError('Review candidate state transition is invalid')
+                item['review_state_change']=dict(state_change)
+        result.append(item)
     return result
 
 def checkpoint(library, mission, run_id, *, frame_index, timestamp, tracker_state, closed_tracks=(),
@@ -553,6 +609,120 @@ def frame_overlay(library, mission, run_id, seconds):
         'frame':{'index':nearest['frame_index'],'pts':nearest['pts'],
             'time_base_num':nearest['time_base_num'],'time_base_den':nearest['time_base_den'],
             'offset_seconds':nearest['offset_seconds']},'detections':boxes}
+
+
+def night_candidates(library, mission, run_id, *, limit=100, offset=0):
+    """List persisted nighttime light hypotheses with their operator review state."""
+    prepare(library, mission)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError('night-candidate page limit must be between 1 and 100')
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise ValueError('night-candidate page offset must be a non-negative integer')
+    with library.connect(mission) as conn:
+        if not conn.execute('SELECT 1 FROM video_runs WHERE id=? AND mission_id=?',
+                (run_id, mission)).fetchone():
+            raise ValueError('Video run not found')
+        rows = conn.execute('''SELECT frame_index,offset_seconds,detections
+            FROM video_frame_detections WHERE mission_id=? AND run_id=?
+            ORDER BY offset_seconds,frame_index''', (mission,run_id))
+        grouped = {}
+        for row in rows:
+            try:
+                frame = json.loads(row['detections'])
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise ValueError('Saved video frame detections are corrupt') from exc
+            for detection in frame:
+                candidate_id = detection.get('review_track_id')
+                if detection.get('kind') != 'light' or not isinstance(candidate_id,str):
+                    continue
+                item = grouped.get(candidate_id)
+                if item is None:
+                    item = {'candidate_id':candidate_id,'first_offset_seconds':row['offset_seconds'],
+                        'last_offset_seconds':row['offset_seconds'],'first_frame_index':row['frame_index'],
+                        'last_frame_index':row['frame_index'],'observation_count':0,'label':detection['label'],
+                        'light_subtype':detection['light_subtype'],'pairing':detection['pairing'],
+                        'box':detection['box'],'states':[],'uncertainty_reasons':set(),
+                        'possible_vehicle_track_ids':set()}
+                    grouped[candidate_id]=item
+                item['last_offset_seconds']=row['offset_seconds']
+                item['last_frame_index']=row['frame_index']
+                item['observation_count']+=1
+                item['label']=detection['label']
+                item['light_subtype']=detection['light_subtype']
+                item['pairing']=detection['pairing']
+                item['box']=detection['box']
+                state=(detection['light_subtype'],detection['pairing'])
+                if state not in item['states']:
+                    item['states'].append(state)
+                item['uncertainty_reasons'].update(detection.get('review_uncertainty_reasons',[]))
+                vehicle_id=detection.get('possible_light_candidate_vehicle_track_id')
+                if vehicle_id:
+                    item['possible_vehicle_track_ids'].add(vehicle_id)
+        if not grouped:
+            return {'run_id':run_id,'total':0,'items':[]}
+        reviews=conn.execute('''SELECT candidate_id,revision,operator,action,created
+            FROM video_night_candidate_reviews WHERE run_id=? ORDER BY candidate_id,revision''',
+            (run_id,)).fetchall()
+        latest={}
+        for review in reviews:
+            latest[review['candidate_id']]=dict(review)
+        ordered=sorted(grouped.values(),key=lambda item:(item['first_offset_seconds'],item['candidate_id']))
+        result=[]
+        for item in ordered[offset:offset+limit]:
+            item['states']=[{'light_subtype':state[0],'pairing':state[1]} for state in item['states']]
+            item['uncertainty_reasons']=sorted(item['uncertainty_reasons'])
+            item['possible_vehicle_track_ids']=sorted(item['possible_vehicle_track_ids'])
+            review=latest.get(item['candidate_id'])
+            item.update({'revision':review['revision'] if review else 0,
+                'operator':review['operator'] if review else None,
+                'action':review['action'] if review else None,
+                'reviewed_at':review['created'] if review else None,
+                'review_status':{'accept':'accepted','reject':'rejected','reopen':'pending'}.get(
+                    review['action'] if review else None,'pending')})
+            result.append(item)
+        return {'run_id':run_id,'total':len(ordered),'items':result}
+
+
+def review_night_candidate(library, mission, run_id, candidate_id, expected_revision, operator, action):
+    """Append an operator's accept/reject/reopen decision for a light candidate."""
+    prepare(library, mission)
+    if isinstance(expected_revision,bool) or not isinstance(expected_revision,int) or expected_revision<0:
+        raise ValueError('expected_revision must be a non-negative integer')
+    operator=operator.strip() if isinstance(operator,str) else ''
+    if not 1<=len(operator)<=120:
+        raise ValueError('Operator is required for video candidate review')
+    if action not in ('accept','reject','reopen'):
+        raise ValueError('Unsupported nighttime candidate review action')
+    if not isinstance(candidate_id,str) or not candidate_id.startswith(run_id+':night-'):
+        raise ValueError('Nighttime candidate does not belong to this run')
+    with library.connect(mission) as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        run=conn.execute('SELECT 1 FROM video_runs WHERE id=? AND mission_id=?',(run_id,mission)).fetchone()
+        if not run:
+            raise ValueError('Video run not found')
+        exists=False
+        for row in conn.execute('SELECT detections FROM video_frame_detections WHERE mission_id=? AND run_id=?',
+                (mission,run_id)):
+            try:
+                if any(item.get('review_track_id')==candidate_id for item in json.loads(row['detections'])):
+                    exists=True
+                    break
+            except (TypeError,json.JSONDecodeError) as exc:
+                raise ValueError('Saved video frame detections are corrupt') from exc
+        if not exists:
+            raise ValueError('Nighttime candidate not found in this run')
+        previous=conn.execute('''SELECT MAX(revision) FROM video_night_candidate_reviews
+            WHERE run_id=? AND candidate_id=?''',(run_id,candidate_id)).fetchone()[0] or 0
+        if previous!=expected_revision:
+            raise ValueError('Review revision changed; reload the candidate before saving')
+        revision=previous+1
+        created=now()
+        conn.execute('''INSERT INTO video_night_candidate_reviews
+            (run_id,candidate_id,revision,operator,action,created) VALUES (?,?,?,?,?,?)''',
+            (run_id,candidate_id,revision,operator,action,created))
+        return {'run_id':run_id,'candidate_id':candidate_id,'revision':revision,
+            'operator':operator,'action':action,'review_status':{'accept':'accepted','reject':'rejected',
+            'reopen':'pending'}[action],'reviewed_at':created}
 
 
 def set_total_frames(library, mission, run_id, total_frames):

@@ -344,6 +344,10 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 if parsed.path == '/api/video/events':
                     return self.reply(200,video_store.events(library,query['mission'][0],query['run'][0],
                         limit=int(query.get('limit',['100'])[0]),offset=int(query.get('offset',['0'])[0])))
+                if parsed.path == '/api/video/night-candidates':
+                    return self.reply(200,video_store.night_candidates(library,query['mission'][0],
+                        query['run'][0],limit=int(query.get('limit',['100'])[0]),
+                        offset=int(query.get('offset',['0'])[0])))
                 if parsed.path == '/api/video/event-thumbnail':
                     return self.reply(200,video_store.event_thumbnail(library,query['mission'][0],
                         query['event_id'][0]),'image/jpeg')
@@ -604,6 +608,9 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                 elif self.path == '/api/video/events/review':
                     result=video_store.review_event(library,data['mission'],data['event_id'],
                         data['expected_revision'],data['operator'],data['action'],data.get('payload'))
+                elif self.path == '/api/video/night-candidates/review':
+                    result=video_store.review_night_candidate(library,data['mission'],data['run'],
+                        data['candidate_id'],data['expected_revision'],data['operator'],data['action'])
                 elif self.path == '/api/video/clips':
                     video_store.logical_event_by_id(library,data['mission'],data['event_id'])
                     with inference.lock:

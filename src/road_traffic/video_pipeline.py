@@ -151,6 +151,11 @@ class VideoAnalysisPipeline:
                             for item in review_hypotheses)):
                     raise ValueError('Review hypotheses must be light mappings, separate from tracked detections')
                 tracking = self.tracker.update(decoded.timestamp, detections)
+                review_hypotheses=self.tracker.update_review_hypotheses(
+                    decoded.timestamp,review_hypotheses,scene_cut=scene_cut)
+                for index,link in self.tracker.possible_light_candidate_links(
+                        decoded.timestamp,detections,tracking.assignments).items():
+                    detections[index].update(link)
                 elapsed = max(0.0, time.monotonic() - started)
                 processed = decoded.index + 1
                 processed_this_session = processed - start_frame_index

@@ -91,7 +91,47 @@ class VideoNightAdapterTests(unittest.TestCase):
         self.assertEqual(len(frame.assignments),1)
         self.assertEqual(len(frame.review_hypotheses),1)
         self.assertEqual(frame.review_hypotheses[0]['kind'],'light')
+        self.assertTrue(frame.review_hypotheses[0]['review_track_id'].startswith('video-night:night-'))
+        self.assertEqual(frame.review_hypotheses[0]['review_observation_index'],1)
         self.assertEqual(frame.progress.detections_in_frame,1)
+
+    def test_video_pipeline_tracks_light_state_changes_as_review_candidates_not_vehicle_events(self):
+        class Decoder:
+            def __init__(self,path):pass
+            metadata=VideoMetadata('fixture','rawvideo',16,16,0,1,1000,25,2,1,80)
+            def __enter__(self):return self
+            def __exit__(self,*args):return False
+            def frames(self):
+                for i in range(2):
+                    yield DecodedVideoFrame(i,VideoTimestamp(i*40,1,1000),
+                        np.zeros((16,16,3),dtype=np.uint8))
+        class DetectorWithTransition:
+            def __init__(self):self.frame=0
+            def infer(self,rgb):
+                self.frame+=1
+                return [{'label':'car','box':[.35,.3,.12,.12]}]
+            def take_review_hypotheses(self):
+                item=dict(LIGHT)
+                item['box']=[.35,.4,.04,.04] if self.frame==1 else [.36,.4,.1,.05]
+                item['pairing']='single' if self.frame==1 else 'hypothesis'
+                item['light_subtype']='uncertain_light' if self.frame==1 else 'headlight_candidate'
+                return [item]
+        tracker=VideoTrackManager(TrackerPolicy(max_gap_seconds=.5,minimum_iou=.2,
+            max_center_distance=.15,association_margin=.05),run_id='night-transition')
+        records=list(VideoAnalysisPipeline(DetectorWithTransition(),tracker,
+            decoder_factory=Decoder).analyze('fixture'))
+        frames=[item for item in records if isinstance(item,VideoFrameAnalysis)]
+        first,second=[item.review_hypotheses[0] for item in frames]
+        self.assertEqual(first['review_track_id'],second['review_track_id'])
+        self.assertEqual(second['review_state_change']['from_pairing'],'single')
+        self.assertEqual(second['review_state_change']['to_pairing'],'hypothesis')
+        self.assertEqual([item.progress.detections_in_frame for item in frames],[1,1])
+        self.assertEqual(frames[1].detections[0]['possible_light_candidate_id'],
+            second['review_track_id'])
+        self.assertNotEqual(frames[1].detections[0]['possible_light_candidate_vehicle_track_id'],
+            second['review_track_id'])
+        self.assertEqual([item.track.track_id for frame in frames for item in frame.assignments],
+            [frames[0].assignments[0].track.track_id]*2)
 
     def test_frame_serialization_keeps_lights_untracked(self):
         vehicle={'label':'car','box':[.2,.2,.2,.2]}
@@ -102,6 +142,29 @@ class VideoNightAdapterTests(unittest.TestCase):
         self.assertIsNone(saved[1]['track_id'])
         self.assertEqual(saved[1]['light_subtype'],'uncertain_light')
         self.assertEqual(len(saved),2)
+
+    def test_frame_serialization_preserves_review_identity_and_transition(self):
+        light_tracker=VideoTrackManager(TrackerPolicy(max_gap_seconds=.5,minimum_iou=.2,
+            max_center_distance=.15,association_margin=.05),run_id='save-light')
+        first=light_tracker.update_review_hypotheses(VideoTimestamp(0,1,1000),[dict(LIGHT)])[0]
+        later=dict(LIGHT);later['pairing']='single'
+        second=light_tracker.update_review_hypotheses(VideoTimestamp(40,1,1000),[later])[0]
+        saved=_frame_detections([],[],[second])
+        self.assertEqual(saved[0]['track_id'],None)
+        self.assertEqual(saved[0]['review_track_id'],first['review_track_id'])
+        self.assertEqual(saved[0]['review_observation_index'],2)
+        self.assertEqual(saved[0]['review_state_change']['from_pairing'],'hypothesis')
+
+    def test_frame_serialization_preserves_possible_vehicle_continuation_link(self):
+        vehicle={'label':'car','box':[.3,.3,.1,.1],
+            'possible_light_candidate_id':'run:night-00000001',
+            'possible_light_candidate_vehicle_track_id':'run:00000001',
+            'possible_light_candidate_link_basis':'unique_spatial_match_within_tracker_policy'}
+        assignment=SimpleNamespace(detection_index=0,track=SimpleNamespace(track_id='run:00000001'))
+        saved=_frame_detections([vehicle],[assignment])
+        self.assertEqual(saved[0]['track_id'],'run:00000001')
+        self.assertEqual(saved[0]['possible_light_candidate_id'],'run:night-00000001')
+        self.assertEqual(saved[0]['possible_light_candidate_vehicle_track_id'],'run:00000001')
 
 
 if __name__=='__main__':

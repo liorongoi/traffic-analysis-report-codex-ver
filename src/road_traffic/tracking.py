@@ -139,7 +139,7 @@ def _center_distance(a, b):
 class VideoTrackManager:
     """Associate frame detections within one camera view and recording only."""
 
-    STATE_VERSION = 1
+    STATE_VERSION = 2
 
     def __init__(self, policy, *, run_id, state=None):
         if not isinstance(policy, TrackerPolicy):
@@ -151,6 +151,11 @@ class VideoTrackManager:
         self.next_id = 1
         self.active = {}
         self.last_offset = None
+        # Night-light hypothesis identities are an independent review-only
+        # namespace. They never enter vehicle events or detection counts.
+        self.next_review_id = 1
+        self.active_review_hypotheses = {}
+        self.last_review_offset = None
         if state is not None:
             self._restore(state)
 
@@ -307,10 +312,178 @@ class VideoTrackManager:
                 'last_offset_seconds': fraction(item['last_offset_seconds']),
                 'last_box': list(item['last_box']), 'labels': sorted(item['labels']),
                 'uncertainty_reasons': sorted(item['uncertainty_reasons'])}
-                for item in self.active.values()]}
+                for item in self.active.values()],
+            'review_hypotheses': {'next_id': self.next_review_id,
+                'last_offset_seconds': fraction(self.last_review_offset) if self.last_review_offset is not None else None,
+                'active': [{**item,
+                    'last_offset_seconds': fraction(item['last_offset_seconds']),
+                    'last_box': list(item['last_box']),
+                    'states': [list(state) for state in sorted(item['states'])],
+                    'uncertainty_reasons': sorted(item['uncertainty_reasons'])}
+                    for item in self.active_review_hypotheses.values()]}}
+
+    def update_review_hypotheses(self, timestamp, hypotheses, *, scene_cut=False):
+        """Link nearby light proposals into uncertain, review-only temporal candidates.
+
+        These candidate IDs are intentionally separate from vehicle track IDs:
+        they are saved with frame overlays but never create vehicle events or
+        contribute to detection/track counts.
+        """
+        _, _, _, offset = self._time(timestamp)
+        if self.last_review_offset is not None and offset < self.last_review_offset:
+            raise ValueError('Review-hypothesis timestamps must be monotonic within one recording')
+        if not isinstance(hypotheses, (list, tuple)):
+            raise ValueError('Review hypotheses must be a sequence')
+        normalized = []
+        for raw in hypotheses:
+            if not isinstance(raw, dict) or raw.get('kind') != 'light':
+                raise ValueError('Only light hypotheses may receive review candidate IDs')
+            label, subtype, pairing = raw.get('label'), raw.get('light_subtype'), raw.get('pairing')
+            reasons = raw.get('reasons', [])
+            if (not isinstance(label, str) or not label.strip()
+                    or subtype not in ('headlight_candidate','streetlight_suspect','reflection_suspect','uncertain_light')
+                    or pairing not in ('single','hypothesis')
+                    or not isinstance(reasons, (list, tuple))
+                    or any(not isinstance(reason, str) for reason in reasons)):
+                raise ValueError('Review hypothesis fields are invalid')
+            normalized.append({'kind':'light','label':label.strip(),'box':_box(raw.get('box')),
+                'light_subtype':subtype,'pairing':pairing,'reasons':list(reasons)})
+
+        active_items = []
+        if scene_cut:
+            self.active_review_hypotheses.clear()
+        else:
+            for candidate_id, item in list(self.active_review_hypotheses.items()):
+                if offset - item['last_offset_seconds'] > self.policy.max_gap_seconds:
+                    del self.active_review_hypotheses[candidate_id]
+                else:
+                    active_items.append(item)
+
+        options_by_hypothesis = []
+        for hypothesis in normalized:
+            options = []
+            for item in active_items:
+                overlap = _iou(item['last_box'], hypothesis['box'])
+                distance = _center_distance(item['last_box'], hypothesis['box'])
+                if overlap < self.policy.minimum_iou and distance > self.policy.max_center_distance:
+                    continue
+                proximity = max(0.0, 1.0 - distance / self.policy.max_center_distance)
+                options.append((max(overlap, proximity), item['review_track_id']))
+            options.sort(key=lambda pair: (-pair[0], pair[1]))
+            options_by_hypothesis.append(options)
+        best_owners = {}
+        for options in options_by_hypothesis:
+            if options:
+                best_owners.setdefault(options[0][1], []).append(options)
+
+        enriched = []
+        for hypothesis, options in zip(normalized, options_by_hypothesis):
+            selected = None
+            uncertain = False
+            if options:
+                best_score, best_id = options[0]
+                runner_up = options[1][0] if len(options) > 1 else None
+                ambiguous = runner_up is not None and best_score - runner_up <= self.policy.association_margin
+                collision = len(best_owners[best_id]) > 1
+                if ambiguous or collision:
+                    uncertain = True
+                else:
+                    selected = self.active_review_hypotheses[best_id]
+
+            current_state = (hypothesis['light_subtype'], hypothesis['pairing'])
+            if selected is None:
+                candidate_id = f'{self.run_id}:night-{self.next_review_id:08d}'
+                self.next_review_id += 1
+                selected = {'review_track_id':candidate_id,'last_offset_seconds':offset,
+                    'last_box':hypothesis['box'],'last_state':current_state,'states':{current_state},
+                    'observation_count':0,'uncertainty_reasons':set()}
+                self.active_review_hypotheses[candidate_id] = selected
+                if uncertain:
+                    selected['uncertainty_reasons'].add('competing_light_hypotheses')
+                state_change = None
+            else:
+                previous_state = selected['last_state']
+                state_change = None
+                if previous_state != current_state:
+                    state_change = {'from_subtype':previous_state[0],'from_pairing':previous_state[1],
+                        'to_subtype':current_state[0],'to_pairing':current_state[1]}
+                    selected['states'].add(current_state)
+                selected['last_offset_seconds'] = offset
+                selected['last_box'] = hypothesis['box']
+                selected['last_state'] = current_state
+                if uncertain:
+                    selected['uncertainty_reasons'].add('ambiguous_light_association')
+            selected['observation_count'] += 1
+            enriched.append({**hypothesis,'review_track_id':selected['review_track_id'],
+                'review_observation_index':selected['observation_count'],
+                'review_association_uncertain':bool(selected['uncertainty_reasons']),
+                'review_uncertainty_reasons':sorted(selected['uncertainty_reasons']),
+                'review_state_change':state_change})
+        self.last_review_offset = offset
+        return enriched
+
+    def possible_light_candidate_links(self, timestamp, detections, assignments):
+        """Suggest review-only links from recent light candidates to vehicle detections.
+
+        This does not merge identities: the vehicle tracker and event records
+        remain unchanged. It only annotates a contemporaneous frame when the
+        spatial match to a recent light candidate is unique under the frozen
+        tracker policy.
+        """
+        _, _, _, offset = self._time(timestamp)
+        if not isinstance(detections,(list,tuple)) or not isinstance(assignments,(list,tuple)):
+            raise ValueError('Vehicle detections and assignments must be sequences')
+        active = [item for item in self.active_review_hypotheses.values()
+            if 0 <= offset-item['last_offset_seconds'] <= self.policy.max_gap_seconds]
+        assignment_by_index = {}
+        for assignment in assignments:
+            index=getattr(assignment,'detection_index',None)
+            track=getattr(assignment,'track',None)
+            track_id=getattr(track,'track_id',None)
+            if (isinstance(index,bool) or not isinstance(index,int) or index<0 or index>=len(detections)
+                    or not isinstance(track_id,str) or not track_id or index in assignment_by_index):
+                raise ValueError('Vehicle assignment does not match its detection')
+            assignment_by_index[index]=track_id
+        options_by_detection=[]
+        for index,detection in enumerate(detections):
+            if not isinstance(detection,dict):
+                raise ValueError('Vehicle detection must be a mapping')
+            box=_box(detection.get('box'))
+            options=[]
+            for item in active:
+                overlap=_iou(item['last_box'],box)
+                distance=_center_distance(item['last_box'],box)
+                if overlap<self.policy.minimum_iou and distance>self.policy.max_center_distance:
+                    continue
+                proximity=max(0.0,1.0-distance/self.policy.max_center_distance)
+                options.append((max(overlap,proximity),item['review_track_id']))
+            options.sort(key=lambda pair:(-pair[0],pair[1]))
+            options_by_detection.append(options)
+        owners={}
+        for options in options_by_detection:
+            if options:
+                owners.setdefault(options[0][1],[]).append(options)
+        links={}
+        for index,options in enumerate(options_by_detection):
+            if not options:
+                continue
+            best_score,best_id=options[0]
+            runner_up=options[1][0] if len(options)>1 else None
+            ambiguous=runner_up is not None and best_score-runner_up<=self.policy.association_margin
+            collision=len(owners[best_id])>1
+            if ambiguous or collision:
+                links[index]={'possible_light_candidate_link_uncertain':True,
+                    'possible_light_candidate_link_reason':'competing_light_candidates'
+                        if ambiguous else 'competing_vehicle_detections'}
+            elif index in assignment_by_index:
+                links[index]={'possible_light_candidate_id':best_id,
+                    'possible_light_candidate_vehicle_track_id':assignment_by_index[index],
+                    'possible_light_candidate_link_basis':'unique_spatial_match_within_tracker_policy'}
+        return links
 
     def _restore(self, state):
-        if not isinstance(state, dict) or state.get('version') != self.STATE_VERSION or state.get('run_id') != self.run_id:
+        if (not isinstance(state, dict) or state.get('version') not in (1, self.STATE_VERSION)
+                or state.get('run_id') != self.run_id):
             raise ValueError('Incompatible video tracker checkpoint')
         saved_policy=state.get('policy')
         if not checkpoint_policy_matches(saved_policy,self._policy_state()):
@@ -371,3 +544,52 @@ class VideoTrackManager:
         if active and (self.last_offset is None or any(item['last_offset_seconds'] > self.last_offset for item in active.values())):
             raise ValueError('Tracker checkpoint time is inconsistent')
         self.next_id, self.active = next_id, active
+        if state.get('version') == 1:
+            self.next_review_id, self.active_review_hypotheses, self.last_review_offset = 1, {}, None
+            return
+        review = state.get('review_hypotheses')
+        if not isinstance(review, dict):
+            raise ValueError('Invalid review-hypothesis checkpoint')
+        next_review_id = review.get('next_id')
+        if isinstance(next_review_id, bool) or not isinstance(next_review_id, int) or next_review_id < 1:
+            raise ValueError('Invalid review-hypothesis checkpoint next ID')
+        review_active = {}
+        largest_review_id = 0
+        for raw in review.get('active', []):
+            item = dict(raw)
+            candidate_id = item.get('review_track_id')
+            prefix = self.run_id + ':night-'
+            try:
+                numeric_id = int(candidate_id[len(prefix):]) if isinstance(candidate_id,str) and candidate_id.startswith(prefix) else 0
+            except ValueError:
+                numeric_id = 0
+            if numeric_id < 1 or candidate_id in review_active:
+                raise ValueError('Invalid or duplicate review-hypothesis ID in checkpoint')
+            item['last_offset_seconds'] = fraction(item.get('last_offset_seconds'))
+            item['last_box'] = _box(item.get('last_box'))
+            states = item.get('states')
+            reasons = item.get('uncertainty_reasons')
+            if (not isinstance(states,list) or not states
+                    or any(not isinstance(state,list) or len(state)!=2
+                        or state[0] not in ('headlight_candidate','streetlight_suspect','reflection_suspect','uncertain_light')
+                        or state[1] not in ('single','hypothesis') for state in states)
+                    or not isinstance(reasons,list)
+                    or any(not isinstance(reason,str) or not reason for reason in reasons)
+                    or not isinstance(item.get('last_state'),(list,tuple))
+                    or tuple(item.get('last_state')) not in [tuple(value) for value in states]
+                    or isinstance(item.get('observation_count'),bool)
+                    or not isinstance(item.get('observation_count'),int) or item['observation_count']<1):
+                raise ValueError('Invalid review-hypothesis state in checkpoint')
+            item['states'] = {tuple(value) for value in states}
+            item['last_state'] = tuple(item['last_state'])
+            item['uncertainty_reasons'] = set(reasons)
+            review_active[candidate_id] = item
+            largest_review_id = max(largest_review_id,numeric_id)
+        if largest_review_id >= next_review_id:
+            raise ValueError('Review-hypothesis checkpoint next ID would reuse an existing ID')
+        last_review = review.get('last_offset_seconds')
+        self.last_review_offset = fraction(last_review) if last_review is not None else None
+        if review_active and (self.last_review_offset is None or
+                any(item['last_offset_seconds'] > self.last_review_offset for item in review_active.values())):
+            raise ValueError('Review-hypothesis checkpoint time is inconsistent')
+        self.next_review_id, self.active_review_hypotheses = next_review_id, review_active
