@@ -29,6 +29,7 @@ This matrix maps every numbered section in the preserved source request (`docs/r
 ## Evidence and blocked inputs
 
 - Repository automated checks establish code-path behavior on this Mac, not native Windows deployment or algorithm accuracy.
+- Benchmark screening found TrafficCAM as a fixed-camera annotated-still lead; its official Google Drive archives could not be reached from this shell and remain unscored. See `docs/06-benchmarks.md` and `docs/09-verification.md`.
 - Required external acceptance inputs are authorized representative fixed-camera video with verified UTC origin and codecs, authorized plate-localization samples for Iran/Lebanon/Israel/Latvia, target Windows hardware, and product-owner thresholds for accuracy, throughput, retention, and model promotion.
 - The user's latest instruction restores chip-only plate handling and supersedes the earlier LPR request: the application localizes plate regions, saves chips, and records human approve/reject decisions without recognizing plate text or inferring vehicle identity.
 - Video identity semantics are settled: merges produce one corrected logical event; splits produce child events; original event records and audit history remain preserved.
