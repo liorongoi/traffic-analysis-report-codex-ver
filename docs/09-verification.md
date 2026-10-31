@@ -519,3 +519,8 @@ New video runs freeze the `video-night-hypotheses-v1` adapter setting. Night-lik
 ## Optional SAM 3.1 setup — 2026-10-31
 
 Added a Windows command to install an optional CPU PyTorch/Transformers runtime and public BF16 SAM 3.1 weights without an account, sign-in, or token. The runtime packages are stored beside the weights under the ignored user model folder; the app adds that directory only when local SAM is invoked. This does not add SAM files to the single core installer or alter its bundled NumPy/OpenCV runtime. Use the optional setup while connected, then the app makes no model-hub requests. The setup uses Python 3.11+ and requires several GB of disk and memory. Hosted tests mock downloads and runtime installation; real SAM inference and target-machine resource use remain unverified.
+
+
+## SAM 3.1 Windows verification — 2026-10-31
+
+Windows run [41182976414](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/41182976414) on commit 1264f6b8a1ce7232fa8ec4f39996b81ce41384db passed all **364 tests** in 359.852 seconds, staged the offline application payload, compiled the installer, verified install/reinstall/uninstall with workspace preservation, and uploaded preview artifact [13036460558](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/41182976414/artifacts/13036460558) (258,206,784 bytes; SHA-256 `f98d058d81626011be521657bedbfcf35ddda984ebbc8958d048582f0f92f6cc`; expires 2026-11-07 08:13 UTC). This verifies the anonymous setup code paths and core installer in hosted Windows CI; the model download/runtime are mocked in tests, so real SAM inference and target-machine memory/runtime performance remain unverified.
