@@ -152,6 +152,10 @@ The converter accepts the documented six-column SCT layout and the seven-column 
 
 These are development leads only. Target-camera acceptance still needs representative footage, independently verified frame/time provenance, labeled plate boxes, and product-approved thresholds.
 
+### Zenodo SC10 full-video diagnostic — 2026-10-31
+
+The 10-second, 3840×2160 HEVC sample from the [Zenodo Dataset for Traffic Evaluation](https://zenodo.org/records/14041920) completed all 500 frames through the bundled YOLOX-S detector and video tracker on CPU. At threshold 0.18 with tiling, it emitted 30,325 proposals and took 176.5 seconds (2.83 frames/s). The tracker created 12,948 tracks; 12,715 tracks (98.2%) contain a single observation. This flags a detection-volume/association problem for follow-up, but without matched boxes or tracks it does not establish false-positive rate or tracking accuracy. The source has no verified UTC-to-PTS origin; the run is a short unscored smoke, not acceptance evidence. Full configuration and hashes are in the [diagnostic report](../reports/zenodo-sc10-full-video-diagnostic-2026-10-31.json) and [verification record](09-verification.md). No source video was added to the repository and no product thresholds were changed.
+
 
 ### Public-data access check — 2026-10-31
 

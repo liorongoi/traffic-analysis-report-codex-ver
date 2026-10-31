@@ -1,0 +1,72 @@
+{
+  "status": "complete",
+  "source_name": "roadloom-sc10-static-roundabout.mp4",
+  "source_bytes": 150058280,
+  "source_sha256": "a5311a16470e42e2124023dfe2a70a7912a39631da11e85a83f9ec760038a2df",
+  "source_utc_origin_verified": false,
+  "ground_truth_available": false,
+  "acceptance_evidence": false,
+  "accuracy": "not measured: no matching labels",
+  "model": {
+    "pack": "model-packs/yolox-s",
+    "sha256": "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063",
+    "provider": "CPUExecutionProvider",
+    "threshold": 0.18,
+    "tiled": true,
+    "cpu_threads": 2
+  },
+  "tracker_policy": {
+    "max_gap_seconds": "1/2",
+    "minimum_iou": 0.2,
+    "max_center_distance": 0.15,
+    "association_margin": 0.05
+  },
+  "video_metadata": {
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+    "codec_name": "hevc",
+    "width": 3840,
+    "height": 2160,
+    "stream_index": 0,
+    "stream_time_base_num": 1,
+    "stream_time_base_den": 50000,
+    "average_rate_num": 50,
+    "average_rate_den": 1,
+    "frame_count": 500,
+    "duration_pts": 500000
+  },
+  "stats": {
+    "frames_processed": 500,
+    "detections_total": 30325,
+    "frames_with_detections": 500,
+    "max_detections_in_frame": 78,
+    "max_active_tracks": 850,
+    "first_pts": 0,
+    "last_pts": 499000,
+    "scene_cuts": 0
+  },
+  "track_summary": {
+    "count": 12948,
+    "total_observations": 30325,
+    "uncertain_tracks": 12838,
+    "labels": {
+      "bus": 384,
+      "car": 11955,
+      "truck": 607,
+      "motorcycle": 2
+    }
+  },
+  "performance": {
+    "wall_seconds": 176.53519620804582,
+    "processed_fps": 2.832296396072501,
+    "frame_interval_mean_seconds": 0.3529261220820481,
+    "frame_interval_p50_seconds": 0.35521950051770546,
+    "frame_interval_p95_seconds": 0.3683656167035224
+  },
+  "limitations": [
+    "single short 4K fixed-camera clip",
+    "no matched vehicle boxes or tracks",
+    "absolute UTC-to-PTS origin is not documented",
+    "CPU diagnostic only",
+    "no product thresholds applied"
+  ]
+}
