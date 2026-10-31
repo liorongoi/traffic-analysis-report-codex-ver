@@ -36,6 +36,8 @@ fieldset{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:
 .video-event-preview-button{display:block;width:max-content;max-width:100%;padding:0;border:1px solid transparent;background:transparent}.video-event-preview-button:hover{border-color:var(--accent)}.video-event-preview-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 .mission-backup-panel{display:grid;gap:8px}.mission-backup-panel>p{margin:4px 0}.mission-backup-panel>button{width:100%}.mission-backup-panel>input{font-size:12px;min-height:38px}.mission-backup-panel #missionBackupStatus{overflow-wrap:anywhere}
+.monitoring-panel[hidden]{display:none}
+.empty-workflow{min-height:calc(100vh - 150px);display:grid;align-content:center;padding:clamp(24px,6vw,72px);border-inline-start:3px solid var(--accent);background:radial-gradient(ellipse at 88% 18%,rgba(88,224,193,.09),transparent 42rem)}.empty-workflow[hidden]{display:none}.empty-workflow h2{max-width:18ch;margin:0;font-size:clamp(1.7rem,3vw,2.35rem)}.empty-workflow p{max-width:48ch;margin-top:12px}
 
 /* RoadLoom visual identity: calm dark workspace with a subtle route-map glow. */
 :root { --bg:#08111f; --panel:#122137; --line:#2b405a; --muted:#a5b6ca; --accent:#58e0c1; }

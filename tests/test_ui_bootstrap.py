@@ -29,6 +29,25 @@ class MissionWizardMarkup(HTMLParser):
             self.in_mission_form = False
 
 
+class ReviewLayoutMarkup(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.div_classes = []
+        self.nested_sectionheads = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag != 'div':
+            return
+        classes = set(dict(attrs).get('class', '').split())
+        if 'sectionhead' in classes and any('sectionhead' in parent for parent in self.div_classes):
+            self.nested_sectionheads += 1
+        self.div_classes.append(classes)
+
+    def handle_endtag(self, tag):
+        if tag == 'div' and self.div_classes:
+            self.div_classes.pop()
+
+
 class UiBootstrapTests(unittest.TestCase):
     def test_translation_table_is_initialized_before_overrides(self):
         source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
@@ -67,6 +86,36 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn('גיבוי או שחזור משימה', source)
         self.assertIn("'/api/missions/backup'", source)
         self.assertIn("'/api/missions/restore'", source)
+
+    def test_review_header_does_not_wrap_the_entire_workflow_as_a_flex_row(self):
+        parser = ReviewLayoutMarkup()
+        parser.feed((ROOT / 'web' / 'index.html').read_text(encoding='utf-8'))
+        self.assertEqual(parser.nested_sectionheads, 0)
+
+    def test_video_mode_hides_only_the_image_workflow_container(self):
+        markup = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        styles = (ROOT / 'web' / 'style.css').read_text(encoding='utf-8')
+        self.assertIn('<div id="imageWorkflow">', markup)
+        self.assertIn("$('videoWorkflow').hidden=!video", source)
+        self.assertIn("$('imageWorkflow').hidden=video||!selected", source)
+        self.assertIn("$('emptyWorkflow').hidden=!!selected", source)
+        self.assertIn('.monitoring-panel[hidden]{display:none}', styles)
+        self.assertIn('.empty-workflow[hidden]{display:none}', styles)
+
+    def test_operator_help_is_translated_to_hebrew(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        for value in (
+                "helpTitle:'עזרה למפעיל'", "helpImportTitle:'ייבוא וזמני צילום'",
+                "helpScheduleTitle:'חלונות זמן'", "helpViewsTitle:'תצוגות ואזורים'",
+                "helpReviewTitle:'בדיקה וייצוא'", "helpScopeTitle:'יכולות נוכחיות'",
+                "keyboardHelp:'השתמשו בחצים"):
+            self.assertIn(value, source)
+
+    def test_empty_workspace_message_is_bilingual(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn("emptyWorkflowTitle:'Create or select a mission'", source)
+        self.assertIn("emptyWorkflowTitle:'צרו או בחרו משימה'", source)
 
     def test_sam_button_requires_an_image_assigned_to_the_selected_view(self):
         source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
