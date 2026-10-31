@@ -748,3 +748,8 @@ When the still-image plate approval page is open, a continuous batch status chan
 ## Loopback startup smoke — 2026-10-31
 
 Launched RoadLoom against a fresh temporary workspace at `http://127.0.0.1:8877`. The in-app browser loaded the Hebrew first-visit screen and fetched the bundled stylesheet, logo, JavaScript, timezone data, session endpoint, and learning-capabilities endpoint with HTTP 200 responses. It showed the three-step mission wizard and no sign-in prompt. No mission was created. This checks initial startup and local assets only; mission creation and end-to-end review interaction still need a fresh browser acceptance pass.
+
+
+## Windows preview after continuous plate and Object Search updates — 2026-10-31
+
+Windows Actions run [41226459488](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/41226459488) on product commit `389dcd51033f616f419619a522c6cbe7a63457f1` passed **434 tests in 428.202 seconds**, staged the offline application payload, compiled the single current-user installer, verified install and bundled runtime, launched the installed RoadLoom app with HTTP 200, reinstalled while running, removed five obsolete OCR files, preserved workspace data, completed uninstall, and uploaded the preview installer. Artifact [13052341414](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/41226459488/artifacts/13052341414) is 258,260,226 bytes (SHA-256 `46b2371f18c78a6b677f24dc8e9c2505e1944baac2f13807d5d2678dee5cc62d`) and expires 2026-11-07 18:02 UTC. This verifies hosted Windows packaging and lifecycle; representative-camera accuracy, target-hardware performance, codec playback, and full operator acceptance remain open.
