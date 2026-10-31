@@ -1,0 +1,347 @@
+{
+  "schema": "roadloom-external-benchmark-screen-v1",
+  "screened_utc": "2026-10-31",
+  "source": {
+    "dataset": "TrafficCAM",
+    "project_page": "https://math-ml-x.github.io/TrafficCAM/",
+    "download_instructions": "https://github.com/Math-ML-X/TrafficCAM/blob/main/TrafficCAM-download.md",
+    "fully_annotated_archive_public_file_id": "1h4oUqECDF05vSYMkYgz0aUc_RRzHlh3e",
+    "archive_bytes": 2020305572,
+    "official_split_archive_public_file_id": "1GcQ3J56kU-6TwRqRjzvI28-OF6QUdHeR",
+    "anonymous_no_login": true,
+    "media_committed": false
+  },
+  "official_splits": {
+    "train_frames": 2264,
+    "validation_frames": 210,
+    "test_frames": 1530,
+    "leave_out_frames": 360,
+    "test_sequences": 51,
+    "test_sequence_overlap_with_train_validation_leaveout": {
+      "train": 0,
+      "validation": 0,
+      "leave_out": 0
+    }
+  },
+  "sample": {
+    "images": 51,
+    "sequences": 51,
+    "sampling_rule": "SHA-256 of sequence ID selects one official test frame per sequence",
+    "source_sequence_ids": [
+      "BLR_1651660052.1477683",
+      "BLR_1651660139.868193",
+      "BLR_1651660154.8345582",
+      "BLR_1651660159.3116336",
+      "BLR_1651660171.3260174",
+      "BLR_1651660175.7659187",
+      "BLR_1651660179.8008435",
+      "BLR_1651660201.6187055",
+      "BLR_1651660210.6247327",
+      "BLR_1651660214.8310256",
+      "BLR_1651660253.873296",
+      "BLR_1651660267.9485307",
+      "BLR_1651660334.5236144",
+      "BLR_1651660364.1433756",
+      "BLR_1651660368.1922565",
+      "BLR_1651660378.470399",
+      "Mumbai_1650527303.6345055",
+      "Mumbai_1650527330.9602153",
+      "Mumbai_1650527353.472924",
+      "Mumbai_1650527395.9128385",
+      "Mumbai_1650527402.451182",
+      "Mumbai_1650527433.3939126",
+      "Mumbai_1650527465.3549948",
+      "Mumbai_1650527484.3855815",
+      "Mumbai_1650527508.1937165",
+      "NITK4_1654023258.8787584",
+      "NITK4_1654023406.8217447",
+      "NITK4_1654023496.6530554",
+      "NITK4_1654023614.8573692",
+      "NITK4_1654023715.0885038",
+      "NoidaSW_1651002517.3058496",
+      "NoidaSW_1651002576.368026",
+      "NoidaSW_1651003277.5730705",
+      "NoidaSW_1651003672.0879273",
+      "Noida_1650519000.2172463",
+      "Noida_1650519283.9942002",
+      "Noida_1650519289.161247",
+      "Noida_1650519418.0944746",
+      "Noida_1650519918.915305",
+      "Noida_1650520030.540086",
+      "Noida_1650520199.5729105",
+      "Noida_1650520218.8214695",
+      "Noida_1650520396.9300475",
+      "Noida_1650520909.7246816",
+      "Noida_1650520916.9835074",
+      "Noida_1650521289.1884022",
+      "UCF_1651229600.8278725",
+      "UCF_1651230088.9310012",
+      "UCF_1651230985.391569",
+      "UCF_1651231043.9637823",
+      "UCF_1651231637.4264545"
+    ],
+    "resolution": "352x288",
+    "source_objects_all_classes": 1397,
+    "pedestrian_objects_excluded_from_vehicle_metric": 165,
+    "vehicle_boxes_evaluated": 1232,
+    "vehicle_source_label_counts": {
+      "Bus": 33,
+      "MotorBike": 465,
+      "Auto": 112,
+      "LCV": 28,
+      "LMV": 548,
+      "Truck": 20,
+      "Bike": 6,
+      "Tractor": 5,
+      "e-Rickshaw": 15
+    },
+    "polygon_bbox_invalid_count": 0,
+    "mapping": "all annotated classes except Pedestrian counted as one vehicle category; class-agnostic matching only",
+    "labels": "official LabelMe polygons converted to COCO bounding boxes; a six-scene visual spot-check found no obvious annotation or category mismatch",
+    "diagnostic_zip_sha256": "ee30df68c793024e08db4790b460f75b14b15fded62a0a71957ca7a20507ed49",
+    "sampled_frames": [
+      {
+        "source_sequence_id": "BLR_1651660052.1477683",
+        "frame_id": "frame16"
+      },
+      {
+        "source_sequence_id": "BLR_1651660139.868193",
+        "frame_id": "frame56"
+      },
+      {
+        "source_sequence_id": "BLR_1651660154.8345582",
+        "frame_id": "frame42"
+      },
+      {
+        "source_sequence_id": "BLR_1651660159.3116336",
+        "frame_id": "frame22"
+      },
+      {
+        "source_sequence_id": "BLR_1651660171.3260174",
+        "frame_id": "frame50"
+      },
+      {
+        "source_sequence_id": "BLR_1651660175.7659187",
+        "frame_id": "frame28"
+      },
+      {
+        "source_sequence_id": "BLR_1651660179.8008435",
+        "frame_id": "frame6"
+      },
+      {
+        "source_sequence_id": "BLR_1651660201.6187055",
+        "frame_id": "frame56"
+      },
+      {
+        "source_sequence_id": "BLR_1651660210.6247327",
+        "frame_id": "frame12"
+      },
+      {
+        "source_sequence_id": "BLR_1651660214.8310256",
+        "frame_id": "frame2"
+      },
+      {
+        "source_sequence_id": "BLR_1651660253.873296",
+        "frame_id": "frame56"
+      },
+      {
+        "source_sequence_id": "BLR_1651660267.9485307",
+        "frame_id": "frame10"
+      },
+      {
+        "source_sequence_id": "BLR_1651660334.5236144",
+        "frame_id": "frame34"
+      },
+      {
+        "source_sequence_id": "BLR_1651660364.1433756",
+        "frame_id": "frame8"
+      },
+      {
+        "source_sequence_id": "BLR_1651660368.1922565",
+        "frame_id": "frame8"
+      },
+      {
+        "source_sequence_id": "BLR_1651660378.470399",
+        "frame_id": "frame16"
+      },
+      {
+        "source_sequence_id": "Mumbai_1650527303.6345055",
+        "frame_id": "frame42"
+      },
+      {
+        "source_sequence_id": "Mumbai_1650527330.9602153",
+        "frame_id": "frame22"
+      },
+      {
+        "source_sequence_id": "Mumbai_1650527353.472924",
+        "frame_id": "frame58"
+      },
+      {
+        "source_sequence_id": "Mumbai_1650527395.9128385",
+        "frame_id": "frame2"
+      },
+      {
+        "source_sequence_id": "Mumbai_1650527402.451182",
+        "frame_id": "frame38"
+      },
+      {
+        "source_sequence_id": "Mumbai_1650527433.3939126",
+        "frame_id": "frame6"
+      },
+      {
+        "source_sequence_id": "Mumbai_1650527465.3549948",
+        "frame_id": "frame32"
+      },
+      {
+        "source_sequence_id": "Mumbai_1650527484.3855815",
+        "frame_id": "frame28"
+      },
+      {
+        "source_sequence_id": "Mumbai_1650527508.1937165",
+        "frame_id": "frame32"
+      },
+      {
+        "source_sequence_id": "NITK4_1654023258.8787584",
+        "frame_id": "frame32"
+      },
+      {
+        "source_sequence_id": "NITK4_1654023406.8217447",
+        "frame_id": "frame6"
+      },
+      {
+        "source_sequence_id": "NITK4_1654023496.6530554",
+        "frame_id": "frame32"
+      },
+      {
+        "source_sequence_id": "NITK4_1654023614.8573692",
+        "frame_id": "frame42"
+      },
+      {
+        "source_sequence_id": "NITK4_1654023715.0885038",
+        "frame_id": "frame44"
+      },
+      {
+        "source_sequence_id": "NoidaSW_1651002517.3058496",
+        "frame_id": "frame34"
+      },
+      {
+        "source_sequence_id": "NoidaSW_1651002576.368026",
+        "frame_id": "frame18"
+      },
+      {
+        "source_sequence_id": "NoidaSW_1651003277.5730705",
+        "frame_id": "frame24"
+      },
+      {
+        "source_sequence_id": "NoidaSW_1651003672.0879273",
+        "frame_id": "frame30"
+      },
+      {
+        "source_sequence_id": "Noida_1650519000.2172463",
+        "frame_id": "frame14"
+      },
+      {
+        "source_sequence_id": "Noida_1650519283.9942002",
+        "frame_id": "frame18"
+      },
+      {
+        "source_sequence_id": "Noida_1650519289.161247",
+        "frame_id": "frame32"
+      },
+      {
+        "source_sequence_id": "Noida_1650519418.0944746",
+        "frame_id": "frame42"
+      },
+      {
+        "source_sequence_id": "Noida_1650519918.915305",
+        "frame_id": "frame18"
+      },
+      {
+        "source_sequence_id": "Noida_1650520030.540086",
+        "frame_id": "frame42"
+      },
+      {
+        "source_sequence_id": "Noida_1650520199.5729105",
+        "frame_id": "frame24"
+      },
+      {
+        "source_sequence_id": "Noida_1650520218.8214695",
+        "frame_id": "frame28"
+      },
+      {
+        "source_sequence_id": "Noida_1650520396.9300475",
+        "frame_id": "frame22"
+      },
+      {
+        "source_sequence_id": "Noida_1650520909.7246816",
+        "frame_id": "frame42"
+      },
+      {
+        "source_sequence_id": "Noida_1650520916.9835074",
+        "frame_id": "frame58"
+      },
+      {
+        "source_sequence_id": "Noida_1650521289.1884022",
+        "frame_id": "frame12"
+      },
+      {
+        "source_sequence_id": "UCF_1651229600.8278725",
+        "frame_id": "frame16"
+      },
+      {
+        "source_sequence_id": "UCF_1651230088.9310012",
+        "frame_id": "frame48"
+      },
+      {
+        "source_sequence_id": "UCF_1651230985.391569",
+        "frame_id": "frame38"
+      },
+      {
+        "source_sequence_id": "UCF_1651231043.9637823",
+        "frame_id": "frame6"
+      },
+      {
+        "source_sequence_id": "UCF_1651231637.4264545",
+        "frame_id": "frame8"
+      }
+    ]
+  },
+  "prediction": {
+    "model_pack": "yolox-s",
+    "model_sha256": "c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063",
+    "confidence_threshold": 0.18,
+    "tiled": true,
+    "provider": "CPUExecutionProvider",
+    "predictions": 1398,
+    "evaluation_mode": "class-agnostic bbox matching; IoU 0.5"
+  },
+  "reported_diagnostic_metrics": {
+    "tp": 792,
+    "fp": 606,
+    "fn": 440,
+    "precision": 0.5665236051502146,
+    "recall": 0.6428571428571429,
+    "f1": 0.6022813688212928,
+    "false_alarms_per_image": 11.882352941176471,
+    "ap50_macro": 0.4956479193556181,
+    "map50_95_macro": 0.2729457961414945,
+    "count_mae_objects_per_image": 10.03921568627451
+  },
+  "local_cpu_smoke": {
+    "images_processed": 51,
+    "model_initialization_seconds": 0.0696873749839142,
+    "processing_wall_seconds": 13.46455249999417,
+    "images_per_second": 3.7877233573133666,
+    "per_image_latency": {
+      "mean_seconds": 0.2640075310665256,
+      "p50_seconds": 0.30830479197902605,
+      "p95_seconds": 0.32367383304517716,
+      "max_seconds": 0.33885712502524257
+    },
+    "peak_process_rss_bytes": 363823104,
+    "peak_vram_bytes": null,
+    "peak_vram_note": "Not exposed portably by the configured ONNX Runtime provider; measure on target hardware.",
+    "measurement_scope": "one prediction process over one frozen split; includes image read/decode and detector inference"
+  },
+  "evidence_scope": "diagnostic 51-image sample only; official held-out sequence-disjoint test source, but not the full 1530-frame split, not target-camera accuracy acceptance, no country-specific plate evidence, no night-stratified result, no video UTC-to-PTS evidence; detector threshold unchanged"
+}
