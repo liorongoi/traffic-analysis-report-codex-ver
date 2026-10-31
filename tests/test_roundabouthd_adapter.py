@@ -30,7 +30,7 @@ class RoundaboutHDAdapterTests(unittest.TestCase):
             self.assertEqual(sequence['frames'][1]['objects'], [])
             self.assertEqual(sequence['frames'][2]['objects'][0]['bbox'], [12.0, 20.0, 20.0, 30.0])
             self.assertEqual(sequence['metadata']['source_annotation_sha256'],
-                hashlib.sha256(source.encode('utf-8')).hexdigest())
+                hashlib.sha256(labels.read_bytes()).hexdigest())
 
             predictions = {'sequences': [{
                 'sequence_id': 'camera-1',
