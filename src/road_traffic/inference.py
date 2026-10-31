@@ -240,7 +240,7 @@ class InferenceService:
                 with self.library.connect(mission) as conn:
                     job=conn.execute('SELECT * FROM inference_runs WHERE id=?',(run,)).fetchone()
                     if not job:raise ValueError('Inference run not found')
-                    if job['status'] not in ('failed','cancelled'):raise ValueError('Only failed or stopped runs can be resumed')
+                    if job['status'] not in ('failed','cancelled','paused'):raise ValueError('Only paused, failed, or stopped runs can be resumed')
                     if self._pid_alive(job['worker_pid']):raise ValueError('The previous worker is still stopping; retry in a moment')
                     config=json.loads(job['config'])
                     if config.get('adapter')!=VERSION:raise ValueError('Adapter version changed; start a new run')
@@ -249,7 +249,7 @@ class InferenceService:
                     if sha!=config.get('model_sha256'):raise ValueError('Model changed since this run; start a new run')
                     completed=conn.execute('SELECT COUNT(*) FROM predictions WHERE inference_id=?',(run,)).fetchone()[0]
                     if completed>=job['total']:raise ValueError('This run has no unfinished image inputs')
-                    conn.execute("UPDATE inference_runs SET status='queued',stage='queued',done=?,stop_requested=0,error=NULL,finished=NULL,worker_pid=NULL WHERE id=?",
+                    conn.execute("UPDATE inference_runs SET status='queued',stage='queued',done=?,stop_requested=0,pause_requested=0,error=NULL,finished=NULL,worker_pid=NULL WHERE id=?",
                         (completed,run))
                 self._spawn(mission,run)
             except Exception:
@@ -295,3 +295,13 @@ class InferenceService:
             if not conn.execute('SELECT 1 FROM inference_runs WHERE id=?',(run,)).fetchone():raise ValueError('Run not found')
             conn.execute("UPDATE inference_runs SET stop_requested=1 WHERE id=? AND status IN ('queued','running')",(run,))
         return {'stop_requested':True}
+
+    def pause(self,mission,run):
+        inference_store.prepare(self.library,mission)
+        with self.library.connect(mission) as conn:
+            if not conn.execute('SELECT 1 FROM inference_runs WHERE id=?',(run,)).fetchone():raise ValueError('Run not found')
+            conn.execute("UPDATE inference_runs SET pause_requested=1 WHERE id=? AND status IN ('queued','running') AND stop_requested=0",(run,))
+            row=conn.execute('SELECT status,pause_requested,stop_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
+        if row['status'] not in ('queued','running'):raise ValueError('Only active inference runs can be paused')
+        if row['stop_requested']:raise ValueError('This run is already stopping')
+        return {'pause_requested':True}

@@ -183,7 +183,7 @@ class InferenceRecoveryTests(unittest.TestCase):
         from unittest.mock import Mock
         run=create_run(self.lib,self.mission,{'adapter':'fixture'})
         with self.lib.connect(self.mission) as conn:
-            conn.execute("UPDATE inference_runs SET status='running',stage='detecting',worker_pid=? WHERE id=?",(os.getpid(),run))
+            conn.execute("UPDATE inference_runs SET status='running',stage='detecting',worker_pid=?,stop_requested=0 WHERE id=?",(os.getpid(),run))
         service=InferenceService(self.lib,self.root/'model-pack')
         process=Mock();process.poll.return_value=None
         service.processes[(self.mission,run)]=process
@@ -250,3 +250,26 @@ class InferenceRecoveryTests(unittest.TestCase):
             count=conn.execute('SELECT COUNT(*) FROM predictions WHERE inference_id=?',(run,)).fetchone()[0]
         self.assertEqual((job['status'],job['done'],count),('queued',1,1))
         self.assertEqual(json.loads(job['config']),saved_config)
+
+    def test_pause_requests_image_boundary_and_persisted_paused_run_is_resumable(self):
+        from road_traffic.detector import VERSION
+        from unittest.mock import Mock
+        run=create_run(self.lib,self.mission,{'adapter':VERSION,'model_sha256':'fixture-sha',
+            'threshold':.18,'tiled':True,'night_lights':False})
+        service=InferenceService(self.lib,self.root/'model-pack')
+        with self.lib.connect(self.mission) as conn:
+            conn.execute("UPDATE inference_runs SET status='running',stage='detecting',worker_pid=?,stop_requested=0 WHERE id=?",(os.getpid(),run))
+        self.assertEqual(service.pause(self.mission,run),{'pause_requested':True})
+        with self.lib.connect(self.mission) as conn:
+            job=conn.execute('SELECT status,pause_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
+            conn.execute("UPDATE inference_runs SET status='paused',stage='paused',worker_pid=NULL WHERE id=?",(run,))
+        self.assertEqual((job['status'],job['pause_requested']),('running',1))
+        process=Mock();process.poll.return_value=None
+        with (patch('road_traffic.detector.model_pack',return_value=('fixture','fixture-sha')),
+                patch('road_traffic.model_registry.resolve_model',return_value=self.root/'model-pack'),
+                patch('road_traffic.inference.subprocess.Popen',return_value=process)):
+            result=service.resume(self.mission,run)
+        self.assertEqual(result,{'run':run,'status':'queued','remaining':2})
+        with self.lib.connect(self.mission) as conn:
+            job=conn.execute('SELECT status,pause_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
+        self.assertEqual((job['status'],job['pause_requested']),('queued',0))

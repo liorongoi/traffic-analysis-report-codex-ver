@@ -60,8 +60,8 @@ def execute(library,mission,run,pack):
         from .light_background import build_view_backgrounds,load_background
         def stopped():
             with library.connect(mission) as conn:
-                state=conn.execute('SELECT status,stop_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
-            return not state or state['status']!='running' or bool(state['stop_requested'])
+                state=conn.execute('SELECT status,stop_requested,pause_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
+            return not state or state['status']!='running' or bool(state['stop_requested'] or state['pause_requested'])
         if config.get('night_lights'):
             backgrounds=build_view_backgrounds(inputs,heldout,row_view_key,load,reference_folder,
                 stopped,cv2_module=cv2,light_mask_fn=light_mask,illumination_fn=illumination)
@@ -91,10 +91,12 @@ def execute(library,mission,run,pack):
             background=({**background_info,'path':str(background_info['path'].relative_to(library.location(mission)))}
                 if background_info else None)
             with library.connect(mission) as conn:
-                state=conn.execute('SELECT status,stop_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
+                state=conn.execute('SELECT status,stop_requested,pause_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
                 if not state or state['status']!='running':return
                 if state['stop_requested']:
                     conn.execute("UPDATE inference_runs SET status='cancelled',stage='cancelled',finished=? WHERE id=?",(now(),run));return
+                if state['pause_requested']:
+                    conn.execute("UPDATE inference_runs SET status='paused',stage='paused',finished=NULL,worker_pid=NULL WHERE id=?",(run,));return
                 conn.execute("UPDATE inference_runs SET stage='detecting' WHERE id=?",(run,))
             start=time.perf_counter()
             details={'adapter':VERSION,'model_sha256':detector.sha,'device':detector.session.provider,'cpu_threads':detector.cpu_threads,
@@ -161,6 +163,13 @@ def execute(library,mission,run,pack):
                     conn.rollback();return
                 conn.execute('INSERT INTO predictions VALUES (?,?,?,?,?,?)',(run,row['id'],json.dumps(predictions),json.dumps(details),elapsed,error))
                 conn.execute('UPDATE inference_runs SET done=? WHERE id=?',(number+1,run))
+                control=conn.execute('SELECT stop_requested,pause_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
+                if number+1<len(inputs) and control['stop_requested']:
+                    conn.execute("UPDATE inference_runs SET status='cancelled',stage='cancelled',finished=? WHERE id=?",(now(),run))
+                    return
+                if number+1<len(inputs) and control['pause_requested']:
+                    conn.execute("UPDATE inference_runs SET status='paused',stage='paused',finished=NULL,worker_pid=NULL WHERE id=?",(run,))
+                    return
             number+=1
             print(json.dumps({'run':run,'done':number,'total':len(inputs),'detections':details.get('detections',0),'lights':details.get('lights_count',0),'elapsed':round(elapsed,3),'error':error}),flush=True)
         with library.connect(mission) as conn:

@@ -590,6 +590,8 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         data.get('candidate_id'),data.get('operator'),data.get('reason'))
                 elif self.path == '/api/inference/stop':
                     result=inference.stop(data['mission'],data['run'])
+                elif self.path == '/api/inference/pause':
+                    result=inference.pause(data['mission'],data['run'])
                 elif self.path == '/api/video/sources':
                     result=video_store.register_video(library,data['mission'],data['relative_path'],
                         metadata=data.get('metadata'),recording_start_utc=data.get('recording_start_utc'),

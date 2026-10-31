@@ -10,7 +10,8 @@ def schema(conn):
     CREATE TABLE IF NOT EXISTS inference_runs(
       id TEXT PRIMARY KEY,status TEXT NOT NULL,stage TEXT NOT NULL,total INTEGER NOT NULL,
       done INTEGER NOT NULL DEFAULT 0,config TEXT NOT NULL,created TEXT NOT NULL,finished TEXT,
-      stop_requested INTEGER NOT NULL DEFAULT 0,error TEXT,worker_pid INTEGER);
+      stop_requested INTEGER NOT NULL DEFAULT 0,error TEXT,worker_pid INTEGER,
+      pause_requested INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS inference_inputs(
       inference_id TEXT REFERENCES inference_runs(id),image_id TEXT REFERENCES images(id),sha256 TEXT NOT NULL,
       PRIMARY KEY(inference_id,image_id));
@@ -44,6 +45,9 @@ def schema(conn):
     CREATE TRIGGER IF NOT EXISTS immutable_roi_ack_u BEFORE UPDATE ON roi_rerun_acknowledgments BEGIN SELECT RAISE(ABORT,'immutable ROI acknowledgment'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_roi_ack_d BEFORE DELETE ON roi_rerun_acknowledgments BEGIN SELECT RAISE(ABORT,'immutable ROI acknowledgment'); END;
     ''')
+    columns={row['name'] for row in conn.execute('PRAGMA table_info(inference_runs)')}
+    if 'pause_requested' not in columns:
+        conn.execute('ALTER TABLE inference_runs ADD COLUMN pause_requested INTEGER NOT NULL DEFAULT 0')
 
 
 def prepare(library,mission):
