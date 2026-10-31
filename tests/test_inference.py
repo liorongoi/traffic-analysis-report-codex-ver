@@ -273,3 +273,34 @@ class InferenceRecoveryTests(unittest.TestCase):
         with self.lib.connect(self.mission) as conn:
             job=conn.execute('SELECT status,pause_requested FROM inference_runs WHERE id=?',(run,)).fetchone()
         self.assertEqual((job['status'],job['pause_requested']),('queued',0))
+
+    def test_worker_saves_current_image_before_transitioning_to_paused(self):
+        from road_traffic.worker import execute
+        from road_traffic.detector import VERSION
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        lib,mission,root=self.lib,self.mission,self.root
+        config={'adapter':VERSION,'model_sha256':'fixture-sha','threshold':.18,
+            'tiled':True,'night_lights':False,'cpu_threads':1}
+        service=InferenceService(self.lib,self.root/'model-pack')
+        run=create_run(self.lib,self.mission,config)
+
+        class Detector:
+            def __init__(self,*args,**kwargs):
+                self.sha='fixture-sha';self.cpu_threads=1
+                self.session=SimpleNamespace(provider='CPUExecutionProvider',fallback_reason=None)
+            def infer(self,rgb):
+                with lib.connect(mission) as conn:
+                    conn.execute('UPDATE inference_runs SET pause_requested=1 WHERE id=?',(run,))
+                return []
+            def infer_night_top(self,rgb):return []
+
+        with (patch('road_traffic.detector.VehicleDetector',Detector),
+                patch('road_traffic.detector.illumination',return_value={'mean_luma':150,
+                    'mean_saturation':25,'low_light':False,'scene_period':'day_like',
+                    'scene_period_basis':'fixture'})):
+            execute(lib,mission,run,root/'model-pack')
+        with lib.connect(mission) as conn:
+            job=conn.execute('SELECT status,stage,done FROM inference_runs WHERE id=?',(run,)).fetchone()
+            predictions=conn.execute('SELECT COUNT(*) FROM predictions WHERE inference_id=?',(run,)).fetchone()[0]
+        self.assertEqual((job['status'],job['stage'],job['done'],predictions),('paused','paused',1,1))
