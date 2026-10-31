@@ -265,15 +265,22 @@ def _aggregate(rows):
     }
 
 
-def evaluate_tracking(ground_truth, predictions, *, iou_threshold=0.5):
+def evaluate_tracking(ground_truth, predictions, *, iou_threshold=0.5, class_agnostic=False):
     """Compute frame detection and sequence identity metrics from paired JSON objects."""
     iou_threshold = _finite(iou_threshold, 'iou_threshold')
     if not 0 < iou_threshold <= 1:
         raise ValueError('iou_threshold must be greater than 0 and at most 1')
+    if not isinstance(class_agnostic, bool):
+        raise ValueError('class_agnostic must be a boolean')
     gt_sequences = _sequences(ground_truth, 'ground truth')
     pred_sequences = _sequences(predictions, 'predictions')
     if set(gt_sequences) != set(pred_sequences):
         raise ValueError('Ground-truth and prediction sequence IDs must match exactly')
+    if class_agnostic:
+        for sequence in (*gt_sequences.values(), *pred_sequences.values()):
+            for objects in sequence['frames'].values():
+                for obj in objects:
+                    obj['category_id'] = 'vehicle'
     results, group_sequences = {}, defaultdict(list)
     for sequence_id in sorted(gt_sequences, key=lambda value: (type(value).__name__, str(value))):
         results[str(sequence_id)] = _sequence_metrics(gt_sequences[sequence_id],
@@ -288,15 +295,19 @@ def evaluate_tracking(ground_truth, predictions, *, iou_threshold=0.5):
     for (field, value), ids in sorted(group_sequences.items()):
         strata.setdefault(field, {})[value] = _aggregate([results[str(sequence_id)] for sequence_id in ids])
     return {'metric_version': 'roadloom-mot-v1', 'iou_threshold': iou_threshold,
-            'matching': 'per-frame, class-aware maximum-total-IoU assignment; below-threshold pairs are unmatched',
+            'category_matching': 'class-agnostic; all categories mapped to vehicle' if class_agnostic
+                else 'class-aware',
+            'matching': 'per-frame, maximum-total-IoU assignment; below-threshold pairs are unmatched',
             'identity_assignment': 'global maximum co-occurrence assignment over frame-local spatial matches',
             'sequences': results, 'overall': overall, 'strata': strata}
 
 
-def evaluate_files(ground_truth_path, predictions_path, report_path, *, iou_threshold=0.5):
+def evaluate_files(ground_truth_path, predictions_path, report_path, *, iou_threshold=0.5,
+                   class_agnostic=False):
     ground_truth, gt_hash = _read(ground_truth_path)
     predictions, prediction_hash = _read(predictions_path)
-    report = evaluate_tracking(ground_truth, predictions, iou_threshold=iou_threshold)
+    report = evaluate_tracking(ground_truth, predictions, iou_threshold=iou_threshold,
+                               class_agnostic=class_agnostic)
     report['provenance'] = {'ground_truth_sha256': gt_hash,
         'predictions_sha256': prediction_hash, 'evaluated_utc': datetime.now(timezone.utc).isoformat()}
     destination = Path(report_path)

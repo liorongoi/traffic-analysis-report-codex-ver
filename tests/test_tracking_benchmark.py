@@ -57,6 +57,14 @@ class TrackingBenchmarkTests(unittest.TestCase):
         metrics = evaluate_tracking(gt, pred)['overall']
         self.assertEqual((metrics['tp'], metrics['fp'], metrics['fn']), (0, 1, 1))
 
+    def test_class_agnostic_mode_compares_vehicle_boxes_without_subtype_labels(self):
+        gt = sequence([[obj('gt-1', category='vehicle')]])
+        pred = sequence([[obj('p-1', category='truck')]])
+        result = evaluate_tracking(gt, pred, class_agnostic=True)
+        self.assertEqual(result['category_matching'], 'class-agnostic; all categories mapped to vehicle')
+        self.assertEqual(result['overall']['tp'], 1)
+        self.assertEqual(result['overall']['idf1'], 1)
+
     def test_unmatched_extra_track_is_counted(self):
         gt = sequence([[obj('gt-1')]])
         pred = sequence([[obj('p-1'), obj('p-2', x=30)]])

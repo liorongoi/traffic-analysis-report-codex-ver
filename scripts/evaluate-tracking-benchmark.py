@@ -18,11 +18,14 @@ def main(argv=None):
                         help='UTF-8 JSON with matching sequence/frame IDs and predicted objects')
     parser.add_argument('--iou-threshold', type=float, default=0.5,
                         help='minimum IoU for frame-level class-aware matching (default: 0.5)')
+    parser.add_argument('--class-agnostic', action='store_true',
+                        help='match any vehicle categories as one class (for datasets without subtype labels)')
     parser.add_argument('--report', required=True, help='output JSON report path')
     args = parser.parse_args(argv)
     try:
         report = evaluate_files(args.ground_truth, args.predictions, args.report,
-                                iou_threshold=args.iou_threshold)
+                                iou_threshold=args.iou_threshold,
+                                class_agnostic=args.class_agnostic)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     print(json.dumps({'report': args.report, 'overall': report['overall']}, ensure_ascii=False))

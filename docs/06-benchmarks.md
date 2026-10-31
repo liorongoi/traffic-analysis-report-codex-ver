@@ -103,7 +103,17 @@ python scripts/export-video-tracking-run.py --database D:\\RoadLoom\\missions\\M
 python scripts/evaluate-tracking-benchmark.py --ground-truth D:\\RoadLoom\\tracking-ground-truth.json --predictions D:\\RoadLoom\\tracking-predictions.json --iou-threshold 0.5 --report D:\\RoadLoom\\tracking-report.json
 ```
 
-The report includes class-aware per-frame box precision/recall, ID switches, fragmentations, MOTA, global-assignment ID precision/recall/IDF1, track-count error, and the share of ground-truth tracks split across multiple predicted IDs. That last value is a duplicate-track indicator, not a universal duplicate-event rate; event-level acceptance still needs a frozen definition and representative annotated sequences. Matching is within one sequence only: the evaluator never assigns identities across cameras or recordings. It calculates metrics and supplies no acceptance thresholds.
+The report includes class-aware (or explicitly selected class-agnostic) per-frame box precision/recall, ID switches, fragmentations, MOTA, global-assignment ID precision/recall/IDF1, track-count error, and the share of ground-truth tracks split across multiple predicted IDs. That last value is a duplicate-track indicator, not a universal duplicate-event rate; event-level acceptance still needs a frozen definition and representative annotated sequences. Matching is within one sequence only: the evaluator never assigns identities across cameras or recordings. It calculates metrics and supplies no acceptance thresholds.
+
+For [RoundaboutHD](https://researchdata.bath.ac.uk/1574/), the repository includes an offline converter from the published SCT row format (`frame_id object_id xmin ymin xmax ymax`) to the same tracking manifest. Supply the exact video frame count and dimensions. Frame numbering defaults to zero-based; set `--frame-offset` explicitly if a prepared clip begins at another source frame. The converter emits every frame, including empty frames, namespaces track IDs per camera, checks pixel boxes, and records each annotation file's SHA-256.
+
+```powershell
+python scripts/convert-roundabouthd-tracking.py --labels "c001=D:\RoundaboutHD\imagesc001\SCT\imagesc001_SCT_GT.txt" --frame-count 9000 --width 3840 --height 2160 --output D:\RoadLoom\c001-ground-truth.json
+python scripts/export-video-tracking-run.py --database D:\RoadLoom\missions\MISSION-ID\mission.sqlite3 --run-id RUN-ID --sequence-id c001 --output D:\RoadLoom\c001-predictions.json
+python scripts/evaluate-tracking-benchmark.py --ground-truth D:\RoadLoom\c001-ground-truth.json --predictions D:\RoadLoom\c001-predictions.json --class-agnostic --report D:\RoadLoom\c001-report.json
+```
+
+The public SCT labels do not supply vehicle subtype categories, so `--class-agnostic` deliberately scores localization and identity without penalizing car/truck/bus label differences. The report records this matching mode. Use this only when the selected ground truth has no subtype labels; the default evaluation remains class-aware. Process the corresponding full video and verify its actual frame count/dimensions before scoring. RoundaboutHD's public archive is 8 GB and has no documented UTC-to-PTS origin; conversion support does not mean its video was fetched, evaluated, or accepted as UTC evidence.
 
 ### Public video candidates for development fixtures
 
