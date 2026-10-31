@@ -116,12 +116,28 @@ jobs:
             if ($null -eq $page -or $page.StatusCode -ne 200) { throw 'Installed app did not serve its local page.' }
             if ($page.Content -notmatch 'RoadLoom') { throw 'Installed app page did not contain RoadLoom branding.' }
 
+            # Simulate files left behind by the superseded OCR-enabled installer.
+            $obsoleteOcrFiles = @(
+            'plate_ocr_arabic_dict.json',
+            'plate_ocr_arabic_ppocrv3_mobile.onnx',
+            'plate_ocr_global_cct_s_v2.onnx',
+            'plate_ocr_global_cct_s_v2_model_config.yaml',
+            'plate_ocr_global_cct_s_v2_plate_config.yaml'
+            )
+            $plateModelDir = Join-Path $install 'model-packs\\license-plate-yolox'
+            foreach ($name in $obsoleteOcrFiles) {
+              Set-Content -Path (Join-Path $plateModelDir $name) -Value 'obsolete OCR cleanup fixture'
+            }
+
             $reinstall = Start-Process -FilePath $setup -ArgumentList ("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=$install") -Wait -PassThru
             if ($reinstall.ExitCode -ne 0) { throw "Reinstall exited with code $($reinstall.ExitCode)." }
             $appProcess.Refresh()
             if (-not $appProcess.HasExited) { throw 'Reinstall did not close the running RoadLoom app.' }
             if (-not (Test-Path $receipt)) { throw 'Reinstall removed the verified payload receipt.' }
             if ((Get-Content -Raw $sentinel) -ne $env:GITHUB_RUN_ID) { throw 'Reinstall changed existing workspace data.' }
+            foreach ($name in $obsoleteOcrFiles) {
+              if (Test-Path (Join-Path $plateModelDir $name)) { throw "Reinstall left obsolete OCR file: $name" }
+            }
           } finally {
             if (-not $appProcess.HasExited) {
               Stop-Process -Id $appProcess.Id -Force
