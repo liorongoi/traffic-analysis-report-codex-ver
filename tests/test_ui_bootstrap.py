@@ -110,6 +110,13 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn('.monitoring-panel[hidden]{display:none}', styles)
         self.assertIn('.empty-workflow[hidden]{display:none}', styles)
 
+    def test_keyboard_focus_is_visible_on_non_form_controls(self):
+        styles = (ROOT / 'web' / 'style.css').read_text(encoding='utf-8')
+        for selector in ('a:focus-visible', 'summary:focus-visible',
+                         '#timezoneMap:focus-visible', '[role="button"]:focus-visible'):
+            self.assertIn(selector, styles)
+        self.assertIn('outline-offset:3px', styles)
+
     def test_vehicle_model_selector_is_available_outside_the_image_only_panel(self):
         markup = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
         source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
