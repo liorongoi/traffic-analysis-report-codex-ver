@@ -188,6 +188,17 @@ class VideoInferenceServiceTests(unittest.TestCase):
         self.assertNotIn('recognition',result['config'])
         self.assertIn((mission,result['run']),self.inference.processes)
 
+    def test_continuous_plate_video_dispatches_to_crop_review_defaults(self):
+        output=self.root/'continuous-plate-output';output.mkdir()
+        mission=self.library.create('Continuous plate video','Lebanon','Asia/Beirut',{
+            'input_type':'videos','analysis_mode':'license_plate','processing_mode':'continuous',
+            'source_root':str(self.source_root),'output_root':str(output)})
+        source=register_video(self.library,mission,'clip.mp4')
+        with patch.object(self.service,'start_plate_review',return_value={'run':'plate-run'}) as start:
+            result=self.service.start_continuous_source(mission,source['id'])
+        self.assertEqual(result['run'],'plate-run')
+        start.assert_called_once_with(mission,source['id'],threshold=.18,tiled=True)
+
     def test_startup_marks_orphaned_runs_failed_with_checkpoint_preserved(self):
         source = self.source()
         run = create_run(self.library, self.mission, source['id'], {

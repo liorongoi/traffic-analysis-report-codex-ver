@@ -350,13 +350,18 @@ class SourceMonitor:
     def _scan_videos(self,mission,settings):
         from . import video_store
         video_store.prepare(self.library,mission)
-        if settings['analysis_mode']!='video_traffic':
-            self._state(mission,'unsupported','Continuous video analysis requires Video Traffic mode')
+        if settings['analysis_mode'] not in ('video_traffic','license_plate'):
+            self._state(mission,'unsupported','Continuous video analysis supports Video Traffic or plate-chip review')
             return self.status(mission)
         if not settings['source_root']:
             self._state(mission,'unconfigured','Set a source directory in the mission settings')
             return self.status(mission)
-        if not settings.get('continuous_video_policy'):
+        policy=settings.get('continuous_video_policy')
+        if settings['analysis_mode']=='license_plate':
+            # Plate review is a crop-only workflow with safe local defaults; it
+            # does not need a tracking policy or any text-recognition setting.
+            policy=policy or {'task':'license_plate','threshold':.18,'tiled':True}
+        if not policy:
             self._state(mission,'policy_required','Save an explicit detector and tracker policy before automatic video analysis')
             return self.status(mission)
         root=Path(settings['source_root'])
@@ -399,7 +404,7 @@ class SourceMonitor:
                         completed_run=conn.execute("SELECT id FROM video_runs WHERE source_id=? LIMIT 1",(existing['id'],)).fetchone()
                         if not completed_run:
                             conn.execute("INSERT OR IGNORE INTO video_monitor_batches(source_id,status,created,policy_json) VALUES (?,'pending',?,?)",
-                                (existing['id'],now(),json.dumps(settings['continuous_video_policy'],sort_keys=True,separators=(',',':'))))
+                                (existing['id'],now(),json.dumps(policy,sort_keys=True,separators=(',',':'))))
                             conn.execute("INSERT OR IGNORE INTO monitor_events(source_run_id,kind,details,created) VALUES (?,'new_data',?,?)",
                                 (existing['id'],f'Video source {relative} is queued for automatic analysis.',now()))
                     else:
@@ -420,7 +425,7 @@ class SourceMonitor:
                 with self.library.connect(mission) as conn:
                     conn.execute("UPDATE monitored_files SET imported_sha256=?,status='imported',error=NULL WHERE relative_path=?",(checksum,relative))
                     conn.execute("INSERT OR IGNORE INTO video_monitor_batches(source_id,status,created,policy_json) VALUES (?,'pending',?,?)",
-                        (source['id'],now(),json.dumps(settings['continuous_video_policy'],sort_keys=True,separators=(',',':'))))
+                        (source['id'],now(),json.dumps(policy,sort_keys=True,separators=(',',':'))))
                     conn.execute("INSERT OR IGNORE INTO monitor_events(source_run_id,kind,details,created) VALUES (?,'new_data',?,?)",
                         (source['id'],f'Video source {relative} imported and awaiting analysis.',now()))
                 imported.append(source['id'])

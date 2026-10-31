@@ -76,6 +76,24 @@ class ContinuousVideoMonitorTests(unittest.TestCase):
         self.assertEqual((row['status'],row['video_run_id']),('queued','retried-run'))
         self.assertEqual(len(attempts),2)
 
+    def test_continuous_plate_video_uses_crop_only_defaults_without_tracker_policy(self):
+        plate_source=self.root/'plate-incoming';plate_source.mkdir()
+        plate_output=self.root/'plate-output';plate_output.mkdir()
+        (plate_source/'cam-plate.mp4').write_bytes(b'video bytes')
+        mission=self.library.create('Continuous plate crops','Lebanon','Asia/Beirut',{
+            'input_type':'videos','analysis_mode':'license_plate','processing_mode':'continuous',
+            'source_root':str(plate_source),'output_root':str(plate_output)})
+        received=[]
+        monitor=SourceMonitor(self.library,stability_seconds=0,
+            on_video=lambda mission,source,policy:received.append((source,policy)) or {'run':'plate-run'})
+        monitor.scan(mission)
+        with self.library.connect(mission) as conn:
+            batch=conn.execute('SELECT status,policy_json FROM video_monitor_batches').fetchone()
+        self.assertEqual(batch['status'],'queued')
+        self.assertEqual(__import__('json').loads(batch['policy_json']),
+            {'task':'license_plate','threshold':.18,'tiled':True})
+        self.assertEqual(received[0][1],{'task':'license_plate','threshold':.18,'tiled':True})
+
 
 if __name__=='__main__':
     unittest.main()

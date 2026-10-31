@@ -131,7 +131,17 @@ class VideoInferenceService:
         return self.library.set_continuous_video_policy(mission,policy)
 
     def start_continuous_source(self,mission,source_id,policy=None):
-        policy=policy or self.library.settings(mission).get('continuous_video_policy')
+        settings=self.library.settings(mission)
+        if settings['analysis_mode']=='license_plate':
+            policy=policy or {'task':'license_plate','threshold':.18,'tiled':True}
+            if policy.get('task')!='license_plate':
+                raise ValueError('Continuous plate review requires a plate-chip policy')
+            for job in video_store.runs(self.library,mission):
+                if job['source_id']==source_id:
+                    return {'run':job['id'],'status':job['status'],'existing':True}
+            return self.start_plate_review(mission,source_id,
+                threshold=policy.get('threshold',.18),tiled=policy.get('tiled',True))
+        policy=policy or settings.get('continuous_video_policy')
         if not policy:
             raise ValueError('Save the explicit detector and tracker policy before enabling automatic video analysis')
         for job in video_store.runs(self.library,mission):
