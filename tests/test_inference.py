@@ -163,7 +163,7 @@ class InferenceRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         self.lib=Library(self.root/'workspace');self.mission=self.lib.create('Recover','Israel','Asia/Jerusalem')
-        source=self.root/'source';source.mkdir()
+        source=self.root/'source';source.mkdir();self.source=source
         Image.new('RGB',(8,8),(10,30,50)).save(source/'17052026-1604-a.jpg','JPEG')
         Image.new('RGB',(8,8),(50,30,10)).save(source/'17052026-1605-b.jpg','JPEG')
         self.lib.import_folder(self.mission,source,'camera')
@@ -178,6 +178,31 @@ class InferenceRecoveryTests(unittest.TestCase):
             result=service.start_continuous_batch(mission,'source-run')
         self.assertEqual(result,{'run':'new-run'})
         start.assert_called_once_with(mission,source_run='source-run',resource_profile='expanded')
+
+    def test_object_search_still_missions_can_create_vehicle_proposals(self):
+        from road_traffic.detector import VERSION
+        mission=self.lib.create('Still object search','Israel','Asia/Jerusalem',{
+            'input_type':'images','analysis_mode':'object_search'})
+        self.lib.import_folder(mission,self.source,'camera')
+        service=InferenceService(self.lib,self.root/'model-pack')
+        with (patch('road_traffic.detector.model_pack',return_value=('fixture','fixture-sha')),
+                patch('road_traffic.model_registry.resolve_model',return_value=self.root/'model-pack'),
+                patch.object(service,'_has_active_worker',return_value=False),
+                patch.object(service,'_spawn') as spawn):
+            result=service.start(mission)
+        self.assertEqual(result['config']['adapter'],VERSION)
+        self.assertEqual(result['config']['policy'],'All automatic results require human confirmation')
+        spawn.assert_called_once_with(mission,result['run'])
+
+    def test_continuous_object_search_batches_use_vehicle_proposals(self):
+        mission=self.lib.create('Continuous object search','Israel','Asia/Jerusalem',{
+            'input_type':'images','analysis_mode':'object_search','processing_mode':'continuous',
+            'resource_profile':'conservative'})
+        service=InferenceService(self.lib,self.root/'model-pack')
+        with patch.object(service,'start',return_value={'run':'proposal-run'}) as start:
+            result=service.start_continuous_batch(mission,'source-run')
+        self.assertEqual(result,{'run':'proposal-run'})
+        start.assert_called_once_with(mission,source_run='source-run',resource_profile='conservative')
 
     def test_active_image_run_status_includes_live_resource_usage(self):
         from unittest.mock import Mock

@@ -736,3 +736,7 @@ Continuous video missions configured for plate-chip review now accept stable inc
 ## Continuous still-image plate-chip monitoring — 2026-10-31
 
 Stable images arriving in a continuous plate-crop mission are now sent to a background crop-only worker. The worker loads the plate detector once per batch, records chips in the human approval gallery, shares the single processing slot with vehicle inference and learning, and returns interrupted queued batches to the retry queue after restart. The image proposal route remains separate from vehicle inference and does not add plate text recognition. Focused continuous-monitor and plate-worker tests passed; the full suite passed 430 tests after both continuous plate paths were added.
+
+## Still-image Object Search proposal generation — 2026-10-31
+
+Still-image Object Search missions can now run the bundled vehicle detector to create candidate proposals, and continuous Object Search missions automatically process newly imported stable image batches. The first mission visit opens proposal generation when no saved run exists; all outputs remain unconfirmed until review. The update passed the complete local suite: **433 tests**; `node --check web/app.js` and `git diff --check` passed. Representative camera accuracy remains an external acceptance gate.

@@ -153,8 +153,8 @@ class InferenceService:
         from .model_registry import resolve_model
         from .hardware import resolve_resource_profile
         settings = self.library.settings(mission)
-        if settings['input_type'] != 'images' or settings['analysis_mode'] != 'general_traffic':
-            raise ValueError('Automatic detection currently supports still-image General Traffic missions only')
+        if settings['input_type'] != 'images' or settings['analysis_mode'] not in ('general_traffic','object_search'):
+            raise ValueError('Vehicle proposals require a still-image General Traffic or Object Search mission')
         if type(threshold) not in (float,int) or not .01<=threshold<=.9:raise ValueError('Threshold must be 0.01–0.90')
         if type(tiled) is not bool or type(night_lights) is not bool:raise ValueError('Expected boolean settings')
         resources=resolve_resource_profile(resource_profile)
@@ -182,8 +182,8 @@ class InferenceService:
         from .detector import model_pack,VERSION
         from .model_registry import resolve_model
         settings=self.library.settings(mission)
-        if settings['input_type']!='images' or settings['analysis_mode']!='general_traffic':
-            raise ValueError('ROI reruns currently support still-image General Traffic missions only')
+        if settings['input_type']!='images' or settings['analysis_mode'] not in ('general_traffic','object_search'):
+            raise ValueError('ROI reruns require a still-image General Traffic or Object Search mission')
         with self.lock:
             yielded=self._pause_training_for_worker()
             try:
@@ -212,8 +212,8 @@ class InferenceService:
     def start_continuous_batch(self,mission,source_run):
         settings=self.library.settings(mission)
         if settings['processing_mode']!='continuous':raise ValueError('Mission is not configured for continuous processing')
-        if settings['input_type']!='images' or settings['analysis_mode']!='general_traffic':
-            raise ValueError('Automatic continuous inference currently supports still-image General Traffic missions only')
+        if settings['input_type']!='images' or settings['analysis_mode'] not in ('general_traffic','object_search'):
+            raise ValueError('Automatic vehicle proposals require a still-image General Traffic or Object Search mission')
         for job in inference_store.runs(self.library,mission):
             if json.loads(job['config']).get('source_run_id')!=source_run:continue
             if job['status'] in ('failed','cancelled'):

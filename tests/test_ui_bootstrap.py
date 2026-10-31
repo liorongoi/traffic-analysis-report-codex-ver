@@ -110,6 +110,11 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn('.monitoring-panel[hidden]{display:none}', styles)
         self.assertIn('.empty-workflow[hidden]{display:none}', styles)
 
+    def test_still_object_search_exposes_vehicle_proposal_runs(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn("!['general_traffic','object_search'].includes(selected?.analysis_mode)", source)
+        self.assertIn("selected.analysis_mode==='object_search'&&!jobs.length", source)
+
     def test_keyboard_focus_is_visible_on_non_form_controls(self):
         styles = (ROOT / 'web' / 'style.css').read_text(encoding='utf-8')
         for selector in ('a:focus-visible', 'summary:focus-visible',
