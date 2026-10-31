@@ -1,11 +1,15 @@
 import hashlib
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from road_traffic.roundabouthd import convert_sct_labels, write_manifest
 from road_traffic.tracking_benchmark import evaluate_tracking
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 class RoundaboutHDAdapterTests(unittest.TestCase):
@@ -82,6 +86,31 @@ class RoundaboutHDAdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'duplicate sequence ID'):
                 convert_sct_labels([('camera-1', first), ('camera-1', second)],
                     frame_count=1, width=20, height=20)
+
+    def test_converter_and_class_agnostic_evaluator_cli_work_together(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            labels, ground_truth, predictions, report = (root / name for name in
+                ('labels.txt', 'ground-truth.json', 'predictions.json', 'report.json'))
+            labels.write_text('0 7 10 20 30 50\n', encoding='utf-8')
+            subprocess.run([sys.executable, str(ROOT / 'scripts' / 'convert-roundabouthd-tracking.py'),
+                '--labels', f'c001={labels}', '--frame-count', '1', '--width', '100',
+                '--height', '80', '--output', str(ground_truth)], check=True,
+                capture_output=True, text=True)
+            predictions.write_text(json.dumps({'sequences': [{
+                'sequence_id': 'c001',
+                'frames': [{'frame_id': 0, 'objects': [{
+                    'track_id': 'pred-7', 'category_id': 'car', 'bbox': [10, 20, 20, 30],
+                }]}],
+            }]}), encoding='utf-8')
+            subprocess.run([sys.executable, str(ROOT / 'scripts' / 'evaluate-tracking-benchmark.py'),
+                '--ground-truth', str(ground_truth), '--predictions', str(predictions),
+                '--class-agnostic', '--report', str(report)], check=True,
+                capture_output=True, text=True)
+            saved = json.loads(report.read_text(encoding='utf-8'))
+            self.assertEqual(saved['category_matching'],
+                'class-agnostic; all categories mapped to vehicle')
+            self.assertEqual(saved['overall']['idf1'], 1)
 
 
 if __name__ == '__main__':
