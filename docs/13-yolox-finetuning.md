@@ -2,6 +2,8 @@
 
 RoadLoom includes a COCO-pretrained YOLOX-S PyTorch baseline and can export an evidence-versioned COCO ZIP from complete human reviews. The optional trainer starts from that local baseline, uses only the training and validation roles, and leaves the held-out test split unused. It writes checkpoints, training data and logs to the output folder, and puts the fixed-size ONNX model plus manifest in a dedicated `roadloom-model-pack` subfolder. The training profile currently requires one CUDA-capable NVIDIA GPU and a separate PyTorch/YOLOX training environment; none of these packages or large training dependencies are added to the main installer. No Hugging Face account, sign-in, or token is used.
 
+After importing a trained pack, evaluate both the existing baseline and the candidate against the same frozen, independently labeled test split. The offline report comparator in `docs/06-benchmarks.md` highlights changes by class and available test strata. This is evidence for operator review; it has no built-in acceptance threshold and does not change the selected mission model. Representative test data and product-approved thresholds are still needed before accuracy can be accepted.
+
 ## Prepare the labels
 
 1. In the app's learning panel, assign reviewed images to training, validation or test. Review each training and validation image completely; partial reviews are excluded. Keep related camera/hour captures in one split.

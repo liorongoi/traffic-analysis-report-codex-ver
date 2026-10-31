@@ -5,7 +5,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from road_traffic.benchmark import evaluate_coco, evaluate_files, predict_coco_zip
+from road_traffic.benchmark import (compare_detection_reports, evaluate_coco,
+    evaluate_files, predict_coco_zip)
 
 
 def sample_truth():
@@ -21,6 +22,48 @@ def sample_truth():
 
 
 class DetectionBenchmarkTests(unittest.TestCase):
+    @staticmethod
+    def _comparison_report(predictions, model_hash, *, dataset_hash='a'*64, split='test'):
+        prediction_metadata={'model_kind':'vehicle','model_sha256':model_hash,
+            'model_pack':model_hash[:8],'threshold':.18,'tiled':True,
+            'inference_provider':'CPUExecutionProvider'}
+        report=evaluate_coco(sample_truth(),predictions,metadata={'prediction':prediction_metadata})
+        report['metadata']={'prediction':prediction_metadata,
+            'ground_truth_sha256':dataset_hash,'split':split}
+        return report
+
+    def test_candidate_comparison_reports_overall_class_and_condition_regressions(self):
+        perfect=[
+            {'image_id':1,'category_id':1,'bbox':[10,10,20,20],'score':.95},
+            {'image_id':2,'category_id':1,'bbox':[50,50,20,20],'score':.9}]
+        degraded=[
+            {'image_id':1,'category_id':1,'bbox':[10,10,20,20],'score':.95},
+            {'image_id':1,'category_id':1,'bbox':[10,10,20,20],'score':.8}]
+        baseline=self._comparison_report(perfect,'a'*64)
+        candidate=self._comparison_report(degraded,'b'*64)
+        result=compare_detection_reports(baseline,candidate)
+        self.assertEqual(result['decision'],'review_required')
+        self.assertEqual(result['split'],'test')
+        self.assertEqual(result['test_dataset_sha256'],'a'*64)
+        self.assertEqual(result['changes']['overall']['micro']['recall']['status'],'regressed')
+        self.assertEqual(result['changes']['overall']['micro']['false_alarms_per_image']['status'],'regressed')
+        self.assertEqual(result['changes']['overall']['count_error']['mae_objects_per_image']['status'],'regressed')
+        self.assertEqual(result['changes']['overall']['categories']['vehicle:car']['f1']['status'],'regressed')
+        self.assertEqual(result['changes']['groups']['condition']['day']['micro']['recall']['status'],'regressed')
+        self.assertTrue(any(item['status']=='regressed' for item in result['regressions']))
+        self.assertNotIn('accepted',result)
+
+    def test_candidate_comparison_rejects_noncomparable_reports(self):
+        empty=[]
+        baseline=self._comparison_report(empty,'a'*64)
+        candidate=self._comparison_report(empty,'b'*64)
+        with self.assertRaisesRegex(ValueError,'same frozen test dataset'):
+            compare_detection_reports(baseline,self._comparison_report(empty,'b'*64,dataset_hash='c'*64))
+        with self.assertRaisesRegex(ValueError,'held-out test split'):
+            compare_detection_reports(baseline,self._comparison_report(empty,'b'*64,split='validation'))
+        with self.assertRaisesRegex(ValueError,'different detector model hash'):
+            compare_detection_reports(baseline,self._comparison_report(empty,'a'*64))
+
     def test_one_to_one_matching_counts_duplicates_and_misses(self):
         predictions = [
             {'image_id': 1, 'category_id': 1, 'bbox': [10, 10, 20, 20], 'score': .95},

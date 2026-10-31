@@ -378,6 +378,153 @@ def evaluate_files(ground_truth_path, prediction_path, output_path, *, split='te
     return report
 
 
+_COMPARISON_METRICS = {
+    'micro': {
+        'precision': 'higher', 'recall': 'higher', 'f1': 'higher',
+        'false_alarms_per_image': 'lower', 'ap50_macro': 'higher',
+        'map50_95_macro': 'higher'},
+    'count_error': {
+        'mae_objects_per_image': 'lower',
+        'mean_signed_objects_per_image': 'closer_to_zero',
+        'exact_count_images_fraction': 'higher'},
+    'category': {
+        'precision': 'higher', 'recall': 'higher', 'f1': 'higher',
+        'false_alarms_per_image': 'lower', 'ap50': 'higher',
+        'map50_95': 'higher'}}
+
+
+def _compare_metric(baseline, candidate, direction):
+    old=baseline if isinstance(baseline,(int,float)) and not isinstance(baseline,bool) else None
+    new=candidate if isinstance(candidate,(int,float)) and not isinstance(candidate,bool) else None
+    if old is None or new is None or not math.isfinite(old) or not math.isfinite(new):
+        return {'baseline':old,'candidate':new,'delta':None,'direction':direction,'status':'unavailable'}
+    delta=new-old
+    if abs(delta)<=1e-12:
+        status='unchanged'
+    elif direction=='higher':
+        status='improved' if delta>0 else 'regressed'
+    elif direction=='lower':
+        status='improved' if delta<0 else 'regressed'
+    else:
+        status='improved' if abs(new)<abs(old) else 'regressed'
+    return {'baseline':old,'candidate':new,'delta':delta,'direction':direction,'status':status}
+
+
+def _compare_summary(baseline, candidate, metric_directions):
+    result={}
+    for section,metrics in metric_directions.items():
+        old_section=baseline.get(section) if isinstance(baseline,dict) else None
+        new_section=candidate.get(section) if isinstance(candidate,dict) else None
+        if not isinstance(old_section,dict) or not isinstance(new_section,dict):
+            result[section]=None
+            continue
+        result[section]={name:_compare_metric(old_section.get(name),new_section.get(name),direction)
+            for name,direction in metrics.items()}
+    return result
+
+
+def _compare_categories(baseline, candidate):
+    result={}
+    for name in sorted(baseline):
+        old=baseline[name];new=candidate[name]
+        if not isinstance(old,dict) or not isinstance(new,dict):
+            raise ValueError('Category metric sections must be objects')
+        result[name]={metric:_compare_metric(old.get(metric),new.get(metric),direction)
+            for metric,direction in _COMPARISON_METRICS['category'].items()}
+    return result
+
+
+def _compare_section(baseline, candidate):
+    if not isinstance(baseline,dict) or not isinstance(candidate,dict):
+        raise ValueError('Evaluation summary sections must be objects')
+    old_categories=baseline.get('categories');new_categories=candidate.get('categories')
+    if not isinstance(old_categories,dict) or not isinstance(new_categories,dict) or set(old_categories)!=set(new_categories):
+        raise ValueError('Baseline and candidate category metrics must cover the same classes')
+    return {'images':baseline.get('images'),
+        'micro':_compare_summary(baseline,candidate,{'micro':_COMPARISON_METRICS['micro']})['micro'],
+        'count_error':_compare_summary(baseline,candidate,{'count_error':_COMPARISON_METRICS['count_error']})['count_error'],
+        'categories':_compare_categories(old_categories,new_categories)}
+
+
+def compare_detection_reports(baseline, candidate):
+    """Compare two detector reports on the same frozen, independently labeled test split.
+
+    This reports signed changes only; it does not choose thresholds or approve model promotion.
+    """
+    for name,report in (('baseline',baseline),('candidate',candidate)):
+        if not isinstance(report,dict) or report.get('schema')!='roadloom-detection-benchmark-v1':
+            raise ValueError(f'{name.title()} report is not a RoadLoom detection benchmark report')
+        metadata=report.get('metadata')
+        if not isinstance(metadata,dict) or metadata.get('split')!='test':
+            raise ValueError('Model comparison requires reports from the held-out test split')
+        prediction=metadata.get('prediction')
+        if not isinstance(prediction,dict) or not isinstance(prediction.get('model_sha256'),str):
+            raise ValueError(f'{name.title()} report is missing its detector model hash')
+        model_hash=prediction['model_sha256']
+        if len(model_hash)!=64 or any(char not in '0123456789abcdef' for char in model_hash):
+            raise ValueError(f'{name.title()} report has an invalid detector model hash')
+        if not prediction.get('model_kind'):
+            raise ValueError(f'{name.title()} report is missing its detector kind')
+        dataset_hash=metadata.get('ground_truth_sha256')
+        if (not isinstance(dataset_hash,str) or len(dataset_hash)!=64
+                or any(char not in '0123456789abcdef' for char in dataset_hash)):
+            raise ValueError(f'{name.title()} report is missing its ground-truth hash')
+        if not isinstance(report.get('metrics'),dict) or not isinstance(report.get('overall'),dict):
+            raise ValueError(f'{name.title()} report is missing its evaluation metrics')
+    old_meta=baseline['metadata'];new_meta=candidate['metadata']
+    if old_meta['ground_truth_sha256']!=new_meta['ground_truth_sha256']:
+        raise ValueError('Model reports must use the same frozen test dataset')
+    old_prediction=old_meta['prediction'];new_prediction=new_meta['prediction']
+    if old_prediction['model_kind']!=new_prediction['model_kind']:
+        raise ValueError('Model reports must use the same detector kind')
+    if old_prediction['model_sha256']==new_prediction['model_sha256']:
+        raise ValueError('Candidate report must use a different detector model hash')
+    if baseline['metrics'].get('operating_iou')!=candidate['metrics'].get('operating_iou'):
+        raise ValueError('Model reports must use the same operating IoU threshold')
+    if (baseline.get('images')!=candidate.get('images')
+            or not isinstance(baseline.get('categories'),dict)
+            or not isinstance(candidate.get('categories'),dict)
+            or set(baseline['categories'])!=set(candidate['categories'])):
+        raise ValueError('Model reports must evaluate the same images and category schema')
+    old_groups=baseline.get('groups');new_groups=candidate.get('groups')
+    if not isinstance(old_groups,dict) or not isinstance(new_groups,dict) or set(old_groups)!=set(new_groups):
+        raise ValueError('Model reports must contain the same stratification fields')
+    for field in old_groups:
+        if not isinstance(old_groups[field],dict) or not isinstance(new_groups[field],dict) or set(old_groups[field])!=set(new_groups[field]):
+            raise ValueError('Model reports must contain the same labels in every stratum')
+    summary={'overall':_compare_section(baseline.get('overall'),candidate.get('overall')),
+        'groups':{field:{label:_compare_section(old_groups[field][label],new_groups[field][label])
+            for label in sorted(old_groups[field])} for field in sorted(old_groups)}}
+    changes=[]
+    def collect(value,path=''):
+        if isinstance(value,dict):
+            if value.get('status') in ('improved','regressed','unchanged','unavailable') and 'direction' in value:
+                if value['status'] in ('improved','regressed'):
+                    changes.append({'metric':path,**value})
+                return
+            for key,item in value.items():collect(item,f'{path}.{key}' if path else key)
+    collect(summary)
+    configuration_keys=('threshold','tiled','inference_provider','resource_profile')
+    config={key:{'baseline':old_prediction.get(key),'candidate':new_prediction.get(key),
+        'changed':old_prediction.get(key)!=new_prediction.get(key)} for key in configuration_keys
+        if key in old_prediction or key in new_prediction}
+    return {'schema':'roadloom-detection-model-comparison-v1',
+        'scope_note':'Held-out test-set comparison only. No acceptance threshold or model-promotion decision is applied.',
+        'created_utc':datetime.now(timezone.utc).isoformat(),
+        'test_dataset_sha256':old_meta['ground_truth_sha256'],
+        'split':'test','images':baseline['images'],
+        'operating_iou':baseline['metrics']['operating_iou'],
+        'detector_kind':old_prediction['model_kind'],
+        'baseline':{'model_sha256':old_prediction['model_sha256'],
+            'model_pack':old_prediction.get('model_pack')},
+        'candidate':{'model_sha256':new_prediction['model_sha256'],
+            'model_pack':new_prediction.get('model_pack')},
+        'configuration':config,'changes':summary,
+        'improvements':[item for item in changes if item['status']=='improved'],
+        'regressions':[item for item in changes if item['status']=='regressed'],
+        'decision':'review_required'}
+
+
 def predict_coco_zip(dataset_path, model_pack, *, split='test', model_kind='vehicle',
                      threshold=None, tiled=True, detector_factory=None,
                      image_metadata=None, strata=None):

@@ -70,6 +70,14 @@ python scripts/evaluate-detection-benchmark.py --ground-truth D:\\RoadLoom\\revi
 
 For plate-region chips, set `--model-kind plate` and select the plate-localization model pack. The evaluator reports box precision/recall/F1, AP50 and mAP50:95, false alarms per image, per-image count error, available country/condition/view/hardware strata, model initialization time, end-to-end split throughput, per-image median/p95 latency, peak process RSS, and model/dataset/prediction storage bytes. Peak VRAM is reported as unavailable when the selected ONNX provider does not expose a portable measurement. An optional per-image metadata JSON can supply `country`, `condition`, `camera_view`, and `hardware_profile`. The vehicle prediction command measures the standalone YOLOX detector; it does not measure the separate night-light hypotheses, background logic, scan masks, ROI restriction, road masks, or complete traffic pipeline. Plate scoring measures region localization only and never reads plate text. These commands calculate metrics but do not establish accuracy until run against a complete, independently labeled representative test split.
 
+To compare a fine-tuned detector with the selected baseline, first run the prediction and evaluation commands above for each model against the **same frozen `test` split**, using the same category schema and operating IoU. Then compare the JSON reports:
+
+```powershell
+python scripts/compare-detection-benchmarks.py --baseline-report D:\RoadLoom\vehicle-report.json --candidate-report D:\RoadLoom\candidate-report.json --output D:\RoadLoom\model-comparison.json
+```
+
+The comparator rejects reports with different ground-truth hashes, image/category schemas, detector kinds, or test splits. It reports candidate-minus-baseline precision, recall, F1, AP, count error, and per-category and available metadata-stratum changes, with regressions listed for review. It does not apply acceptance thresholds or promote/select the candidate; selection remains an operator decision.
+
 ## Sequence-level tracking benchmark
 
 Use paired JSON manifests with one sequence per recorded camera and one object list per frame. Ground-truth objects use `track_id`, `category_id`, and an original-frame `bbox` in `[x, y, width, height]` pixel coordinates. The prediction manifest can come directly from a completed RoadLoom run; the exporter converts the saved normalized boxes using the source's recorded dimensions and retains model/source hashes. Prediction and ground-truth files must contain identical sequence and frame IDs.
