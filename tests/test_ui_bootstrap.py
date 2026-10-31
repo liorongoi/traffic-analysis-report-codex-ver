@@ -117,6 +117,16 @@ class UiBootstrapTests(unittest.TestCase):
             self.assertIn(selector, styles)
         self.assertIn('outline-offset:3px', styles)
 
+    def test_timezone_map_status_is_rerendered_when_language_changes(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        translate = source[source.index('function translate()'):source.index('function updateModeOptions()')]
+        self.assertIn('renderTimezoneMapStatus();', translate)
+        self.assertIn('function setTimezoneMapStatus(model)', source)
+        for key in ('timezoneMapStatus', 'timezoneMapUnavailable',
+                    'timezoneMapSelected', 'timezoneSearchSet',
+                    'timezoneSearchZoneOnly', 'timezoneSearchNoMatch'):
+            self.assertIn(f"{key}:'", source[source.index('Object.assign(he,{countrySelectPrompt'):source.index("function tr(key)")])
+
     def test_vehicle_model_selector_is_available_outside_the_image_only_panel(self):
         markup = (ROOT / 'web' / 'index.html').read_text(encoding='utf-8')
         source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
