@@ -139,7 +139,7 @@ class PlateDetector:
     TILE_SIZE=768
     TILE_OVERLAP=128
 
-    def __init__(self,pack,threshold=.3,*,tiled=True):
+    def __init__(self,pack,threshold=.18,*,tiled=True):
         cv2,np,ort=_plate_runtime_modules('cv2','numpy','onnxruntime')
         if not .01<=threshold<=.9:raise ValueError('Invalid plate detector threshold')
         if type(tiled) is not bool:raise ValueError('Plate tile scanning must be a boolean')
@@ -237,7 +237,7 @@ def _iou(a,b):
     return inter/(a[2]*a[3]+b[2]*b[3]-inter+1e-12)
 
 
-def propose(library,mission,image_id,pack,threshold=.3,tiled=True):
+def propose(library,mission,image_id,pack,threshold=.18,tiled=True):
     from PIL import Image
     import numpy as np
     source=library.image_path(mission,image_id)

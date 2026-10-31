@@ -141,7 +141,7 @@ class VideoInferenceService:
             tiled=policy['tiled'],target_labels=policy['target_labels'],
             resource_profile=policy.get('resource_profile','auto'))
 
-    def start_plate_review(self,mission,source_id,*,threshold=.3,tiled=True):
+    def start_plate_review(self,mission,source_id,*,threshold=.18,tiled=True):
         from .plate_review import _model_pack, _paths
         settings=self.library.settings(mission)
         if settings['input_type']!='videos' or settings['analysis_mode']!='license_plate':

@@ -60,6 +60,13 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn('Plate-region detection saves image chips for operator approval or rejection; it does not read plate text.', source)
         self.assertNotIn('OCR', source)
 
+    def test_plate_crop_controls_default_to_sample_supported_score_and_forward_settings(self):
+        html=(Path(__file__).resolve().parents[1]/'web'/'index.html').read_text(encoding='utf-8')
+        source=(Path(__file__).resolve().parents[1]/'web'/'app.js').read_text(encoding='utf-8')
+        self.assertIn('id="plateThreshold" type="range" min="0.01" max="0.90" step="0.01" value="0.18"',html)
+        self.assertIn('id="plateTiled" type="checkbox" checked',html)
+        self.assertIn("threshold:Number($('plateThreshold').value),tiled:$('plateTiled').checked",source)
+
     def test_plate_crop_country_is_presented_as_mission_context_not_inference(self):
         source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
         self.assertIn('item.mission_country_context', source)

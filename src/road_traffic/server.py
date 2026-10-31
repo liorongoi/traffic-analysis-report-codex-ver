@@ -516,9 +516,9 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         raise ValueError('Choose create, update, or delete action')
                 elif self.path == '/api/plates/detect':
                     from .plate_review import propose
-                    result=propose(library,data['mission'],data['image_id'],Path(web).parent/'model-packs'/'license-plate-yolox',data.get('threshold',.3),data.get('tiled',True))
+                    result=propose(library,data['mission'],data['image_id'],Path(web).parent/'model-packs'/'license-plate-yolox',data.get('threshold',.18),data.get('tiled',True))
                 elif self.path == '/api/plates/detect-video':
-                    result=video_inference.start_plate_review(data['mission'],data['source_id'],threshold=data.get('threshold',.3),tiled=data.get('tiled',True))
+                    result=video_inference.start_plate_review(data['mission'],data['source_id'],threshold=data.get('threshold',.18),tiled=data.get('tiled',True))
                 elif self.path == '/api/plates/review':
                     from .plate_review import review
                     result=review(library,data['mission'],data['crop_id'],data['expected_revision'],data['decision'],data['operator'])
@@ -561,7 +561,7 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                             confirmed=data.get('confirmed'), run=data.get('run') or None,
                             scope_snapshot=snapshot)
                 elif self.path == '/api/inference/start':
-                    result=inference.start(data['mission'],data.get('threshold',.18),data.get('tiled',True),data.get('night_lights',True),data.get('night_head_id'),resource_profile=data.get('resource_profile','auto'))
+                    result=inference.start(data['mission'],data.get('threshold',.3),data.get('tiled',True),data.get('night_lights',True),data.get('night_head_id'),resource_profile=data.get('resource_profile','auto'))
                 elif self.path == '/api/detector/models/import':
                     from .model_registry import import_candidate
                     result=import_candidate(library,data.get('path',''))

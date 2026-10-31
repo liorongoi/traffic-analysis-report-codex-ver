@@ -120,6 +120,8 @@ class PlateCropReviewTests(unittest.TestCase):
         detector.return_value.config_sha256='c'*64
         detector.return_value.detect.return_value=[{'box':[.25,.25,.5,.25],'confidence':.91,'model_sha256':'b'*64}]
         rows=propose(self.lib,self.mission,self.image['id'],Path('model-packs/license-plate-yolox'))
+        self.assertEqual(detector.call_args.args[1],.18)
+        self.assertTrue(detector.call_args.kwargs['tiled'])
         self.assertEqual(len(rows),1)
         self.assertEqual(rows[0]['decision'],None)
         self.assertEqual(rows[0]['source_name'],self.image['name'])
