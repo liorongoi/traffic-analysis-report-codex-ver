@@ -749,6 +749,10 @@ When the still-image plate approval page is open, a continuous batch status chan
 
 Launched RoadLoom against a fresh temporary workspace at `http://127.0.0.1:8877`. The in-app browser loaded the Hebrew first-visit screen and fetched the bundled stylesheet, logo, JavaScript, timezone data, session endpoint, and learning-capabilities endpoint with HTTP 200 responses. It showed the three-step mission wizard and no sign-in prompt. No mission was created. This checks initial startup and local assets only; mission creation and end-to-end review interaction still need a fresh browser acceptance pass.
 
+## Crop-only plate guidance localization and browser workflow — 2026-10-31
+
+The plate-review help text was assigned correctly in English and Hebrew, but a later duplicate assignment overwrote the English entry with Hebrew copy. Removed that override and added a regression assertion. All 17 focused `test_ui_bootstrap` tests passed, then the complete local suite passed **435 tests in 13.354 seconds**; `node --check web/app.js` and `git diff --check` also passed. A fresh isolated loopback workspace completed the three-step mission wizard for a Lebanon/Beirut `Asia/Beirut` plate-chip mission, opened the crop approval screen, and displayed English instructions confirming that the detector proposes regions only and does not read plate text. The screen exposed the reviewer field, detector threshold, tiling option, crop search, and approval/export controls, with no sign-in prompt. No images or plate chips were imported; the temporary database and folders were removed. This verifies the setup-to-review UI path and copy, not extraction accuracy or representative-camera acceptance.
+
 
 ## Windows preview after continuous plate and Object Search updates — 2026-10-31
 

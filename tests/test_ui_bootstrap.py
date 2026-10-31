@@ -60,6 +60,11 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn('Plate-region detection saves image chips for operator approval or rejection; it does not read plate text.', source)
         self.assertNotIn('OCR', source)
 
+    def test_english_plate_review_help_is_not_overwritten_by_hebrew_copy(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn("plateReviewHelp:'The local detector proposes plate regions only.", source)
+        self.assertNotIn("Object.assign(en,{plateReviewHelp:'הגלאי", source)
+
     def test_plate_crop_controls_default_to_sample_supported_score_and_forward_settings(self):
         html=(Path(__file__).resolve().parents[1]/'web'/'index.html').read_text(encoding='utf-8')
         source=(Path(__file__).resolve().parents[1]/'web'/'app.js').read_text(encoding='utf-8')
