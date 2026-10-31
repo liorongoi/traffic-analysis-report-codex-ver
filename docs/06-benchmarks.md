@@ -96,3 +96,9 @@ The report includes class-aware per-frame box precision/recall, ID switches, fra
 - [RoundaboutHD](https://researchdata.bath.ac.uk/1574/) describes 40 minutes from four fixed-position 4K/15fps cameras with 512 annotated vehicle identities and an 8 GB archive. Its page does not document absolute capture UTC or PTS alignment; cross-camera identity scoring is outside this evaluator.
 
 These are development leads only. Target-camera acceptance still needs representative footage, independently verified frame/time provenance, labeled plate boxes, and product-approved thresholds.
+
+
+### Public-data access check — 2026-10-31
+
+- The [IR-LPR project](https://github.com/mut-deep/IR-LPR) describes 20,967 Iranian car images with whole-plate and character detection annotations. Its whole-car test archive is listed at 2.33 GB and the isolated plate-image test archive at 53.8 MB; both are linked through Google Drive. Opening the plate test archive prompts for Google sign-in. Under the user's no-account preference, no files were downloaded. If later available without login, whole-plate boxes could support region-only Iranian crop scoring by discarding all character labels; they would not establish fixed-camera accuracy or cover Lebanon, Israel, or Latvia.
+- The official [I-24 MOTION data documentation](https://github.com/I24-MOTION/I24M_documentation) describes products from a fixed highway camera network. The [system paper](https://arxiv.org/abs/2301.11198) describes video frames with PTS timing, but the public products surfaced in this search are trajectories, not raw camera recordings; they cannot serve as RoadLoom decoder or plate-crop fixtures. Existing fixed-camera candidates remain insufficient for verified UTC-to-PTS and target-country plate acceptance.
