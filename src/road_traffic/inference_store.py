@@ -88,14 +88,25 @@ def create_run(library,mission,config,source_run=None):
             'SELECT * FROM scan_windows WHERE mission_id=? ORDER BY created,id',(mission,))]
         if source_run and not conn.execute('SELECT 1 FROM runs WHERE id=?',(source_run,)).fetchone():
             raise ValueError('Source batch not found in this mission')
-        rows=conn.execute('SELECT id,run_id,sha256,capture_utc FROM images WHERE (? IS NULL OR run_id=?) ORDER BY capture_utc,name',
+        rows=conn.execute('''SELECT images.id,images.run_id,images.sha256,images.capture_utc source_capture_utc,
+                images.precision source_precision,ct.revision capture_time_override_revision,
+                ct.action capture_time_override_action,ct.capture_utc override_capture_utc,
+                ct.precision override_precision,ct.operator override_operator,ct.reason override_reason,
+                ct.created override_created,
+                CASE WHEN ct.action='set' THEN ct.capture_utc ELSE images.capture_utc END effective_capture_utc,
+                CASE WHEN ct.action='set' THEN ct.precision ELSE images.precision END effective_precision
+            FROM images LEFT JOIN image_capture_time_history ct ON ct.image_id=images.id AND ct.revision=
+                (SELECT MAX(c.revision) FROM image_capture_time_history c WHERE c.image_id=images.id)
+            WHERE (? IS NULL OR images.run_id=?)
+            ORDER BY effective_capture_utc,images.name''',
             (source_run,source_run)).fetchall()
         if not rows:raise ValueError('Import images before running inference')
         from .schedules import compile_windows,eligible_compiled
         compiled=compile_windows(windows)
-        eligible_rows=[row for row in rows if eligible_compiled(row['capture_utc'],mission_snapshot['zone'],compiled)]
+        eligible_rows=[row for row in rows if row['effective_capture_utc'] and
+            eligible_compiled(row['effective_capture_utc'],mission_snapshot['zone'],compiled)]
         if not eligible_rows:
-            raise ValueError('No imported images fall within the configured local-time scan windows')
+            raise ValueError('No imported images with known capture times fall within the configured local-time scan windows')
         if conn.execute("SELECT 1 FROM inference_runs WHERE status IN ('queued','running')").fetchone():
             raise ValueError('This mission already has an active inference run')
         view_rows={row['image_id']:(row['view_id'],row['revision']) for row in conn.execute('''SELECT image_id,view_id,revision
@@ -109,8 +120,18 @@ def create_run(library,mission,config,source_run=None):
         recorded_config={**config,'run_config_schema_version':1,'mission_snapshot':mission_snapshot,
             'mission_snapshot_provenance':'captured_at_run_start','source_run_id':source_run,
             'source_runs_snapshot':_source_run_snapshots(conn,[row['id'] for row in eligible_rows]),
+            'capture_time_snapshot':{row['id']:{
+                'capture_utc':row['effective_capture_utc'],'precision':row['effective_precision'],
+                'source_capture_utc':row['source_capture_utc'],'source_precision':row['source_precision'],
+                'override_revision':row['capture_time_override_revision'],
+                'override_action':row['capture_time_override_action'],
+                'override_operator':row['override_operator'],'override_reason':row['override_reason'],
+                'override_created':row['override_created'],
+            } for row in eligible_rows},
             'scan_schedule_snapshot':{'timezone':mission_snapshot['zone'],'windows':windows,
-            'excluded_image_count':len(rows)-len(eligible_rows)},'view_regions_snapshot':regions}
+            'excluded_image_count':len(rows)-len(eligible_rows),
+            'unknown_capture_time_image_count':sum(not row['effective_capture_utc'] for row in rows)},
+            'view_regions_snapshot':regions}
         conn.execute('INSERT INTO inference_runs(id,status,stage,total,config,created) VALUES (?,?,?,?,?,?)',
             (run,'queued','queued',len(eligible_rows),json.dumps(recorded_config),now()))
         conn.executemany('INSERT INTO inference_inputs VALUES (?,?,?)',[(run,r['id'],r['sha256']) for r in eligible_rows])

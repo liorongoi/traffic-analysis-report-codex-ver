@@ -63,6 +63,31 @@ class StoreTests(unittest.TestCase):
         self.image=self.lib.images(self.mission)[0]
         self.annotations=[{'kind':'candidate','label':'single light','box':[.1,.2,.1,.2]}]
     def tearDown(self):self.tmp.cleanup()
+    def test_capture_time_correction_is_audited_and_restorable(self):
+        corrected=self.lib.correct_capture_time(self.mission,self.image['id'],
+            '2026-05-18T08:30:45+03:00','reviewer','Camera clock was one day ahead')
+        self.assertEqual(corrected['capture_utc'],'2026-05-18T05:30:45+00:00')
+        self.assertEqual(corrected['precision'],'second')
+        row=self.lib.images(self.mission)[0]
+        self.assertEqual(row['capture_utc'],'2026-05-18T05:30:45+00:00')
+        self.assertEqual(row['source_capture_utc'],'2026-05-17T16:04:00+00:00')
+        self.assertEqual(row['capture_time_override']['reason'],'Camera clock was one day ahead')
+        restored=self.lib.correct_capture_time(self.mission,self.image['id'],None,
+            'reviewer','Correction was entered in error')
+        self.assertEqual(restored['action'],'restore_original')
+        row=self.lib.images(self.mission)[0]
+        self.assertEqual(row['capture_utc'],'2026-05-17T16:04:00+00:00')
+        self.assertEqual(len(self.lib.capture_time_history(self.mission,self.image['id'])),2)
+
+    def test_capture_time_correction_requires_timezone_and_reason(self):
+        with self.assertRaisesRegex(ValueError,'include Z or an explicit UTC offset'):
+            self.lib.correct_capture_time(self.mission,self.image['id'],
+                '2026-05-18T08:30','reviewer','clock correction')
+        with self.assertRaisesRegex(ValueError,'reason'):
+            self.lib.correct_capture_time(self.mission,self.image['id'],
+                '2026-05-18T08:30Z','reviewer',' ')
+        self.assertEqual(self.lib.capture_time_history(self.mission,self.image['id']),[])
+
     def test_mission_connection_closes_after_context(self):
         with self.lib.connect(self.mission) as connection:
             self.assertEqual(connection.execute('SELECT 1').fetchone()[0],1)

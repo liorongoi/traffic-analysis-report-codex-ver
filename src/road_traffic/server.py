@@ -281,6 +281,8 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     return self.reply(200, sorted(available_timezones()))
                 if parsed.path == '/api/images':
                     return self.reply(200, library.images(query['mission'][0],query.get('run',[None])[0]))
+                if parsed.path == '/api/image-capture-time-history':
+                    return self.reply(200,library.capture_time_history(query['mission'][0],query['image'][0]))
                 if parsed.path == '/api/plates':
                     from .plate_review import list_crops
                     return self.reply(200, list_crops(library,query['mission'][0],
@@ -400,7 +402,11 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     rows = library.images(mission,query.get('run',[None])[0])
                     stream = io.StringIO(newline='')
                     writer = csv.writer(stream)
-                    writer.writerow(['image','capture_utc','review_status','revision','confirmed_vehicles','candidates','lights','annotations','prediction_run','inference_status','original_predictions','review_prediction_run','evidence_role','operator'])
+                    writer.writerow(['image','capture_utc','source_capture_utc','timestamp_precision','source_timestamp_precision',
+                        'capture_time_override_revision','capture_time_override_action','capture_time_override_operator',
+                        'capture_time_override_reason','review_status','revision','confirmed_vehicles','candidates','lights',
+                        'annotations','prediction_run','inference_status','original_predictions','review_prediction_run',
+                        'evidence_role','operator'])
                     for row in rows:
                         all_labels = json.loads(row['annotations'])
                         labels = [a for a in all_labels if not a.get('rejected')]
@@ -408,7 +414,14 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         if name.lstrip().startswith(('=', '+', '-', '@')):
                             name = "'" + name
                         payload = json.dumps(all_labels, ensure_ascii=False)
-                        writer.writerow([name, row['capture_utc'], row['review_status'], row['revision'],
+                        override=row.get('capture_time_override') or {}
+                        override_operator=override.get('operator') or ''
+                        override_reason=override.get('reason') or ''
+                        if override_operator.lstrip().startswith(('=','+','-','@')):override_operator="'"+override_operator
+                        if override_reason.lstrip().startswith(('=','+','-','@')):override_reason="'"+override_reason
+                        writer.writerow([name,row['capture_utc'],row.get('source_capture_utc'),row['precision'],
+                            row.get('source_precision'),override.get('revision'),override.get('action'),
+                            override_operator,override_reason,row['review_status'],row['revision'],
                             sum(x['kind']=='vehicle' for x in labels),sum(x['kind']=='candidate' for x in labels),
                             sum(x['kind']=='light' for x in labels),payload,row.get('prediction_run'),row.get('inference_status'),json.dumps(row.get('predictions',[]),ensure_ascii=False),row.get('review_prediction_run'),row.get('evidence_role'),
                             ("'"+row.get('operator','')) if row.get('operator','').lstrip().startswith(('=','+','-','@')) else row.get('operator','')])
@@ -533,6 +546,11 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     result=export_crops_csv(library,data['mission'])
                 elif self.path == '/api/review':
                     result = library.review(data['mission'],data['image'],data['revision'],data['annotations'],data['operator'],data['role'],data['status'],data.get('prediction_run'))
+                elif self.path == '/api/image-capture-time':
+                    if 'capture_utc' not in data:
+                        raise ValueError('Provide capture_utc or explicitly request restoration with null')
+                    result = library.correct_capture_time(data['mission'],data['image'],
+                        data['capture_utc'],data.get('operator'),data.get('reason'))
                 elif self.path == '/api/object-search/interpret':
                     from .object_search import interpret,video_scope_snapshot
                     from .inference_store import latest_run_id, search_scope_snapshot

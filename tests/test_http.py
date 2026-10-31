@@ -1003,6 +1003,8 @@ class HttpTests(unittest.TestCase):
             with self.request('/api/missions',data) as response:mission=json.load(response)['id']
             with self.request('/api/import',{'mission':mission,'path':str(source),'preset':'camera'}):pass
             with self.request('/api/images?mission='+mission) as response:image_id=json.load(response)[0]['id']
+            with self.request('/api/image-capture-time',{'mission':mission,'image':image_id,
+                'capture_utc':'2026-05-18T08:30:00+03:00','operator':'=time','reason':'=clock corrected'}):pass
             with self.request('/api/review',{'mission':mission,'image':image_id,'revision':0,'annotations':[],
                 'operator':'=מפעיל','role':'none','status':'partial'}):pass
             with self.request('/api/export',{'mission':mission,'run':None}) as response:result=json.load(response)
@@ -1015,5 +1017,9 @@ class HttpTests(unittest.TestCase):
             ns={'x':'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
             cells={cell.attrib['r']:cell for cell in sheet.findall('.//x:sheetData/x:row[@r="2"]/x:c',ns)}
             self.assertEqual(cells['F2'].findtext('x:is/x:t',namespaces=ns),image.name)
-            self.assertEqual(cells['T2'].findtext('x:is/x:t',namespaces=ns),'=מפעיל')
+            self.assertEqual(cells['Z2'].findtext('x:is/x:t',namespaces=ns),'=מפעיל')
+            self.assertEqual(cells['G2'].findtext('x:is/x:t',namespaces=ns),'2026-05-18T05:30:00+00:00')
+            self.assertEqual(cells['H2'].findtext('x:is/x:t',namespaces=ns),'2026-05-17T16:04:00+00:00')
+            self.assertEqual(cells['M2'].findtext('x:is/x:t',namespaces=ns),'=time')
+            self.assertEqual(cells['N2'].findtext('x:is/x:t',namespaces=ns),'=clock corrected')
             self.assertIsNone(sheet.find('.//x:f',ns))

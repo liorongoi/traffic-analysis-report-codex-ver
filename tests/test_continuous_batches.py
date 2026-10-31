@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import tempfile
 import unittest
 from PIL import Image
@@ -23,6 +24,20 @@ class ContinuousBatchTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_inference_run_freezes_corrected_capture_time_and_provenance(self):
+        imported=self.library.import_folder(self.mission,self.source,'camera')
+        image=self.library.images(self.mission)[0]
+        self.library.correct_capture_time(self.mission,image['id'],
+            '2026-05-18T01:00:00Z','reviewer','Verified camera clock')
+        run=create_run(self.library,self.mission,{'adapter':'test'})
+        with self.library.connect(self.mission) as conn:
+            config=json.loads(conn.execute('SELECT config FROM inference_runs WHERE id=?',(run,)).fetchone()['config'])
+        snapshot=config['capture_time_snapshot'][image['id']]
+        self.assertEqual(snapshot['capture_utc'],'2026-05-18T01:00:00+00:00')
+        self.assertEqual(snapshot['source_capture_utc'],'2026-05-17T16:05:00+00:00')
+        self.assertEqual(snapshot['override_operator'],'reviewer')
+        self.assertEqual(snapshot['override_reason'],'Verified camera clock')
 
     def test_monitor_dispatches_batch_once_and_tracks_inference_completion(self):
         created = []

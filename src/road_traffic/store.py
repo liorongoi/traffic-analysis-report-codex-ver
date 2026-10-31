@@ -39,7 +39,9 @@ def _ensure_column(conn, table, column, declaration):
 
 
 CSV_EXPORT_HEADERS = ['mission_id','inference_run','source_id','source_run_id','source_sha256',
-    'filename','capture_utc','timestamp_precision','review_status','revision',
+    'filename','capture_utc','source_capture_utc','timestamp_precision','source_timestamp_precision',
+    'capture_time_override_revision','capture_time_override_action','capture_time_override_operator',
+    'capture_time_override_reason','review_status','revision',
     'confirmed_vehicle_count','candidate_count','light_count','annotations',
     'prediction_run','inference_status','original_predictions','review_prediction_run',
     'evidence_role','operator','bulk_approval_id','bulk_approval_type']
@@ -53,13 +55,20 @@ def _image_export_values(mission, inference_run, row, bulk_approval_id, csv_safe
     active = [annotation for annotation in annotations if not annotation.get('rejected')]
     filename = row['name']
     operator = row.get('operator', '')
+    time_override=row.get('capture_time_override') or {}
+    time_override_operator=time_override.get('operator') or ''
+    time_override_reason=time_override.get('reason') or ''
     if csv_safe:
-        if filename.lstrip().startswith(('=', '+', '-', '@')):
-            filename = "'" + filename
-        if operator.lstrip().startswith(('=', '+', '-', '@')):
-            operator = "'" + operator
+        def safe_text(value):
+            return "'"+value if isinstance(value,str) and value.lstrip().startswith(('=','+','-','@')) else value
+        filename=safe_text(filename)
+        operator=safe_text(operator)
+        time_override_operator=safe_text(time_override_operator)
+        time_override_reason=safe_text(time_override_reason)
     return [mission, inference_run or '', row['id'], row['run_id'], row['sha256'],
-        filename, row['capture_utc'], row['precision'], row['review_status'], row['revision'],
+        filename,row['capture_utc'],row.get('source_capture_utc'),row['precision'],row.get('source_precision'),
+        time_override.get('revision'),time_override.get('action'),time_override_operator,
+        time_override_reason,row['review_status'],row['revision'],
         sum(annotation['kind']=='vehicle' for annotation in active),
         sum(annotation['kind']=='candidate' for annotation in active),
         sum(annotation['kind']=='light' for annotation in active),
@@ -67,6 +76,33 @@ def _image_export_values(mission, inference_run, row, bulk_approval_id, csv_safe
         row.get('inference_status'), json.dumps(row.get('predictions', []), ensure_ascii=False),
         row.get('review_prediction_run'), row.get('evidence_role'), operator,
         bulk_approval_id or '', 'bulk_unreviewed' if bulk_approval_id else '']
+
+
+def _effective_capture_time(row):
+    """Expose effective time while retaining immutable filename-derived metadata."""
+    original=row['capture_utc']
+    original_precision=row['precision']
+    override_revision=row.pop('capture_time_override_revision',None)
+    override_action=row.pop('capture_time_override_action',None)
+    override_utc=row.pop('capture_time_override_utc',None)
+    override_precision=row.pop('capture_time_override_precision',None)
+    override_operator=row.pop('capture_time_override_operator',None)
+    override_reason=row.pop('capture_time_override_reason',None)
+    override_created=row.pop('capture_time_override_created',None)
+    row['source_capture_utc']=original
+    row['source_precision']=original_precision
+    row['capture_time_override']=None
+    if override_revision is not None:
+        active=override_action=='set'
+        row['capture_time_override']={
+            'revision':override_revision,'action':override_action,'active':active,
+            'capture_utc':override_utc,'precision':override_precision,
+            'operator':override_operator,'reason':override_reason,'created':override_created,
+        }
+        if active:
+            row['capture_utc']=override_utc
+            row['precision']=override_precision
+    return row
 
 
 def _xlsx_column_name(number):
@@ -352,10 +388,27 @@ class Library:
                 region_key TEXT NOT NULL, view_id TEXT NOT NULL REFERENCES views(id), revision INTEGER NOT NULL,
                 action TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT 'analysis', polygon TEXT NOT NULL,
                 operator TEXT NOT NULL, created TEXT NOT NULL, UNIQUE(region_key,revision));
+            CREATE TABLE IF NOT EXISTS image_capture_time_history(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mission_id TEXT NOT NULL REFERENCES mission(id),
+                image_id TEXT NOT NULL REFERENCES images(id),
+                revision INTEGER NOT NULL,
+                action TEXT NOT NULL CHECK(action IN ('set','restore_original')),
+                capture_utc TEXT,
+                precision TEXT,
+                operator TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                created TEXT NOT NULL,
+                UNIQUE(image_id,revision),
+                CHECK((action='set' AND capture_utc IS NOT NULL AND precision IN ('minute','second')) OR
+                      (action='restore_original' AND capture_utc IS NULL AND precision IS NULL))
+            );
             CREATE INDEX IF NOT EXISTS view_region_history_latest_idx
                 ON view_region_history(mission_id,view_id,region_key,revision);
             CREATE INDEX IF NOT EXISTS image_view_history_mission_idx
                 ON image_view_history(mission_id,image_id,revision);
+            CREATE INDEX IF NOT EXISTS image_capture_time_latest_idx
+                ON image_capture_time_history(mission_id,image_id,revision);
             CREATE TRIGGER IF NOT EXISTS immutable_image_view_history_u BEFORE UPDATE ON image_view_history
                 BEGIN SELECT RAISE(ABORT,'view assignment history is immutable'); END;
             CREATE TRIGGER IF NOT EXISTS immutable_image_view_history_d BEFORE DELETE ON image_view_history
@@ -368,6 +421,10 @@ class Library:
                 BEGIN SELECT RAISE(ABORT,'view region history is immutable'); END;
             CREATE TRIGGER IF NOT EXISTS immutable_view_region_history_d BEFORE DELETE ON view_region_history
                 BEGIN SELECT RAISE(ABORT,'view region history is immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_capture_time_history_u BEFORE UPDATE ON image_capture_time_history
+                BEGIN SELECT RAISE(ABORT,'capture-time history is immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS immutable_capture_time_history_d BEFORE DELETE ON image_capture_time_history
+                BEGIN SELECT RAISE(ABORT,'capture-time history is immutable'); END;
         ''')
         _ensure_column(conn, 'view_region_history', 'name', "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, 'view_region_history', 'role', "TEXT NOT NULL DEFAULT 'analysis'")
@@ -1217,13 +1274,20 @@ class Library:
 
     def images(self, mission, prediction_run=None):
         with self.connect(mission) as conn:
-            rows = conn.execute('''SELECT images.*, COALESCE(reviews.revision,0) revision,
+            rows = conn.execute('''SELECT images.*, ct.revision capture_time_override_revision,
+                ct.action capture_time_override_action,ct.capture_utc capture_time_override_utc,
+                ct.precision capture_time_override_precision,ct.operator capture_time_override_operator,
+                ct.reason capture_time_override_reason,ct.created capture_time_override_created,
+                COALESCE(reviews.revision,0) revision,
                 COALESCE(reviews.status,'unreviewed') review_status, COALESCE(reviews.annotations,'[]') annotations, COALESCE(reviews.role,'none') evidence_role, COALESCE(reviews.operator,'') operator
-                FROM images LEFT JOIN reviews ON reviews.image_id=images.id AND reviews.revision=
+                FROM images LEFT JOIN image_capture_time_history ct ON ct.image_id=images.id AND ct.revision=
+                (SELECT MAX(c.revision) FROM image_capture_time_history c WHERE c.image_id=images.id)
+                LEFT JOIN reviews ON reviews.image_id=images.id AND reviews.revision=
                 (SELECT MAX(r.revision) FROM reviews r WHERE r.image_id=images.id)
-                ORDER BY capture_utc,name''').fetchall()
+                ORDER BY COALESCE(CASE WHEN ct.action='set' THEN ct.capture_utc END,images.capture_utc),images.name''').fetchall()
+        rows=[_effective_capture_time(dict(row)) for row in rows]
         from .inference_store import enrich
-        return enrich(self,mission,[dict(row) for row in rows],prediction_run)
+        return enrich(self,mission,rows,prediction_run)
 
     def iter_images(self,mission,prediction_run=None,batch_size=250,snapshot_rowid=None):
         """Yield a bounded image snapshot; later continuous imports are excluded."""
@@ -1235,24 +1299,30 @@ class Library:
         last=None
         while True:
             with self.connect(mission) as conn:
-                query='''SELECT images.*, images.rowid source_rowid, COALESCE(reviews.revision,0) revision,
+                query='''SELECT images.*, images.rowid source_rowid,
+                    ct.revision capture_time_override_revision,ct.action capture_time_override_action,
+                    ct.capture_utc capture_time_override_utc,ct.precision capture_time_override_precision,
+                    ct.operator capture_time_override_operator,ct.reason capture_time_override_reason,
+                    ct.created capture_time_override_created,COALESCE(reviews.revision,0) revision,
                     COALESCE(reviews.status,'unreviewed') review_status, COALESCE(reviews.annotations,'[]') annotations,
                     COALESCE(reviews.role,'none') evidence_role, COALESCE(reviews.operator,'') operator,
                     COALESCE((SELECT h.view_id FROM image_view_history h WHERE h.mission_id=?
                         AND h.image_id=images.id ORDER BY h.revision DESC LIMIT 1),'') assigned_view_id
-                    FROM images LEFT JOIN reviews ON reviews.image_id=images.id AND reviews.revision=
+                    FROM images LEFT JOIN image_capture_time_history ct ON ct.image_id=images.id AND ct.revision=
+                    (SELECT MAX(c.revision) FROM image_capture_time_history c WHERE c.image_id=images.id)
+                    LEFT JOIN reviews ON reviews.image_id=images.id AND reviews.revision=
                     (SELECT MAX(r.revision) FROM reviews r WHERE r.image_id=images.id)
                     WHERE images.rowid<=?'''
                 if last is not None:
-                    query+=' AND (capture_utc,name,images.rowid)>(?,?,?)'
+                    query+=" AND (COALESCE(CASE WHEN ct.action='set' THEN ct.capture_utc END,images.capture_utc),images.name,images.rowid)>(?,?,?)"
                     parameters=(mission,snapshot_rowid,*last,batch_size)
                 else:parameters=(mission,snapshot_rowid,batch_size)
-                rows=conn.execute(query+' ORDER BY capture_utc,name,images.rowid LIMIT ?',parameters).fetchall()
+                rows=conn.execute(query+" ORDER BY COALESCE(CASE WHEN ct.action='set' THEN ct.capture_utc END,images.capture_utc),images.name,images.rowid LIMIT ?",parameters).fetchall()
             if not rows:break
             from .inference_store import enrich
-            batch=enrich(self,mission,[dict(row) for row in rows],prediction_run)
+            batch=enrich(self,mission,[_effective_capture_time(dict(row)) for row in rows],prediction_run)
             yield from batch
-            last=(rows[-1]['capture_utc'],rows[-1]['name'],rows[-1]['source_rowid'])
+            last=(rows[-1]['capture_time_override_utc'] if rows[-1]['capture_time_override_action']=='set' else rows[-1]['capture_utc'],rows[-1]['name'],rows[-1]['source_rowid'])
 
     def image_path(self, mission, image):
         with self.connect(mission) as conn:
@@ -1263,6 +1333,53 @@ class Library:
         if digest(path) != row['sha256']:
             raise ValueError('Saved image checksum mismatch')
         return path
+
+    def capture_time_history(self, mission, image):
+        with self.connect(mission) as conn:
+            if not conn.execute('SELECT 1 FROM images WHERE id=?', (image,)).fetchone():
+                raise ValueError('Image not found in mission')
+            return [dict(row) for row in conn.execute('''SELECT revision,action,capture_utc,precision,
+                    operator,reason,created
+                FROM image_capture_time_history WHERE mission_id=? AND image_id=? ORDER BY revision''',
+                (mission,image))]
+
+    def correct_capture_time(self, mission, image, capture_utc, operator, reason):
+        """Append an explicit UTC capture-time correction or restore the filename-derived time."""
+        if not isinstance(operator,str) or not 1<=len(operator.strip())<=120:
+            raise ValueError('Operator name required')
+        if not isinstance(reason,str) or not 1<=len(reason.strip())<=500:
+            raise ValueError('Enter a reason for the capture-time correction')
+        action='set'
+        precision=None
+        normalized=None
+        if capture_utc is None:
+            action='restore_original'
+        else:
+            if not isinstance(capture_utc,str) or len(capture_utc)>64:
+                raise ValueError('Enter a UTC time in ISO 8601 format with Z or an explicit offset')
+            value=capture_utc.strip()
+            try:
+                parsed=datetime.fromisoformat(value.replace('Z','+00:00'))
+            except ValueError as exc:
+                raise ValueError('Enter a UTC time in ISO 8601 format with Z or an explicit offset') from exc
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError('Capture-time correction must include Z or an explicit UTC offset')
+            precision='second' if 'T' in value and len(value.split('T',1)[1].split('+',1)[0].split('-',1)[0].rstrip('Z').split(':'))>=3 else 'minute'
+            parsed=parsed.astimezone(timezone.utc)
+            timespec='microseconds' if parsed.microsecond else ('seconds' if precision=='second' else 'minutes')
+            normalized=parsed.isoformat(timespec=timespec)
+        with self.connect(mission) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            if not conn.execute('SELECT 1 FROM images WHERE id=?',(image,)).fetchone():
+                raise ValueError('Image not found in mission')
+            revision=conn.execute('''SELECT COALESCE(MAX(revision),0)+1
+                FROM image_capture_time_history WHERE image_id=?''',(image,)).fetchone()[0]
+            conn.execute('''INSERT INTO image_capture_time_history
+                (mission_id,image_id,revision,action,capture_utc,precision,operator,reason,created)
+                VALUES (?,?,?,?,?,?,?,?,?)''',
+                (mission,image,revision,action,normalized,precision,operator.strip(),reason.strip(),now()))
+        return {'image_id':image,'revision':revision,'action':action,'capture_utc':normalized,
+            'precision':precision,'operator':operator.strip(),'reason':reason.strip()}
 
     def review(self, mission, image, expected_revision, annotations, operator, role='none', status='reviewed', prediction_run=None):
         from .inference_store import prepare,link_review
