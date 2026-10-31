@@ -78,6 +78,14 @@ python scripts/compare-detection-benchmarks.py --baseline-report D:\RoadLoom\veh
 
 The comparator rejects reports with different ground-truth hashes, image/category schemas, detector kinds, or test splits. It reports candidate-minus-baseline precision, recall, F1, AP, count error, and per-category and available metadata-stratum changes, with regressions listed for review. It does not apply acceptance thresholds or promote/select the candidate; selection remains an operator decision.
 
+For the full baseline/candidate workflow in one command, use the same protected test ZIP with both model packs:
+
+```powershell
+python scripts/compare-detection-model-packs.py --dataset-zip D:\RoadLoom\reviewed.zip --baseline-model-pack model-packs\yolox-s --candidate-model-pack D:\RoadLoom\candidate\roadloom-model-pack --baseline-threshold 0.18 --candidate-threshold 0.21 --hardware-profile 16GB --output-dir D:\RoadLoom\candidate-comparison
+```
+
+Choose each confidence threshold using validation data before evaluating on the held-out test role. The command runs each model over the same test images, saves separate prediction and evaluation JSON files, then writes `comparison.json`. Its output directory must be new or empty to avoid replacing earlier reports. Vehicle tiling is on by default for both packs; `--no-tiles` disables it for both. Optional image metadata supplies country, day/night condition, and camera view for stratified comparisons. The report remains review-only and never promotes a model.
+
 ## Sequence-level tracking benchmark
 
 Use paired JSON manifests with one sequence per recorded camera and one object list per frame. Ground-truth objects use `track_id`, `category_id`, and an original-frame `bbox` in `[x, y, width, height]` pixel coordinates. The prediction manifest can come directly from a completed RoadLoom run; the exporter converts the saved normalized boxes using the source's recorded dimensions and retains model/source hashes. Prediction and ground-truth files must contain identical sequence and frame IDs.
