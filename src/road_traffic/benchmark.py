@@ -406,7 +406,9 @@ def _compare_metric(baseline, candidate, direction):
     elif direction=='lower':
         status='improved' if delta<0 else 'regressed'
     else:
-        status='improved' if abs(new)<abs(old) else 'regressed'
+        old_error=abs(old);new_error=abs(new)
+        status=('unchanged' if abs(new_error-old_error)<=1e-12 else
+            'improved' if new_error<old_error else 'regressed')
     return {'baseline':old,'candidate':new,'delta':delta,'direction':direction,'status':status}
 
 

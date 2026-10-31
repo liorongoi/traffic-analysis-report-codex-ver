@@ -64,6 +64,22 @@ class DetectionBenchmarkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'different detector model hash'):
             compare_detection_reports(baseline,self._comparison_report(empty,'a'*64))
 
+    def test_equal_magnitude_count_bias_is_unchanged_when_sign_flips(self):
+        baseline_predictions=[
+            {'image_id':1,'category_id':1,'bbox':[10,10,20,20],'score':.95},
+            {'image_id':1,'category_id':1,'bbox':[35,35,10,10],'score':.8},
+            {'image_id':2,'category_id':1,'bbox':[50,50,20,20],'score':.9}]
+        candidate_predictions=[
+            {'image_id':2,'category_id':1,'bbox':[50,50,20,20],'score':.9}]
+        result=compare_detection_reports(
+            self._comparison_report(baseline_predictions,'a'*64),
+            self._comparison_report(candidate_predictions,'b'*64))
+        metric=result['changes']['overall']['count_error']['mean_signed_objects_per_image']
+        self.assertEqual(metric['baseline'],.5)
+        self.assertEqual(metric['candidate'],-.5)
+        self.assertEqual(metric['delta'],-1.)
+        self.assertEqual(metric['status'],'unchanged')
+
     def test_one_to_one_matching_counts_duplicates_and_misses(self):
         predictions = [
             {'image_id': 1, 'category_id': 1, 'bbox': [10, 10, 20, 20], 'score': .95},
