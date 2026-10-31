@@ -17,6 +17,14 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 UninstallDisplayName=RoadLoom Preview
+[InstallDelete]
+; Remove only OCR model files shipped by superseded plate-recognition builds.
+; Current plate handling keeps crop images and review history, but has no OCR.
+Type: files; Name: "{app}\model-packs\license-plate-yolox\plate_ocr_arabic_dict.json"
+Type: files; Name: "{app}\model-packs\license-plate-yolox\plate_ocr_arabic_ppocrv3_mobile.onnx"
+Type: files; Name: "{app}\model-packs\license-plate-yolox\plate_ocr_global_cct_s_v2.onnx"
+Type: files; Name: "{app}\model-packs\license-plate-yolox\plate_ocr_global_cct_s_v2_model_config.yaml"
+Type: files; Name: "{app}\model-packs\license-plate-yolox\plate_ocr_global_cct_s_v2_plate_config.yaml"
 [Files]
 Source: "..\..\staging\windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
