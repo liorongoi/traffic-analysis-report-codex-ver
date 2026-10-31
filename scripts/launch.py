@@ -26,13 +26,23 @@ def verify_install_receipt(application_root):
         raise RuntimeError('The installed payload changed after verification. Rerun the installer.')
 
 
+def launcher_settings(environment=None):
+    environment=os.environ if environment is None else environment
+    port=int(environment.get('ROADLOOM_PORT','8765'))
+    if not 1 <= port <= 65535:
+        raise ValueError('ROADLOOM_PORT must be between 1 and 65535')
+    open_browser=environment.get('ROADLOOM_OPEN_BROWSER','1').strip().lower() not in ('0','false','no')
+    return port,open_browser
+
+
 def main():
     verify_install_receipt(root)
     from road_traffic.server import serve
     workspace=Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'RoadTrafficAnalysis'/'Workspace'
     # This preview intentionally uses an existing browser; a bundled desktop engine is a later deliverable.
     # Trigger opening after binding succeeds, rather than after an arbitrary startup delay.
-    serve(workspace,root/'web',8765,open_browser=True)
+    port,open_browser=launcher_settings()
+    serve(workspace,root/'web',port,open_browser=open_browser)
 
 
 if __name__=='__main__':
