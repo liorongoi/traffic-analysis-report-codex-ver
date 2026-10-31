@@ -22,7 +22,8 @@ from road_traffic.video_store import (checkpoint, create_run, events, register_v
     execute_video_run, event_thumbnail, frame_overlay, night_candidates, review_night_candidate,
     correct_night_candidate,
     review_event, run_detail, runs,
-    source_path, transition, update_runtime_details)
+    source_path, transition, update_runtime_details, source_road_regions,
+    save_source_road_region, delete_source_road_region)
 from road_traffic.video_timeline import VideoTimestamp
 
 
@@ -89,6 +90,32 @@ class VideoStoreTests(unittest.TestCase):
         self.assertIsNone(source['recording_start_utc'])
         self.assertIsNone(source['origin_provenance'])
 
+    def test_video_road_polygons_are_audited_and_frozen_per_run(self):
+        source=register_video(self.library,self.mission,'clip.mkv')
+        polygon=[[0,.55],[1,.55],[1,1],[0,1]]
+        saved=save_source_road_region(self.library,self.mission,source['id'],polygon,'operator')
+        self.assertEqual((saved['revision'],saved['role'],saved['polygon']),
+            (1,'road_surface',polygon))
+        run=create_run(self.library,self.mission,source['id'],self.config())
+        frozen=run['config']['road_surface_regions_snapshot']
+        self.assertEqual(len(frozen),1)
+        self.assertEqual(frozen[0]['region_key'],saved['region_key'])
+        self.assertEqual(delete_source_road_region(self.library,self.mission,source['id'],
+            saved['region_key'],'operator'),[])
+        self.assertEqual(run_detail(self.library,self.mission,run['id'])['config'][
+            'road_surface_regions_snapshot'],frozen)
+        history=source_road_regions(self.library,self.mission,source['id'],history=True)
+        self.assertEqual([(row['revision'],row['action']) for row in history],
+            [(1,'upsert'),(2,'delete')])
+
+    def test_video_road_polygon_rejects_invalid_geometry_and_missing_operator(self):
+        source=register_video(self.library,self.mission,'clip.mkv')
+        with self.assertRaisesRegex(ValueError,'at least three points'):
+            save_source_road_region(self.library,self.mission,source['id'],[[0,0],[1,1]],'operator')
+        with self.assertRaisesRegex(ValueError,'Operator name'):
+            save_source_road_region(self.library,self.mission,source['id'],
+                [[0,0],[1,0],[1,1]],' ')
+
     def test_execution_provider_details_are_durable_and_separate_from_immutable_config(self):
         source=register_video(self.library,self.mission,'clip.mkv')
         run=create_run(self.library,self.mission,source['id'],self.config())
@@ -115,6 +142,8 @@ class VideoStoreTests(unittest.TestCase):
             recording_start_utc=self.origin, origin_provenance='operator confirmed from recorder log')
         self.assertNotEqual(duplicate_source['id'], source['id'])
         self.assertEqual(duplicate_source['sha256'], source['sha256'])
+        save_source_road_region(self.library,self.mission,source['id'],
+            [[.1,.1],[.5,.1],[.5,.8],[.1,.8]],'operator')
         self.video_file.write_bytes(b'replaced after import')
         self.assertEqual(source_path(self.library, self.mission, source['id']).read_bytes(), self.original)
 
@@ -127,30 +156,35 @@ class VideoStoreTests(unittest.TestCase):
 
         tracker = VideoTrackManager(TrackerPolicy(max_gap_seconds=Fraction(1, 2),
             minimum_iou=.2, max_center_distance=.15, association_margin=.05), run_id=run['id'])
-        tracker.update(VideoTimestamp(0, 1, 1000), [
-            {'label': 'car', 'box': [.2, .2, .1, .1]}])
+        first_detections=[{'label':'car','box':[.2,.2,.1,.1],
+            'road_relation':{'label':'on_road','basis':'fixture source road polygon'}}]
+        first_timestamp=VideoTimestamp(0,1,1000)
+        first_assignments=tracker.update(first_timestamp,first_detections).assignments
         mismatched_state = {**tracker.state(), 'run_id': 'another-run'}
         with self.assertRaisesRegex(ValueError, 'does not match this run'):
             checkpoint(self.library, self.mission, run['id'], frame_index=0,
                 timestamp=VideoTimestamp(0, 1, 1000), tracker_state=mismatched_state)
         first = checkpoint(self.library, self.mission, run['id'], frame_index=0,
             timestamp=VideoTimestamp(0, 1, 1000), tracker_state=tracker.state(),
+            detections=first_detections,assignments=first_assignments,
             progress_elapsed_seconds=1.5,estimated_remaining_seconds=4.25)
         self.assertEqual(first['frames_done'], 1)
         progress=run_detail(self.library,self.mission,run['id'])
         self.assertEqual(progress['progress_elapsed_seconds'],1.5)
         self.assertEqual(progress['estimated_remaining_seconds'],4.25)
 
-        tracker.update(VideoTimestamp(100, 1, 1000), [
-            {'label': 'car', 'box': [.21, .2, .1, .1]}])
+        second_detections=[{'label':'car','box':[.21,.2,.1,.1],
+            'road_relation':{'label':'near_road','basis':'fixture source road polygon'}}]
+        second_timestamp=VideoTimestamp(100,1,1000)
+        second_assignments=tracker.update(second_timestamp,second_detections).assignments
         final_tracks = tracker.finish()
         second = checkpoint(self.library, self.mission, run['id'], frame_index=1,
             timestamp=VideoTimestamp(100, 1, 1000), tracker_state=tracker.state(),
-            closed_tracks=final_tracks)
+            closed_tracks=final_tracks,detections=second_detections,assignments=second_assignments)
         self.assertEqual(second['events_inserted'], 1)
         retry = checkpoint(self.library, self.mission, run['id'], frame_index=1,
             timestamp=VideoTimestamp(100, 1, 1000), tracker_state=tracker.state(),
-            closed_tracks=final_tracks)
+            closed_tracks=final_tracks,detections=second_detections,assignments=second_assignments)
         self.assertTrue(retry['duplicate'])
         conflicting_state = {**tracker.state(), 'last_offset_seconds': [101, 1000]}
         with self.assertRaisesRegex(ValueError, 'conflicts with saved state'):
@@ -172,6 +206,9 @@ class VideoStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'between 1 and 100'):
             events(self.library, self.mission, run['id'], limit=101)
         item = saved_events[0]
+        self.assertEqual(item['representative_road_relation']['label'],'on_road')
+        saved_overlay=frame_overlay(self.library,self.mission,run['id'],.1)
+        self.assertEqual(saved_overlay['detections'][0]['road_relation']['label'],'near_road')
         expected_origin = datetime(2026, 5, 17, 16, 4, tzinfo=timezone.utc)
         self.assertEqual(item['first_utc'], expected_origin.isoformat())
         self.assertEqual(item['last_utc'], (expected_origin + timedelta(milliseconds=100)).isoformat())

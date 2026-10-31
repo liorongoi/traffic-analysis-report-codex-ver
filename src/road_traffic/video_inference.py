@@ -224,11 +224,13 @@ class VideoInferenceService:
 
 class VehicleProposalAdapter:
     """Keep vehicle detections separate from review-only nighttime light hypotheses."""
-    def __init__(self, detector, target_labels=None, runtime_callback=None, *, night_lights=False):
+    def __init__(self, detector, target_labels=None, runtime_callback=None, *, night_lights=False,
+                 road_regions=()):
         self.detector = detector
         self.target_labels=set(target_labels) if target_labels is not None else None
         self.runtime_callback=runtime_callback
         self.night_lights=bool(night_lights)
+        self.road_regions=list(road_regions or [])
         self._review_hypotheses=[]
         self._last_runtime=None
         self._report_runtime()
@@ -265,10 +267,16 @@ class VehicleProposalAdapter:
                     'light_subtype':item['light_subtype'],'pairing':item['pairing'],
                     'reasons':item['reasons']} for item in lights]
         self._report_runtime()
-        return [{'label': item.get('label') or item.get('suggested_kind') or item.get('kind'),
-            'box': item['box'], 'score': item.get('score',item.get('confidence'))}
-            for item in items
-            if self.target_labels is None or (item.get('label') or item.get('suggested_kind') or item.get('kind')) in self.target_labels]
+        from .regions import classify_road_relation
+        results=[]
+        for item in items:
+            label=item.get('label') or item.get('suggested_kind') or item.get('kind')
+            if self.target_labels is not None and label not in self.target_labels:
+                continue
+            results.append({'label':label,'box':item['box'],
+                'score':item.get('score',item.get('confidence')),
+                'road_relation':classify_road_relation(item['box'],self.road_regions)})
+        return results
 
 
 def execute_worker(library, mission, run_id, pack):
@@ -322,7 +330,8 @@ def execute_worker(library, mission, run_id, pack):
         return video_store.execute_video_run(library, mission, run_id,
             VehicleProposalAdapter(detector,detector_config.get('target_labels'),report_runtime,
                 night_lights=(run['config'].get('night_adapter',{}).get('version')==VIDEO_NIGHT_ADAPTER
-                    and run['config'].get('night_adapter',{}).get('enabled') is True)),
+                    and run['config'].get('night_adapter',{}).get('enabled') is True),
+                road_regions=run['config'].get('road_surface_regions_snapshot',[])),
             should_cancel=should_cancel)
     except Exception as exc:
         with library.connect(mission) as conn:

@@ -12,7 +12,7 @@ from unittest.mock import patch
 from road_traffic.store import Library
 from road_traffic import video_event_exports
 from road_traffic.video_event_exports import export_file, export_run, exports, reconcile_exports
-from road_traffic.video_store import create_run, register_video, review_event
+from road_traffic.video_store import create_run, register_video, review_event, save_source_road_region
 
 
 class VideoEventExportTests(unittest.TestCase):
@@ -31,6 +31,8 @@ class VideoEventExportTests(unittest.TestCase):
             'source_root': str(self.source_root), 'output_root': str(self.output_root),
             'export_formats': 'both'})
         self.source = register_video(self.library, self.mission, self.video_name)
+        save_source_road_region(self.library,self.mission,self.source['id'],
+            [[0,0],[.8,0],[.8,.8],[0,.8]],'Operator')
         self.run = create_run(self.library, self.mission, self.source['id'], {
             'detector': {'version': 'fixture', 'sha256': 'fixture'},
             'tracker_policy': {'max_gap_seconds': [1, 2], 'minimum_iou': .2,
@@ -88,6 +90,7 @@ class VideoEventExportTests(unittest.TestCase):
         self.assertEqual(json.loads(row['labels']), ['טנדר'])
         self.assertEqual(json.loads(row['original_labels']), ['car'])
         self.assertEqual(row['review_status'], 'corrected')
+        self.assertEqual(json.loads(row['representative_road_relation'])['label'],'on_road')
         self.assertEqual(row['review_operator'], 'בּוֹדֵק')
         self.assertEqual(json.loads(row['review_payload']), {'label': 'טנדר'})
         clips = json.loads(row['clip_exports'])

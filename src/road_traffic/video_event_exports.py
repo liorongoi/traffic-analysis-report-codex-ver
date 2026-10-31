@@ -23,7 +23,8 @@ HEADERS = ('mission_id', 'run_id', 'source_id', 'source_sha256', 'video_name',
     'original_first_offset_seconds', 'original_last_offset_seconds',
     'observation_count', 'association_uncertain', 'uncertainty_reasons', 'review_revision',
     'review_action', 'review_status', 'review_operator', 'reviewed_at', 'review_payload',
-    'representative_box', 'clip_exports', 'original_event_ids', 'identity_correction')
+    'representative_box', 'representative_road_relation', 'clip_exports',
+    'original_event_ids', 'identity_correction')
 
 
 def _digest(path):
@@ -141,6 +142,8 @@ def _values(conn, row, clips):
         row.get('review_operator',row.get('operator')) or '', row.get('reviewed_at') or '',
         json.dumps(payload, ensure_ascii=False) if payload is not None else '',
         json.dumps(row['representative_box'],ensure_ascii=False) if isinstance(row['representative_box'],list) else row['representative_box'] or '',
+        json.dumps(row.get('representative_road_relation'),ensure_ascii=False)
+            if row.get('representative_road_relation') else '',
         json.dumps(clips, ensure_ascii=False),json.dumps(row.get('original_event_ids',[]),ensure_ascii=False),
         json.dumps(row.get('identity_correction'),ensure_ascii=False) if row.get('identity_correction') else '']
 

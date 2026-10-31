@@ -417,20 +417,34 @@ class HttpTests(unittest.TestCase):
                 'recording_start_utc':'2026-05-17T16:04:00+00:00','origin_provenance':'test metadata'}) as response:
                 source=json.load(response)
             self.assertEqual(source['recording_start_utc'],'2026-05-17T16:04:00+00:00')
+            with self.request('/api/video/source-road-regions',{'mission':mission,
+                    'source_id':source['id'],'action':'create','operator':'HTTP reviewer',
+                    'polygon':[[0,0],[.8,0],[.8,.8],[0,.8]]}) as response:
+                road_region=json.load(response)
+            with self.request(f"/api/video/source-road-regions?mission={mission}&source={source['id']}") as response:
+                self.assertEqual(json.load(response)[0]['region_key'],road_region['region_key'])
             library=Library(Path(self.tmp.name))
             run=video_store.create_run(library,mission,source['id'],{
                 'detector':{'version':'test','sha256':'test'},
                 'tracker_policy':{'max_gap_seconds':[1,2],'minimum_iou':.2,
                     'max_center_distance':.2,'association_margin':.05,'compatible_label_groups':[]}})
+            self.assertEqual(run['config']['road_surface_regions_snapshot'][0]['region_key'],road_region['region_key'])
             event_id='clip-estimate-api-event'
             with library.connect(mission) as conn:
                 conn.execute('''INSERT INTO video_events(id,mission_id,run_id,source_id,track_id,
                     first_pts,first_time_base_num,first_time_base_den,last_pts,last_time_base_num,
                     last_time_base_den,first_offset_num,first_offset_den,last_offset_num,last_offset_den,
-                    first_utc,last_utc,labels,observation_count,association_uncertain,uncertainty_reasons,created)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    first_utc,last_utc,labels,observation_count,association_uncertain,representative_box,uncertainty_reasons,created)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                     (event_id,mission,run['id'],source['id'],'track-a',8,1,10,30,1,10,
-                     4,5,3,1,None,None,'["car"]',2,0,'[]','now'))
+                     4,5,3,1,None,None,'["car"]',2,0,'[0.1,0.2,0.2,0.2]','[]','now'))
+            with self.request(f"/api/video/events?mission={mission}&run={run['id']}") as response:
+                event=json.load(response)[0]
+            self.assertEqual(event['representative_road_relation']['label'],'on_road')
+            with self.request('/api/video/source-road-regions',{'mission':mission,
+                    'source_id':source['id'],'action':'delete','operator':'HTTP reviewer',
+                    'region_key':road_region['region_key']}) as response:
+                self.assertEqual(json.load(response),[])
             media_path=f"/api/video/media?mission={mission}&source={source['id']}"
             with self.request(media_path,headers={'Range':'bytes=1-4'}) as response:
                 self.assertEqual(response.status,206)

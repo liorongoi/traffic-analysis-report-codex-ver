@@ -339,6 +339,9 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     return self.download_clip(query)
                 if parsed.path == '/api/video/sources':
                     return self.reply(200,video_store.sources(library,query['mission'][0]))
+                if parsed.path == '/api/video/source-road-regions':
+                    return self.reply(200,video_store.source_road_regions(library,
+                        query['mission'][0],query['source'][0]))
                 if parsed.path == '/api/video/runs':
                     return self.reply(200,video_inference.status(query['mission'][0]))
                 if parsed.path == '/api/video/events':
@@ -591,6 +594,15 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     result=video_store.register_video(library,data['mission'],data['relative_path'],
                         metadata=data.get('metadata'),recording_start_utc=data.get('recording_start_utc'),
                         origin_provenance=data.get('origin_provenance'))
+                elif self.path == '/api/video/source-road-regions':
+                    if data.get('action')=='create':
+                        result=video_store.save_source_road_region(library,data['mission'],
+                            data['source_id'],data['polygon'],data['operator'],data.get('region_key'))
+                    elif data.get('action')=='delete':
+                        result=video_store.delete_source_road_region(library,data['mission'],
+                            data['source_id'],data['region_key'],data['operator'])
+                    else:
+                        raise ValueError('Choose create or delete for video road polygons')
                 elif self.path == '/api/video/runs':
                     result=video_inference.start(data['mission'],data['source_id'],data['tracker_policy'],
                         threshold=data['threshold'],tiled=data['tiled'],

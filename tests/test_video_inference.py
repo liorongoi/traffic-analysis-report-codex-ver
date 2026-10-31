@@ -72,6 +72,17 @@ class VideoInferenceServiceTests(unittest.TestCase):
         self.assertEqual(reported[-1]['execution_provider'],'CPUExecutionProvider')
         self.assertEqual(reported[-1]['fallback_reason'],'DirectML execution failed')
 
+    def test_video_adapter_attaches_review_only_road_geometry(self):
+        class Detector:
+            cpu_threads=2
+            session=SimpleNamespace(provider='CPUExecutionProvider',fallback_reason=None)
+            def infer(self,frame):
+                return [{'label':'car','box':[.4,.3,.1,.3],'score':.8}]
+        road=[{'kind':'include','role':'road_surface','polygon':[[0,.55],[1,.55],[1,1],[0,1]]}]
+        result=VehicleProposalAdapter(Detector(),['car'],road_regions=road).infer(None)
+        self.assertEqual(result[0]['road_relation']['label'],'on_road')
+        self.assertEqual(result[0]['label'],'car')
+
     def test_supervisor_starts_cancels_recovers_and_resumes_same_run(self):
         source = self.source()
         result = self.service.start(self.mission, source['id'], self.tracker_policy(),

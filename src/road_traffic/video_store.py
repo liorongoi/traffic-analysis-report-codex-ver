@@ -26,6 +26,14 @@ def schema(conn):
       metadata TEXT NOT NULL,recording_start_utc TEXT,origin_provenance TEXT,
       created TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS video_sources_mission_idx ON video_sources(mission_id,created,id);
+    CREATE TABLE IF NOT EXISTS video_source_region_history(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,mission_id TEXT NOT NULL REFERENCES mission(id),
+      source_id TEXT NOT NULL REFERENCES video_sources(id),region_key TEXT NOT NULL,
+      revision INTEGER NOT NULL,action TEXT NOT NULL CHECK(action IN ('upsert','delete')),
+      polygon TEXT NOT NULL,operator TEXT NOT NULL,created TEXT NOT NULL,
+      UNIQUE(source_id,region_key,revision));
+    CREATE INDEX IF NOT EXISTS video_source_region_latest_idx
+      ON video_source_region_history(mission_id,source_id,region_key,revision);
     CREATE TABLE IF NOT EXISTS video_runs(
       id TEXT PRIMARY KEY,mission_id TEXT NOT NULL REFERENCES mission(id),
       source_id TEXT NOT NULL REFERENCES video_sources(id),status TEXT NOT NULL,
@@ -88,6 +96,10 @@ def schema(conn):
       BEGIN SELECT RAISE(ABORT,'video source versions are immutable'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_sources_d BEFORE DELETE ON video_sources
       BEGIN SELECT RAISE(ABORT,'video source versions are immutable'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_video_source_regions_u BEFORE UPDATE ON video_source_region_history
+      BEGIN SELECT RAISE(ABORT,'video source road-region history is append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_video_source_regions_d BEFORE DELETE ON video_source_region_history
+      BEGIN SELECT RAISE(ABORT,'video source road-region history is append-only'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_events_u BEFORE UPDATE ON video_events
       BEGIN SELECT RAISE(ABORT,'video events are immutable'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_events_d BEFORE DELETE ON video_events
@@ -269,6 +281,81 @@ def source_detail(library, mission, source_id):
     return result
 
 
+def source_road_regions(library, mission, source_id, *, history=False):
+    """Return the active operator-drawn road polygons for one immutable video source."""
+    prepare(library, mission)
+    with library.connect(mission) as conn:
+        if not conn.execute('SELECT 1 FROM video_sources WHERE mission_id=? AND id=?',
+                (mission, source_id)).fetchone():
+            raise ValueError('Video source not found in this mission')
+        if history:
+            rows=conn.execute('''SELECT region_key,revision,action,polygon,operator,created
+                FROM video_source_region_history WHERE mission_id=? AND source_id=?
+                ORDER BY region_key,revision''',(mission,source_id)).fetchall()
+            return [{**dict(row),'polygon':json.loads(row['polygon'])} for row in rows]
+        rows=conn.execute('''SELECT h.region_key,h.revision,h.polygon,h.operator,h.created
+            FROM video_source_region_history h WHERE h.mission_id=? AND h.source_id=?
+            AND h.revision=(SELECT MAX(x.revision) FROM video_source_region_history x
+                WHERE x.mission_id=h.mission_id AND x.source_id=h.source_id
+                AND x.region_key=h.region_key) AND h.action='upsert'
+            ORDER BY h.created,h.region_key''',(mission,source_id)).fetchall()
+    return [{'region_key':row['region_key'],'revision':row['revision'],
+        'kind':'include','role':'road_surface','polygon':json.loads(row['polygon']),
+        'operator':row['operator'],'created':row['created']} for row in rows]
+
+
+def save_source_road_region(library, mission, source_id, polygon, operator, region_key=None):
+    """Append a validated operator-approved road polygon version for a video source."""
+    from .regions import validate_polygon
+    polygon=validate_polygon(polygon)
+    if not isinstance(operator,str) or not operator.strip():
+        raise ValueError('Operator name is required to save a video road polygon')
+    if region_key is not None and (not isinstance(region_key,str) or not region_key):
+        raise ValueError('Road region key must be non-empty text')
+    prepare(library, mission)
+    key=region_key or str(uuid.uuid4())
+    created=now()
+    with library.connect(mission) as conn:
+        if not conn.execute('SELECT 1 FROM video_sources WHERE mission_id=? AND id=?',
+                (mission,source_id)).fetchone():
+            raise ValueError('Video source not found in this mission')
+        previous=conn.execute('''SELECT revision,action FROM video_source_region_history
+            WHERE mission_id=? AND source_id=? AND region_key=? ORDER BY revision DESC LIMIT 1''',
+            (mission,source_id,key)).fetchone()
+        if region_key is not None and (previous is None or previous['action']!='upsert'):
+            raise ValueError('Road polygon no longer exists; refresh the video source regions')
+        revision=(previous['revision']+1) if previous else 1
+        conn.execute('''INSERT INTO video_source_region_history
+            (mission_id,source_id,region_key,revision,action,polygon,operator,created)
+            VALUES (?,?,?,?, 'upsert',?,?,?)''',
+            (mission,source_id,key,revision,_json(polygon),operator.strip(),created))
+    return next(row for row in source_road_regions(library,mission,source_id)
+        if row['region_key']==key)
+
+
+def delete_source_road_region(library, mission, source_id, region_key, operator):
+    if not isinstance(region_key,str) or not region_key:
+        raise ValueError('Road region key is required')
+    if not isinstance(operator,str) or not operator.strip():
+        raise ValueError('Operator name is required to delete a video road polygon')
+    prepare(library,mission)
+    created=now()
+    with library.connect(mission) as conn:
+        if not conn.execute('SELECT 1 FROM video_sources WHERE mission_id=? AND id=?',
+                (mission,source_id)).fetchone():
+            raise ValueError('Video source not found in this mission')
+        previous=conn.execute('''SELECT revision,action,polygon FROM video_source_region_history
+            WHERE mission_id=? AND source_id=? AND region_key=? ORDER BY revision DESC LIMIT 1''',
+            (mission,source_id,region_key)).fetchone()
+        if previous is None or previous['action']!='upsert':
+            raise ValueError('Road polygon no longer exists; refresh the video source regions')
+        conn.execute('''INSERT INTO video_source_region_history
+            (mission_id,source_id,region_key,revision,action,polygon,operator,created)
+            VALUES (?,?,?,?, 'delete',?,?,?)''',
+            (mission,source_id,region_key,previous['revision']+1,previous['polygon'],operator.strip(),created))
+    return source_road_regions(library,mission,source_id)
+
+
 @lru_cache(maxsize=256)
 def _verify_source_digest(path_text, expected_sha256, signature):
     path = Path(path_text)
@@ -329,7 +416,17 @@ def create_run(library, mission, source_id, config, *, total_frames=None):
         if conn.execute("SELECT 1 FROM video_runs WHERE mission_id=? AND status IN ('queued','running','paused')",
                 (mission,)).fetchone():
             raise ValueError('This mission already has an active video run')
+        regions=conn.execute('''SELECT h.region_key,h.revision,h.polygon,h.operator,h.created
+            FROM video_source_region_history h WHERE h.mission_id=? AND h.source_id=?
+            AND h.revision=(SELECT MAX(x.revision) FROM video_source_region_history x
+                WHERE x.mission_id=h.mission_id AND x.source_id=h.source_id
+                AND x.region_key=h.region_key) AND h.action='upsert'
+            ORDER BY h.created,h.region_key''',(mission,source_id)).fetchall()
+        region_snapshot=[{'region_key':row['region_key'],'revision':row['revision'],
+            'kind':'include','role':'road_surface','polygon':json.loads(row['polygon']),
+            'operator':row['operator'],'created':row['created']} for row in regions]
         recorded_config = {**config, 'video_config_schema_version': 1,
+            'road_surface_regions_snapshot':region_snapshot,
             'mission_snapshot': dict(conn.execute('''SELECT m.id,m.name,m.country,m.zone,s.analysis_mode,
                 s.source_root,s.output_root,s.export_formats FROM mission m JOIN mission_settings s
                 ON s.mission_id=m.id WHERE m.id=?''', (mission,)).fetchone()),
@@ -445,6 +542,13 @@ def _frame_detections(detections, assignments, review_hypotheses=()):
             raise ValueError('Frame detection label is required')
         item = {'box': [x, y, width, height], 'label': label,
             'track_id': tracks.get(index)}
+        relation=detection.get('road_relation')
+        if relation is not None:
+            if (not isinstance(relation,dict)
+                    or relation.get('label') not in ('on_road','near_road','off_road','unknown')
+                    or not isinstance(relation.get('basis'),str) or not relation['basis']):
+                raise ValueError('Video road relation must contain a supported label and basis')
+            item['road_relation']={'label':relation['label'],'basis':relation['basis']}
         score = detection.get('score', detection.get('confidence'))
         if score is not None:
             if (isinstance(score, bool) or not isinstance(score, (int, float))
@@ -1029,9 +1133,11 @@ def events(library, mission, run_id, *, limit=100, offset=0, prepared=False, con
     if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
         raise ValueError('event page offset must be a non-negative integer')
     with (nullcontext(connection) if connection is not None else library.connect(mission)) as conn:
-        if not conn.execute('SELECT 1 FROM video_runs WHERE id=? AND mission_id=?',
-                (run_id, mission)).fetchone():
+        run_row=conn.execute('SELECT config FROM video_runs WHERE id=? AND mission_id=?',
+                (run_id, mission)).fetchone()
+        if not run_row:
             raise ValueError('Video run not found')
+        road_regions=json.loads(run_row['config']).get('road_surface_regions_snapshot',[])
         has_active_identity_edits=bool(conn.execute('''SELECT 1 FROM video_event_reviews r JOIN (
             SELECT event_id,MAX(revision) revision FROM video_event_reviews
             WHERE action IN ('merge_tracks','split_track','clear_identity_correction') GROUP BY event_id
@@ -1120,6 +1226,12 @@ def events(library, mission, run_id, *, limit=100, offset=0, prepared=False, con
             else:
                 projected.append(root)
         result = sorted(projected, key=lambda item: (Fraction(item['first_offset_num'], item['first_offset_den']), item['id']))
+        from .regions import classify_road_relation
+        for item in result:
+            box=item.get('representative_box')
+            item['representative_road_relation']=(classify_road_relation(box,road_regions)
+                if isinstance(box,(list,tuple)) and len(box)==4 else
+                {'label':'unknown','basis':'event has no representative detector box'})
         return result if already_paged else result[offset:offset+limit]
 
 
