@@ -110,6 +110,13 @@ class WindowsPackagingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Windows x64'):
                 STAGER['validate_windows_python'](runtime, lock)
 
+    def test_launcher_settings_allow_offline_health_check_without_browser(self):
+        self.assertEqual(LAUNCHER['launcher_settings']({}), (8765, True))
+        self.assertEqual(LAUNCHER['launcher_settings']({'ROADLOOM_PORT': '18765',
+            'ROADLOOM_OPEN_BROWSER': 'false'}), (18765, False))
+        with self.assertRaisesRegex(ValueError, 'between 1 and 65535'):
+            LAUNCHER['launcher_settings']({'ROADLOOM_PORT': '65536'})
+
     def test_launch_receipt_is_bound_to_the_payload_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
