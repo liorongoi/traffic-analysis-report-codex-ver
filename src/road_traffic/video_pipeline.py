@@ -60,6 +60,7 @@ class VideoFrameAnalysis:
     closed_tracks: tuple
     progress: VideoProgress
     scene_cut: bool = False
+    review_hypotheses: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +144,12 @@ class VideoAnalysisPipeline:
                 detections = self.detector.infer(decoded.image)
                 if not isinstance(detections, (list, tuple)):
                     raise ValueError('Detector must return a list of detection mappings')
+                take_review_hypotheses=getattr(self.detector,'take_review_hypotheses',None)
+                review_hypotheses=take_review_hypotheses() if callable(take_review_hypotheses) else ()
+                if (not isinstance(review_hypotheses,(list,tuple))
+                        or any(not isinstance(item,dict) or item.get('kind')!='light'
+                            for item in review_hypotheses)):
+                    raise ValueError('Review hypotheses must be light mappings, separate from tracked detections')
                 tracking = self.tracker.update(decoded.timestamp, detections)
                 elapsed = max(0.0, time.monotonic() - started)
                 processed = decoded.index + 1
@@ -172,6 +179,7 @@ class VideoAnalysisPipeline:
                     closed_tracks=tuple(boundary_tracks)+tracking.closed_tracks,
                     progress=progress,
                     scene_cut=scene_cut,
+                    review_hypotheses=tuple(dict(item) for item in review_hypotheses),
                 )
             if not verified_previous:
                 raise ValueError('Video is shorter than the saved checkpoint; refusing an unsafe resume')

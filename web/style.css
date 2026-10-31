@@ -52,3 +52,5 @@ button { transition:transform .14s ease,border-color .14s ease,background-color 
 button:hover:not(:disabled) { transform:translateY(-1px); }
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible { outline:2px solid var(--accent);outline-offset:3px; }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important; } }
+
+.video-light-hypothesis-box{fill:none;stroke:#b99aff;stroke-width:4;stroke-dasharray:9 6;vector-effect:non-scaling-stroke}.video-light-hypothesis-label{fill:#d8c6ff;stroke:#101820;stroke-width:5;paint-order:stroke;font:700 22px system-ui,sans-serif;vector-effect:non-scaling-stroke}

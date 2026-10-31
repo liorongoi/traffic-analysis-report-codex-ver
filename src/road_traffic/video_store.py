@@ -394,9 +394,10 @@ def _insert_closed_tracks(conn, mission, run_id, source, tracks, created):
     return inserted
 
 
-def _frame_detections(detections, assignments):
-    if not isinstance(detections, (list, tuple)) or not isinstance(assignments, (list, tuple)):
-        raise ValueError('Frame detections and assignments must be sequences')
+def _frame_detections(detections, assignments, review_hypotheses=()):
+    if (not isinstance(detections, (list, tuple)) or not isinstance(assignments, (list, tuple))
+            or not isinstance(review_hypotheses, (list, tuple))):
+        raise ValueError('Frame detections, assignments, and review hypotheses must be sequences')
     tracks = {}
     for assignment in assignments:
         index = getattr(assignment, 'detection_index', None)
@@ -433,11 +434,32 @@ def _frame_detections(detections, assignments):
                 raise ValueError('Frame detection score must be between zero and one')
             item['score'] = float(score)
         result.append(item)
+    for hypothesis in review_hypotheses:
+        if not isinstance(hypothesis, dict) or hypothesis.get('kind') != 'light':
+            raise ValueError('Only separate light review hypotheses may be saved with frame detections')
+        box = hypothesis.get('box')
+        if (not isinstance(box, (list, tuple)) or len(box) != 4
+                or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) for value in box)):
+            raise ValueError('Light hypothesis box must contain four finite normalized values')
+        x, y, width, height = map(float, box)
+        if width <= 0 or height <= 0 or x < 0 or y < 0 or x + width > 1 or y + height > 1:
+            raise ValueError('Light hypothesis box must be inside normalized image bounds')
+        label = hypothesis.get('label')
+        subtype = hypothesis.get('light_subtype')
+        pairing = hypothesis.get('pairing')
+        reasons = hypothesis.get('reasons', [])
+        if (not isinstance(label, str) or not label or not isinstance(subtype, str)
+                or subtype not in ('headlight_candidate','streetlight_suspect','reflection_suspect','uncertain_light')
+                or pairing not in ('single','hypothesis') or not isinstance(reasons, (list, tuple))
+                or any(not isinstance(reason, str) for reason in reasons)):
+            raise ValueError('Light hypothesis review fields are invalid')
+        result.append({'kind':'light','box':[x,y,width,height],'label':label,'track_id':None,
+            'light_subtype':subtype,'pairing':pairing,'reasons':list(reasons)})
     return result
 
-
 def checkpoint(library, mission, run_id, *, frame_index, timestamp, tracker_state, closed_tracks=(),
-               detections=(), assignments=(), progress_elapsed_seconds=None,
+               detections=(), assignments=(), review_hypotheses=(), progress_elapsed_seconds=None,
                estimated_remaining_seconds=None):
     prepare(library, mission)
     if isinstance(frame_index, bool) or not isinstance(frame_index, int) or frame_index < 0:
@@ -445,7 +467,7 @@ def checkpoint(library, mission, run_id, *, frame_index, timestamp, tracker_stat
     if not isinstance(timestamp, VideoTimestamp):
         raise TypeError('timestamp must be a VideoTimestamp')
     state_json = _json(tracker_state)
-    frame_detections = _frame_detections(detections, assignments)
+    frame_detections = _frame_detections(detections, assignments, review_hypotheses)
     fingerprint_payload = {'frame_index': frame_index, 'timestamp': [timestamp.pts,
         timestamp.time_base_num, timestamp.time_base_den], 'tracker_state': tracker_state,
         'closed_tracks': [_track_payload(track) for track in closed_tracks],
@@ -598,7 +620,7 @@ def execute_video_run(library, mission, run_id, detector, *, should_cancel=None,
                 checkpoint(library, mission, run_id, frame_index=record.frame_index,
                     timestamp=record.timestamp, tracker_state=tracker.state(),
                     closed_tracks=record.closed_tracks, detections=record.detections,
-                    assignments=record.assignments,
+                    assignments=record.assignments, review_hypotheses=record.review_hypotheses,
                     progress_elapsed_seconds=latest_progress.get('elapsed_seconds'),
                     estimated_remaining_seconds=latest_progress.get('estimated_remaining_seconds'))
             elif isinstance(record, VideoTrackClosure):

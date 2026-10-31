@@ -117,7 +117,9 @@ class TrackingBenchmarkTests(unittest.TestCase):
                     'version': 'vehicle-v1', 'sha256': 'a' * 64}}
                 conn.execute('INSERT INTO video_runs VALUES (?,?,?,?,?,?)',
                     ('run-1', 'mission-1', 'source-1', 'completed', json.dumps(config), '{}'))
-                detections = [{'box': [.1, .2, .3, .4], 'label': 'car', 'track_id': 'track-1'}]
+                detections = [{'box': [.1, .2, .3, .4], 'label': 'car', 'track_id': 'track-1'},
+                    {'kind':'light','box':[.5,.2,.1,.1],'label':'possible paired vehicle lights',
+                     'track_id':None,'light_subtype':'uncertain_light','pairing':'hypothesis'}]
                 conn.execute('INSERT INTO video_frame_detections VALUES (?,?,?,?,?,?)',
                     ('run-1', 0, 0, 1, 1000, json.dumps(detections)))
             result = export_video_run(database, 'run-1', root / 'predictions.json')
@@ -127,6 +129,7 @@ class TrackingBenchmarkTests(unittest.TestCase):
             self.assertEqual(prediction['metadata']['model_id'], 'vehicle-v1')
             self.assertEqual(prediction['metadata']['hardware_profile'], 'conservative')
             self.assertEqual(prediction['frames'][0]['objects'][0]['bbox'], [10, 10, 30, 20])
+            self.assertEqual(len(prediction['frames'][0]['objects']),1)
 
     def test_incomplete_video_run_cannot_be_exported(self):
         with tempfile.TemporaryDirectory() as root:

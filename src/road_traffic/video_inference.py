@@ -7,6 +7,9 @@ from . import video_store
 from .store import now
 
 
+VIDEO_NIGHT_ADAPTER = 'video-night-hypotheses-v1'
+
+
 class VideoInferenceBusy(ValueError):
     retryable = True
 
@@ -83,7 +86,9 @@ class VideoInferenceService:
         target_labels=[label for label in supported_labels if label in target_labels]
         resources=resolve_resource_profile(resource_profile)
         _, sha = model_pack(self.pack)
-        config = {'task': settings['analysis_mode'], 'detector': {'version': VERSION, 'sha256': sha,
+        config = {'task': settings['analysis_mode'],
+            'night_adapter': {'version': VIDEO_NIGHT_ADAPTER, 'enabled': True},
+            'detector': {'version': VERSION, 'sha256': sha,
             'threshold': float(threshold), 'tiled': tiled,
             'target_labels':target_labels,
             'device': resources['device'], 'cpu_threads':resources['cpu_threads'],
@@ -210,26 +215,47 @@ class VideoInferenceService:
 
 
 class VehicleProposalAdapter:
-    """Keep model class labels while exposing only detection geometry to tracking."""
-    def __init__(self, detector, target_labels=None, runtime_callback=None):
+    """Keep vehicle detections separate from review-only nighttime light hypotheses."""
+    def __init__(self, detector, target_labels=None, runtime_callback=None, *, night_lights=False):
         self.detector = detector
         self.target_labels=set(target_labels) if target_labels is not None else None
         self.runtime_callback=runtime_callback
+        self.night_lights=bool(night_lights)
+        self._review_hypotheses=[]
         self._last_runtime=None
         self._report_runtime()
+
+    def take_review_hypotheses(self):
+        items=self._review_hypotheses
+        self._review_hypotheses=[]
+        return items
 
     def _report_runtime(self):
         if not self.runtime_callback:return
         session=self.detector.session
         details={'requested_device':'auto','execution_provider':session.provider,
             'fallback_reason':(session.fallback_reason or '')[:1000] or None,
-            'cpu_threads':self.detector.cpu_threads}
+            'cpu_threads':self.detector.cpu_threads,
+            'night_adapter':VIDEO_NIGHT_ADAPTER if self.night_lights else None}
         if details!=self._last_runtime:
             self.runtime_callback(details)
             self._last_runtime=details
 
     def infer(self, rgb_frame):
+        self._review_hypotheses=[]
         items=self.detector.infer(rgb_frame)
+        if self.night_lights:
+            from .detector import illumination, suppress
+            condition=illumination(rgb_frame)
+            if condition['scene_period']=='night_like':
+                items=suppress([*items,*self.detector.infer_night_top(rgb_frame)])
+            if condition['low_light']:
+                from .night import propose
+                lights,_=propose(rgb_frame,None,items)
+                # Keep only the review fields needed by video overlays and audit.
+                self._review_hypotheses=[{'kind':'light','label':item['label'],'box':item['box'],
+                    'light_subtype':item['light_subtype'],'pairing':item['pairing'],
+                    'reasons':item['reasons']} for item in lights]
         self._report_runtime()
         return [{'label': item.get('label') or item.get('suggested_kind') or item.get('kind'),
             'box': item['box'], 'score': item.get('score',item.get('confidence'))}
@@ -285,7 +311,9 @@ def execute_worker(library, mission, run_id, pack):
 
     try:
         return video_store.execute_video_run(library, mission, run_id,
-            VehicleProposalAdapter(detector,detector_config.get('target_labels'),report_runtime),
+            VehicleProposalAdapter(detector,detector_config.get('target_labels'),report_runtime,
+                night_lights=(run['config'].get('night_adapter',{}).get('version')==VIDEO_NIGHT_ADAPTER
+                    and run['config'].get('night_adapter',{}).get('enabled') is True)),
             should_cancel=should_cancel)
     except Exception as exc:
         with library.connect(mission) as conn:

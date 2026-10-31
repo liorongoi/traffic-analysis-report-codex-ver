@@ -348,6 +348,8 @@ def export_video_run(database_path, run_id, output_path, *, sequence_id=None):
                     raise ValueError(f"Saved detections are corrupt at frame {row['frame_index']}")
                 objects = []
                 for index, detection in enumerate(detections):
+                    if isinstance(detection, dict) and detection.get('kind') == 'light':
+                        continue  # Review-only light hypotheses are never vehicle benchmark predictions.
                     box = detection.get('box') if isinstance(detection, dict) else None
                     label = detection.get('label') if isinstance(detection, dict) else None
                     if not isinstance(box, list) or len(box) != 4 or not isinstance(label, str) or not label:
