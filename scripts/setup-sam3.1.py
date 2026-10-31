@@ -14,6 +14,10 @@ import sys
 TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
 TORCH_PACKAGES = ("torch==2.10.0", "torchvision==0.25.0")
 TRANSFORMER_PACKAGES = ("transformers==5.22.1", "safetensors", "huggingface_hub")
+SUPPORT_PACKAGES = (
+    "filelock", "typing_extensions", "sympy", "networkx", "jinja2", "fsspec", "setuptools",
+    "httpx", "hf_xet", "packaging", "pyyaml", "regex", "requests", "tokenizers", "tqdm",
+)
 
 
 def install_runtime(model_dir, python=None, runner=subprocess.run):
@@ -24,14 +28,15 @@ def install_runtime(model_dir, python=None, runner=subprocess.run):
         major, minor = (int(part) for part in version.split(".", 1))
     except (TypeError, ValueError) as exc:
         raise RuntimeError("Could not determine the app runtime's Python version") from exc
-    if (major, minor) < (3, 12):
-        raise RuntimeError("Optional SAM 3.1 setup requires the installed app runtime to use Python 3.12 or newer")
+    if (major, minor) < (3, 11):
+        raise RuntimeError("Optional SAM 3.1 setup requires the installed app runtime to use Python 3.11 or newer")
     runtime = Path(model_dir).expanduser().resolve() / "runtime"
     runtime.mkdir(parents=True, exist_ok=True)
     common = [python, "-m", "pip", "install", "--upgrade", "--disable-pip-version-check", "--no-input",
         "--target", str(runtime)]
-    runner(common + ["--index-url", TORCH_INDEX, *TORCH_PACKAGES], check=True)
-    runner(common + list(TRANSFORMER_PACKAGES), check=True)
+    runner(common + ["--no-deps", "--index-url", TORCH_INDEX, *TORCH_PACKAGES], check=True)
+    runner(common + ["--no-deps", *TRANSFORMER_PACKAGES], check=True)
+    runner(common + list(SUPPORT_PACKAGES), check=True)
 
 
 def _default_destination():

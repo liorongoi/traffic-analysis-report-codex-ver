@@ -82,7 +82,7 @@ class SamPackSetupTests(unittest.TestCase):
         def old_python(command, **kwargs):
             return SimpleNamespace(stdout='3.11')
 
-        with self.assertRaisesRegex(RuntimeError, 'Python 3.12'):
+        with self.assertRaisesRegex(RuntimeError, 'Python 3.11'):
             module['install_runtime'](python='old-python', runner=old_python)
 
 
