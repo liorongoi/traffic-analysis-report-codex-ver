@@ -4,6 +4,7 @@ Input is an explicit JSON frame/object manifest. This evaluator measures the
 provided tracks; it neither infers identity nor defines acceptance thresholds.
 """
 from collections import Counter, defaultdict
+from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -311,7 +312,7 @@ def export_video_run(database_path, run_id, output_path, *, sequence_id=None):
     database = Path(database_path).resolve(strict=True)
     uri = database.as_uri() + '?mode=ro'
     try:
-        with sqlite3.connect(uri, uri=True) as connection:
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
             connection.row_factory = sqlite3.Row
             run = connection.execute('''SELECT r.*,s.original_name,s.sha256 AS source_sha256,
                 s.metadata AS source_metadata,m.country FROM video_runs r

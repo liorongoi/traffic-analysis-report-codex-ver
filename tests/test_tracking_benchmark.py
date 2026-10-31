@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 import tempfile
 import unittest
@@ -100,7 +101,7 @@ class TrackingBenchmarkTests(unittest.TestCase):
             root = Path(root)
             database = root / 'mission.sqlite3'
             import sqlite3
-            with sqlite3.connect(database) as conn:
+            with closing(sqlite3.connect(database)) as conn, conn:
                 conn.executescript('''
                     CREATE TABLE mission(id TEXT PRIMARY KEY,country TEXT);
                     CREATE TABLE video_sources(id TEXT,mission_id TEXT,original_name TEXT,sha256 TEXT,metadata TEXT);
@@ -132,7 +133,7 @@ class TrackingBenchmarkTests(unittest.TestCase):
             root = Path(root)
             database = root / 'mission.sqlite3'
             import sqlite3
-            with sqlite3.connect(database) as conn:
+            with closing(sqlite3.connect(database)) as conn, conn:
                 conn.executescript('''
                     CREATE TABLE mission(id TEXT PRIMARY KEY,country TEXT);
                     CREATE TABLE video_sources(id TEXT,mission_id TEXT,original_name TEXT,sha256 TEXT,metadata TEXT);
