@@ -516,9 +516,9 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                         raise ValueError('Choose create, update, or delete action')
                 elif self.path == '/api/plates/detect':
                     from .plate_review import propose
-                    result=propose(library,data['mission'],data['image_id'],Path(web).parent/'model-packs'/'license-plate-yolox',data.get('threshold',.3))
+                    result=propose(library,data['mission'],data['image_id'],Path(web).parent/'model-packs'/'license-plate-yolox',data.get('threshold',.3),data.get('tiled',True))
                 elif self.path == '/api/plates/detect-video':
-                    result=video_inference.start_plate_review(data['mission'],data['source_id'],threshold=data.get('threshold',.3))
+                    result=video_inference.start_plate_review(data['mission'],data['source_id'],threshold=data.get('threshold',.3),tiled=data.get('tiled',True))
                 elif self.path == '/api/plates/review':
                     from .plate_review import review
                     result=review(library,data['mission'],data['crop_id'],data['expected_revision'],data['decision'],data['operator'])

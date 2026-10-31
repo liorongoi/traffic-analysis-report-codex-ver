@@ -168,10 +168,12 @@ class VideoInferenceServiceTests(unittest.TestCase):
             'input_type':'videos','analysis_mode':'license_plate','source_root':str(self.source_root),
             'output_root':str(self.root/'plate-output')})
         source=register_video(self.library,mission,'clip.mp4')
-        result=self.service.start_plate_review(mission,source['id'])
+        result=self.service.start_plate_review(mission,source['id'],threshold=.18,tiled=False)
         self.assertEqual(result['status'],'queued')
         self.assertEqual(result['config']['task'],'license_plate')
         self.assertEqual(result['config']['plate_detector']['device'],'auto')
+        self.assertEqual(result['config']['plate_detector']['threshold'],.18)
+        self.assertFalse(result['config']['plate_detector']['tiled'])
         self.assertNotIn('recognition',result['config'])
         self.assertIn((mission,result['run']),self.inference.processes)
 

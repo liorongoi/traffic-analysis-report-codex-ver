@@ -39,6 +39,31 @@ class PlateCropReviewTests(unittest.TestCase):
 
     def tearDown(self):self.tmp.cleanup()
 
+    def test_large_frame_uses_overlapping_tiles_and_deduplicates_boxes(self):
+        detector=object.__new__(PlateDetector)
+        detector.np=np;detector.tiled=True
+        calls=[]
+        target=[600,200,50,20]
+        def infer(tile):
+            calls.append(tile.shape[:2])
+            ordinal=len(calls)-1
+            origins=[(0,0),(432,0),(0,32),(432,32)]
+            x,y=origins[ordinal]
+            if ordinal in (0,1):
+                return [{'box':[(target[0]-x)/768,(target[1]-y)/768,
+                    target[2]/768,target[3]/768],'confidence':.8-ordinal*.1}]
+            return []
+        detector._detect_single=infer
+        result=detector.detect(np.zeros((800,1200,3),dtype=np.uint8))
+        self.assertEqual(len(calls),4)
+        self.assertEqual(len(result),1)
+        for actual,expected in zip(result[0]['box'],[.5,.25,50/1200,20/800]):
+            self.assertAlmostEqual(actual,expected)
+
+    def test_tile_grid_includes_last_edge_without_gaps(self):
+        self.assertEqual(PlateDetector._tile_starts(1200,768,128),[0,432])
+        self.assertEqual(PlateDetector._tile_starts(768,768,128),[0])
+
     def test_database_connection_closes_after_context(self):
         _,_,db=_paths(self.lib,self.mission)
         with _connect(db) as conn:self.assertEqual(conn.execute('SELECT 1').fetchone()[0],1)
@@ -92,6 +117,7 @@ class PlateCropReviewTests(unittest.TestCase):
         with _connect(db) as conn:conn.execute('DELETE FROM crops WHERE id=?',(self.crop_id,))
         (folder/(self.crop_id+'.jpg')).unlink()
         detector.return_value.sha='b'*64
+        detector.return_value.config_sha256='c'*64
         detector.return_value.detect.return_value=[{'box':[.25,.25,.5,.25],'confidence':.91,'model_sha256':'b'*64}]
         rows=propose(self.lib,self.mission,self.image['id'],Path('model-packs/license-plate-yolox'))
         self.assertEqual(len(rows),1)
@@ -138,6 +164,7 @@ class PlateCropReviewTests(unittest.TestCase):
             origin_provenance='verified recorder metadata')
         class Detector:
             sha='c'*64
+            config_sha256='d'*64
             calls=0
             def detect(self,image):
                 self.calls+=1

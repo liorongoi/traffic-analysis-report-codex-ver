@@ -141,17 +141,18 @@ class VideoInferenceService:
             tiled=policy['tiled'],target_labels=policy['target_labels'],
             resource_profile=policy.get('resource_profile','auto'))
 
-    def start_plate_review(self,mission,source_id,*,threshold=.3):
+    def start_plate_review(self,mission,source_id,*,threshold=.3,tiled=True):
         from .plate_review import _model_pack, _paths
         settings=self.library.settings(mission)
         if settings['input_type']!='videos' or settings['analysis_mode']!='license_plate':
             raise ValueError('Plate crop processing requires a video plate-crop mission')
         if type(threshold) not in (int,float) or not .01<=threshold<=.9:
             raise ValueError('Plate detector threshold must be between 0.01 and 0.90')
+        if type(tiled) is not bool:raise ValueError('Plate tile scanning must be a boolean')
         _paths(self.library,mission)
         _,sha=_model_pack(self.plate_pack)
         config={'task':'license_plate','plate_detector':{'version':'plate-yolox-tiny-v1',
-            'sha256':sha,'threshold':float(threshold),'device':'auto',
+            'sha256':sha,'threshold':float(threshold),'tiled':tiled,'device':'auto',
             'human_confirmation':True},'tracker_policy':{'max_gap_seconds':[1,1],
             'minimum_iou':0,'max_center_distance':1,'association_margin':0,
             'compatible_label_groups':[]}}
@@ -278,7 +279,8 @@ def execute_worker(library, mission, run_id, pack):
         plate_pack=Path(pack).parent/'license-plate-yolox'
         _,sha=_model_pack(plate_pack)
         if detector_config.get('sha256')!=sha:raise ValueError('Plate detector model hash changed; create a new run')
-        plate_detector=PlateDetector(plate_pack,detector_config['threshold'])
+        plate_detector=PlateDetector(plate_pack,detector_config['threshold'],
+            tiled=detector_config.get('tiled',True))
         runtime_state=[None]
         def report_runtime():
             details={'requested_device':'auto','plate_detector':{

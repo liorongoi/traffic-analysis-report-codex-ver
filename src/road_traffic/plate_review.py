@@ -75,6 +75,7 @@ def _open_connection(db):
                 source_sha256 TEXT NOT NULL, crop_file TEXT NOT NULL UNIQUE,
                 crop_sha256 TEXT NOT NULL, bbox TEXT NOT NULL, confidence REAL NOT NULL,
                 model_sha256 TEXT NOT NULL, created TEXT NOT NULL,
+                detector_config_sha256 TEXT NOT NULL DEFAULT '',
                 mission_country_context TEXT,
                 country_context_basis TEXT NOT NULL DEFAULT 'unknown');
             CREATE TABLE IF NOT EXISTS reviews(
@@ -92,6 +93,7 @@ def _open_connection(db):
             ('source_kind',"TEXT NOT NULL DEFAULT 'image'"),('video_source_id','TEXT'),
             ('frame_index','INTEGER'),('pts','INTEGER'),('time_base_num','INTEGER'),
             ('time_base_den','INTEGER'),('capture_utc','TEXT'),('context_file','TEXT'),
+            ('detector_config_sha256',"TEXT NOT NULL DEFAULT ''"),
             ('blur_laplacian_variance','REAL'),('mission_country_context','TEXT'),
             ('country_context_basis',"TEXT NOT NULL DEFAULT 'unknown'")):
             if name not in columns:conn.execute(f'ALTER TABLE crops ADD COLUMN {name} {declaration}')
@@ -134,17 +136,34 @@ def _plate_runtime_modules(*names):
 
 class PlateDetector:
     """Single-class local plate-region detector. It never reads plate characters."""
-    def __init__(self,pack,threshold=.3):
+    TILE_SIZE=768
+    TILE_OVERLAP=128
+
+    def __init__(self,pack,threshold=.3,*,tiled=True):
         cv2,np,ort=_plate_runtime_modules('cv2','numpy','onnxruntime')
         if not .01<=threshold<=.9:raise ValueError('Invalid plate detector threshold')
+        if type(tiled) is not bool:raise ValueError('Plate tile scanning must be a boolean')
         self.cv,self.np=cv2,np
         self.model,self.sha=_model_pack(pack)
         self.session=create_session(ort,self.model,2)
         self.input=self.session.get_inputs()[0].name
-        self.threshold=threshold
+        self.threshold,self.tiled=float(threshold),tiled
+        config={'version':'plate-yolox-tiny-v1','model_sha256':self.sha,
+            'threshold':self.threshold,'tiled':self.tiled}
+        self.config_sha256=hashlib.sha256(json.dumps(config,sort_keys=True,
+            separators=(',',':')).encode()).hexdigest()
 
-    def detect(self,image):
-        """Return normalized plate boxes, confidence and detector provenance."""
+    @staticmethod
+    def _tile_starts(length,tile,overlap):
+        if length<=tile:return [0]
+        step=tile-overlap
+        starts=list(range(0,length-tile+1,step))
+        last=length-tile
+        if not starts or starts[-1]!=last:starts.append(last)
+        return starts
+
+    def _detect_single(self,image):
+        """Run one full-image or high-resolution tile inference."""
         cv,np=self.cv,self.np
         h,w=image.shape[:2]
         scale=min(640/w,640/h)
@@ -178,6 +197,39 @@ class PlateDetector:
             if len(boxes)>=200:break
         return boxes
 
+    def detect(self,image):
+        """Return normalized plate boxes, confidence and detector provenance.
+
+        Large frames use overlapping 768-pixel tiles so small plates keep more
+        source detail than after shrinking the entire frame to 640. Boxes are
+        mapped to original-frame coordinates and overlapping duplicates are
+        suppressed before crop review.
+        """
+        if not hasattr(image,'shape') or len(image.shape)!=3 or image.shape[2]!=3:
+            raise ValueError('Plate detection requires an RGB image')
+        h,w=image.shape[:2]
+        if not self.tiled or max(h,w)<=self.TILE_SIZE:
+            return self._detect_single(image)
+        detections=[]
+        xs=self._tile_starts(w,self.TILE_SIZE,self.TILE_OVERLAP)
+        ys=self._tile_starts(h,self.TILE_SIZE,self.TILE_OVERLAP)
+        for y in ys:
+            for x in xs:
+                tile=image[y:min(y+self.TILE_SIZE,h),x:min(x+self.TILE_SIZE,w)]
+                tile_h,tile_w=tile.shape[:2]
+                for item in self._detect_single(tile):
+                    bx,by,bw,bh=item['box']
+                    item=dict(item)
+                    item['box']=[(bx*tile_w+x)/w,(by*tile_h+y)/h,
+                        bw*tile_w/w,bh*tile_h/h]
+                    detections.append(item)
+        result=[]
+        for item in sorted(detections,key=lambda row:row['confidence'],reverse=True):
+            if any(_iou(item['box'],prior['box'])>.45 for prior in result):continue
+            result.append(item)
+            if len(result)>=200:break
+        return result
+
 
 def _iou(a,b):
     left=max(a[0],b[0]);top=max(a[1],b[1]);right=min(a[0]+a[2],b[0]+b[2]);bottom=min(a[1]+a[3],b[1]+b[3])
@@ -185,7 +237,7 @@ def _iou(a,b):
     return inter/(a[2]*a[3]+b[2]*b[3]-inter+1e-12)
 
 
-def propose(library,mission,image_id,pack,threshold=.3):
+def propose(library,mission,image_id,pack,threshold=.3,tiled=True):
     from PIL import Image
     import numpy as np
     source=library.image_path(mission,image_id)
@@ -194,7 +246,7 @@ def propose(library,mission,image_id,pack,threshold=.3):
         row=conn.execute('SELECT name,sha256 FROM images WHERE id=?',(image_id,)).fetchone()
     if not row:raise ValueError('Image not found in mission')
     _,folder,db=_paths(library,mission)
-    detector=PlateDetector(pack,threshold)
+    detector=PlateDetector(pack,threshold,tiled=tiled)
     with Image.open(source) as im:
         im=im.convert('RGB');boxes=detector.detect(np.asarray(im));saved=[]
         for item in boxes:
@@ -208,19 +260,21 @@ def propose(library,mission,image_id,pack,threshold=.3):
     created=datetime.now(timezone.utc).isoformat()
     try:
         with _connect(db) as conn:
-            existing=conn.execute('SELECT id FROM crops WHERE image_id=? AND source_sha256=? AND model_sha256=?',
-                (image_id,row['sha256'],detector.sha)).fetchone()
+            existing=conn.execute('''SELECT id FROM crops WHERE image_id=? AND source_sha256=?
+                AND model_sha256=? AND detector_config_sha256=?''',
+                (image_id,row['sha256'],detector.sha,detector.config_sha256)).fetchone()
             if existing:
                 for _,filename,*_ in saved:(folder/filename).unlink(missing_ok=True)
                 return list_crops(library,mission,image_id)
             for crop_id,filename,path,item,coords in saved:
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,crop_sha256,
-                    bbox,confidence,blur_laplacian_variance,model_sha256,created,mission_country_context,
-                    country_context_basis) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+                    bbox,confidence,blur_laplacian_variance,model_sha256,created,detector_config_sha256,
+                    mission_country_context,country_context_basis) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
                     crop_id,image_id,row['name'],row['sha256'],filename,_sha(path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],
                         'height':coords[3]-coords[1]}),item['confidence'],item.get('blur_laplacian_variance'),
-                    detector.sha,created,country,'mission_configuration' if country else 'unknown'))
+                    detector.sha,created,detector.config_sha256,country,
+                    'mission_configuration' if country else 'unknown'))
     except Exception:
         for _,_,path,*_ in saved:path.unlink(missing_ok=True)
         raise
@@ -236,7 +290,8 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
     country=_mission_country(library,mission);image_id=f"video:{source_id}:{decoded.index}"
     with _connect(db) as conn:
         if conn.execute("""SELECT 1 FROM crops WHERE source_kind='video' AND video_source_id=?
-            AND frame_index=? AND model_sha256=?""",(source_id,decoded.index,detector.sha)).fetchone():return []
+            AND frame_index=? AND model_sha256=? AND detector_config_sha256=?""",
+            (source_id,decoded.index,detector.sha,detector.config_sha256)).fetchone():return []
     frame=np.asarray(decoded.image);boxes=detector.detect(frame)
     origin=datetime.fromisoformat(source['recording_start_utc']) if source['recording_start_utc'] else None
     utc=decoded.utc_at(origin);created=datetime.now(timezone.utc).isoformat();saved=[]
@@ -255,14 +310,15 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
         with _connect(db) as conn:
             for crop_id,crop_name,context_name,crop_path,context_path,item,coords in saved:
                 conn.execute('''INSERT INTO crops(id,image_id,source_name,source_sha256,crop_file,crop_sha256,
-                    bbox,confidence,blur_laplacian_variance,model_sha256,created,source_kind,video_source_id,
+                    bbox,confidence,blur_laplacian_variance,model_sha256,created,detector_config_sha256,
+                    source_kind,video_source_id,
                     frame_index,pts,time_base_num,time_base_den,capture_utc,context_file,
                     mission_country_context,country_context_basis)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(
                     crop_id,image_id,source['original_name'],source['sha256'],crop_name,_sha(crop_path),
                     json.dumps({'x':coords[0],'y':coords[1],'width':coords[2]-coords[0],
                         'height':coords[3]-coords[1]}),item['confidence'],item.get('blur_laplacian_variance'),
-                    detector.sha,created,'video',source_id,decoded.index,decoded.timestamp.pts,
+                    detector.sha,created,detector.config_sha256,'video',source_id,decoded.index,decoded.timestamp.pts,
                     decoded.timestamp.time_base_num,decoded.timestamp.time_base_den,utc.isoformat() if utc else None,
                     context_name,country,'mission_configuration' if country else 'unknown'))
     except Exception:
@@ -273,7 +329,7 @@ def propose_video_frame(library,mission,source_id,decoded,detector):
 
 
 _CROP_FIELDS=('id','image_id','source_name','source_sha256','crop_file','crop_sha256','bbox','confidence',
-    'model_sha256','created','mission_country_context','country_context_basis','source_kind','video_source_id',
+    'model_sha256','created','detector_config_sha256','mission_country_context','country_context_basis','source_kind','video_source_id',
     'frame_index','pts','time_base_num','time_base_den','capture_utc','context_file','blur_laplacian_variance')
 
 
@@ -307,7 +363,7 @@ def list_crops_page(library,mission,offset=0,limit=40,image_id=None):
 
 PLATE_EXPORT_FIELDS=('crop_id','mission_country_context','country_context_basis','source_kind','source_name',
     'source_sha256','image_id','video_source_id','frame_index','pts','time_base_num','time_base_den','capture_utc',
-    'bbox','detector_confidence','blur_laplacian_variance','detector_model_sha256','crop_file','crop_sha256',
+    'bbox','detector_confidence','blur_laplacian_variance','detector_model_sha256','detector_config_sha256','crop_file','crop_sha256',
     'crop_review_decision','crop_review_revision','crop_review_operator','crop_reviewed_at')
 
 
@@ -318,7 +374,7 @@ def export_crops_csv(library,mission):
     query='''SELECT c.id AS crop_id,c.mission_country_context,c.country_context_basis,c.source_kind,c.source_name,
         c.source_sha256,c.image_id,c.video_source_id,c.frame_index,c.pts,c.time_base_num,c.time_base_den,
         c.capture_utc,c.bbox,c.confidence AS detector_confidence,c.blur_laplacian_variance,
-        c.model_sha256 AS detector_model_sha256,c.crop_file,c.crop_sha256,
+        c.model_sha256 AS detector_model_sha256,c.detector_config_sha256,c.crop_file,c.crop_sha256,
         r.decision AS crop_review_decision,r.revision AS crop_review_revision,r.operator AS crop_review_operator,
         r.created AS crop_reviewed_at FROM crops c LEFT JOIN reviews r ON r.id=(
         SELECT id FROM reviews x WHERE x.crop_id=c.id ORDER BY x.revision DESC LIMIT 1)
