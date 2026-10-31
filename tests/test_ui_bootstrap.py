@@ -180,6 +180,13 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn("canSegment=!!mission&&!!row?.view_id&&row.view_id===$('imageView').value", source)
         self.assertIn("$('suggestRoadMasks').disabled=!canSegment", source)
 
+    def test_view_geometry_warnings_are_visible_and_rerender_in_both_languages(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn("if(viewProposalData)renderViewProposals(viewProposalData)", source)
+        self.assertIn("for(const warning of data.view_geometry_warnings||[])", source)
+        self.assertIn("viewGeometryWarningTitle:'Possible camera-view change'", source)
+        self.assertIn("viewGeometryWarningTitle:'ייתכן שינוי בזווית המצלמה'", source)
+
 
 if __name__ == '__main__':
     unittest.main()

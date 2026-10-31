@@ -690,6 +690,7 @@ class HttpTests(unittest.TestCase):
                 result=json.load(response)
             self.assertEqual(result['available_images'],0)
             self.assertEqual(result['groups'],[])
+            self.assertEqual(result['view_geometry_warnings'],[])
         with self.request('/api/missions',{'name':'Video view fixture','country':'Israel','zone':'Asia/Jerusalem',
                 'input_type':'videos','analysis_mode':'video_traffic'}) as response:
             video_mission=json.load(response)['id']

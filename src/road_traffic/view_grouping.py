@@ -78,20 +78,20 @@ def propose(library, mission: str) -> dict:
     if len(rows) > MAX_IMAGES:
         raise ValueError(f'This review-only proposal pass supports up to {MAX_IMAGES} images; select a smaller mission partition')
     if len(rows) < 2:
-        return {'available_images': len(rows), 'analyzed_images': len(rows), 'groups': [],
+        return {'available_images': len(rows), 'analyzed_images': len(rows), 'groups': [], 'view_geometry_warnings': [],
                 'unmatched': [row['id'] for row in rows], 'method': 'grayscale CLAHE + ORB + RANSAC geometric matching'}
 
     features = {row['id']: _features(library, mission, row['id']) for row in rows}
     usable = [row for row in rows if features[row['id']]['descriptors'] is not None]
     descriptors = [features[row['id']]['descriptors'] for row in usable]
     if len(usable) < 2:
-        return {'available_images': len(rows), 'analyzed_images': len(rows), 'groups': [],
+        return {'available_images': len(rows), 'analyzed_images': len(rows), 'groups': [], 'view_geometry_warnings': [],
                 'unmatched': [row['id'] for row in rows], 'method': 'grayscale CLAHE + ORB + RANSAC geometric matching'}
 
     # Approximate local-feature retrieval avoids comparing every image pair in the whole mission.
     combined = np.vstack(descriptors)
     if len(combined) < 2:
-        return {'available_images': len(rows), 'analyzed_images': len(rows), 'groups': [],
+        return {'available_images': len(rows), 'analyzed_images': len(rows), 'groups': [], 'view_geometry_warnings': [],
                 'unmatched': [row['id'] for row in rows], 'method': 'grayscale CLAHE + ORB + RANSAC geometric matching'}
     owners = np.concatenate([np.full(len(item), index, dtype=np.int32) for index, item in enumerate(descriptors)])
     matcher = cv2.FlannBasedMatcher(dict(algorithm=6, table_number=12, key_size=20, multi_probe_level=2), {})
@@ -160,9 +160,33 @@ def propose(library, mission: str) -> dict:
                           'mean_pair_score': round(sum(edge['score'] for edge in component_edges) / max(1, len(component_edges)), 4),
                           'assignments_changed': False, 'images': group})
 
+    # A saved view represented in multiple independent geometry groups may have
+    # changed angle or contain a mistaken assignment. Surface this for review;
+    # it is not strong enough to invalidate regions or backgrounds automatically.
+    assigned_groups = defaultdict(dict)
+    for group in proposals:
+        for row in group['images']:
+            view_id = row.get('view_id')
+            if view_id:
+                assigned_groups[view_id].setdefault(group['proposal'], []).append(row)
+    view_geometry_warnings = []
+    for view_id, proposed_groups in assigned_groups.items():
+        if len(proposed_groups) < 2:
+            continue
+        rows_for_view = [row for members in proposed_groups.values() for row in members]
+        view_geometry_warnings.append({
+            'view_id': view_id,
+            'view_name': next((row.get('view_name') for row in rows_for_view if row.get('view_name')), None),
+            'proposal_ids': sorted(proposed_groups),
+            'image_count': len(rows_for_view),
+            'assignments_changed': False,
+        })
+    view_geometry_warnings.sort(key=lambda item: (item['view_name'] or '', item['view_id']))
+
     return {
         'available_images': len(rows), 'analyzed_images': len(rows), 'feature_images': len(usable),
-        'groups': proposals, 'unmatched': [row['id'] for row in rows if row['id'] not in grouped_ids],
+        'groups': proposals, 'view_geometry_warnings': view_geometry_warnings,
+        'unmatched': [row['id'] for row in rows if row['id'] not in grouped_ids],
         'method': 'grayscale CLAHE + ORB + approximate descriptor retrieval + RANSAC geometric verification',
         'illumination_handling': 'grayscale and local contrast equalization reduce brightness sensitivity; this is a proposal heuristic, not lighting invariance proof',
         'acceptance': 'unvalidated; review representatives and every proposed member before using or assigning a group',

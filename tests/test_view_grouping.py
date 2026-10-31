@@ -57,19 +57,25 @@ class ViewGroupingTests(unittest.TestCase):
             other = make_scene(909)
             library.add('a', 'a.jpg', scene, view_id='existing-view')
             library.add('b', 'b.jpg', brighter)
-            library.add('c', 'c.jpg', other)
+            library.add('c', 'c.jpg', other, view_id='existing-view')
+            library.add('d', 'd.jpg', other.copy(), view_id='existing-view')
 
             result = propose(library, 'mission')
             pairs = {frozenset(row['id'] for row in group['images']) for group in result['groups']}
             self.assertIn(frozenset({'a', 'b'}), pairs)
             self.assertTrue(all(not group['assignments_changed'] for group in result['groups']))
-            self.assertEqual([row['view_id'] for row in library.rows], ['existing-view', None, None])
+            warning, = result['view_geometry_warnings']
+            self.assertEqual(warning['view_id'], 'existing-view')
+            self.assertEqual(len(warning['proposal_ids']), 2)
+            self.assertFalse(warning['assignments_changed'])
+            self.assertEqual([row['view_id'] for row in library.rows], ['existing-view', None, 'existing-view', 'existing-view'])
             self.assertIn('lighting', result['illumination_handling'])
 
     def test_empty_mission_returns_no_groups(self):
         with tempfile.TemporaryDirectory() as temp:
             result = propose(ImageFixture(temp), 'mission')
         self.assertEqual(result['groups'], [])
+        self.assertEqual(result['view_geometry_warnings'], [])
         self.assertEqual(result['analyzed_images'], 0)
 
 
