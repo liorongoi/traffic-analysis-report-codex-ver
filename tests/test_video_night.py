@@ -71,6 +71,7 @@ class VideoNightAdapterTests(unittest.TestCase):
 
     def test_video_pipeline_keeps_review_lights_out_of_tracker(self):
         class Decoder:
+            def __init__(self,path):pass
             metadata=VideoMetadata('fixture','rawvideo',16,16,0,1,1000,25,1,1,40)
             def __enter__(self):return self
             def __exit__(self,*args):return False
