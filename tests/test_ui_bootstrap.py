@@ -68,6 +68,11 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn("'/api/missions/backup'", source)
         self.assertIn("'/api/missions/restore'", source)
 
+    def test_sam_button_requires_an_image_assigned_to_the_selected_view(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn("canSegment=!!mission&&!!row?.view_id&&row.view_id===$('imageView').value", source)
+        self.assertIn("$('suggestRoadMasks').disabled=!canSegment", source)
+
 
 if __name__ == '__main__':
     unittest.main()
