@@ -25,6 +25,10 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertIn('DefaultDirName={localappdata}\\Programs\\RoadTrafficAnalysis', script)
         self.assertIn('OutputBaseFilename=RoadLoom-Preview-Setup', script)
         self.assertIn('CloseApplications=yes', script)
+        obsolete_ocr_files = ["plate_ocr_arabic_dict.json","plate_ocr_arabic_ppocrv3_mobile.onnx","plate_ocr_global_cct_s_v2.onnx","plate_ocr_global_cct_s_v2_model_config.yaml","plate_ocr_global_cct_s_v2_plate_config.yaml"]
+        for name in obsolete_ocr_files:
+            entry = 'Type: files; Name: "{app}\\model-packs\\license-plate-yolox\\' + name + '"'
+            self.assertIn(entry, script)
         self.assertIn('SetupIconFile=..\\..\\web\\roadloom.ico', script)
         self.assertIn('IconFilename: "{app}\\web\\roadloom.ico"', script)
         workflow = (ROOT / '.github' / 'workflows' / 'windows-preview-package.yml').read_text(encoding='utf-8')
