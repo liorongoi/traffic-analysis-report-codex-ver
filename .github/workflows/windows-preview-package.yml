@@ -124,7 +124,7 @@ jobs:
             'plate_ocr_global_cct_s_v2_model_config.yaml',
             'plate_ocr_global_cct_s_v2_plate_config.yaml'
             )
-            $plateModelDir = Join-Path $install 'model-packs\\license-plate-yolox'
+            $plateModelDir = Join-Path $install 'model-packs\license-plate-yolox'
             foreach ($name in $obsoleteOcrFiles) {
               Set-Content -Path (Join-Path $plateModelDir $name) -Value 'obsolete OCR cleanup fixture'
             }
