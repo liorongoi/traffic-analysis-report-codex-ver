@@ -222,15 +222,22 @@ def recover_interrupted_tasks(library):
 def inventory(library,mission):
     """Only explicit human classes from latest revisions; protect hashes and adjacent hour groups."""
     with library.connect(mission) as c:
-        rows=[dict(r) for r in c.execute('''SELECT reviews.*,images.sha256,images.name,images.capture_utc,images.provenance,
-          COALESCE((SELECT h.view_id FROM image_view_history h WHERE h.mission_id=?
+        rows=[dict(r) for r in c.execute('''SELECT reviews.*,images.sha256,images.name,
+          COALESCE(CASE WHEN capture_time.action='set' THEN capture_time.capture_utc END,images.capture_utc) capture_utc,
+          images.provenance,COALESCE((SELECT h.view_id FROM image_view_history h WHERE h.mission_id=?
             AND h.image_id=images.id ORDER BY h.revision DESC LIMIT 1),'') assigned_view_id
           FROM reviews JOIN images ON images.id=reviews.image_id
+          LEFT JOIN image_capture_time_history capture_time ON capture_time.image_id=images.id AND capture_time.revision=
+            (SELECT MAX(ct.revision) FROM image_capture_time_history ct WHERE ct.image_id=images.id)
           WHERE reviews.revision=(SELECT MAX(r.revision) FROM reviews r WHERE r.image_id=reviews.image_id)''',(mission,))]
-        protected=[dict(r) for r in c.execute('''SELECT DISTINCT images.sha256,images.name,images.capture_utc,images.provenance,
-          COALESCE((SELECT h.view_id FROM image_view_history h WHERE h.mission_id=?
+        protected=[dict(r) for r in c.execute('''SELECT DISTINCT images.sha256,images.name,
+          COALESCE(CASE WHEN capture_time.action='set' THEN capture_time.capture_utc END,images.capture_utc) capture_utc,
+          images.provenance,COALESCE((SELECT h.view_id FROM image_view_history h WHERE h.mission_id=?
             AND h.image_id=images.id ORDER BY h.revision DESC LIMIT 1),'') assigned_view_id
-          FROM reviews JOIN images ON images.id=reviews.image_id WHERE role IN ('validation','test')''',(mission,))]
+          FROM reviews JOIN images ON images.id=reviews.image_id
+          LEFT JOIN image_capture_time_history capture_time ON capture_time.image_id=images.id AND capture_time.revision=
+            (SELECT MAX(ct.revision) FROM image_capture_time_history ct WHERE ct.image_id=images.id)
+          WHERE role IN ('validation','test')''',(mission,))]
     def view_key(r):
         if r.get('assigned_view_id'):
             return 'manual:'+r['assigned_view_id']
@@ -310,11 +317,15 @@ def reviewed_evidence_inventory(library, mission):
     with library.connect(mission) as conn:
         rows = conn.execute('''
             SELECT r.role,r.status,r.annotations,
-                i.id AS image_id,i.sha256,i.capture_utc,i.name,i.provenance,
+                i.id AS image_id,i.sha256,
+                COALESCE(CASE WHEN capture_time.action='set' THEN capture_time.capture_utc END,i.capture_utc) capture_utc,
+                i.name,i.provenance,
                 COALESCE((SELECT h.view_id FROM image_view_history h
                     WHERE h.mission_id=? AND h.image_id=i.id
                     ORDER BY h.revision DESC LIMIT 1),'') AS assigned_view_id
             FROM reviews r JOIN images i ON i.id=r.image_id
+            LEFT JOIN image_capture_time_history capture_time ON capture_time.image_id=i.id AND capture_time.revision=
+                (SELECT MAX(ct.revision) FROM image_capture_time_history ct WHERE ct.image_id=i.id)
             WHERE r.revision=(SELECT MAX(latest.revision) FROM reviews latest
                 WHERE latest.image_id=r.image_id)
             AND r.role IN ('training','validation','test')

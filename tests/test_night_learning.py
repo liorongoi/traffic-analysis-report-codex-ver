@@ -79,6 +79,15 @@ class LightLearningTests(unittest.TestCase):
     def test_no_labels_does_not_create_checkpoint(self):
         result=train(self.lib,self.m)
         self.assertEqual(result['status'],'needs_labels');self.assertFalse(result['checkpoint_created']);self.assertEqual(candidates(self.lib,self.m),[])
+    def test_capture_time_correction_is_used_for_camera_hour_leakage_guard(self):
+        self.lib.review(self.m,self.rows[0]['id'],0,self.labels(),'Synthetic training',role='training')
+        self.lib.review(self.m,self.rows[1]['id'],0,self.labels(),'Synthetic validation',role='validation')
+        self.lib.correct_capture_time(self.m,self.rows[0]['id'],self.rows[1]['capture_utc'],
+            'Reviewer','Verified corrected camera clock')
+        data=inventory(self.lib,self.m)
+        self.assertEqual(data['training'],[])
+        self.assertEqual(data['excluded'][0]['reason'],'held-out hash or same camera/hour group')
+
     def test_training_profile_rejects_oversized_validation_set_before_checkpoint(self):
         oversized={'eligible_training_images':2,'classes':['headlight','streetlight'],
             'training':[{} for _ in range(4)],'validation':[{} for _ in range(5001)]}
