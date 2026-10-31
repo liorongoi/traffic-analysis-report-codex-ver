@@ -1,5 +1,7 @@
 # Initial implementation evidence — 2026-10-24
 
+> **Current plate scope (supersedes historical entries below):** The user directed that RoadLoom only locate plate regions, save image chips, and let an operator approve or reject crops. Plate OCR/LPR, text entry/search/export, text scoring, and plate identity inference are not part of the current product. Older dated entries below record experiments from earlier revisions, not features in the current branch. The current implementation and package contain the crop-only workflow; see [the requirements fit review](11-requirements-fit-review.md) and [the requirements traceability matrix](12-requirements-traceability.md).
+
 Superseded for inference/review status by [real detector verification](10-vehicle-detection.md). The limitations below describe the earlier import-only milestone.
 
 ## Confirmed constraints
