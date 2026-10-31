@@ -27,12 +27,13 @@ class _WakeOnFileChange(FileSystemEventHandler):
 
 
 class SourceMonitor:
-    def __init__(self, library, interval=2.0, stability_seconds=5.0,on_batch=None,on_video=None,observer_factory=None):
+    def __init__(self, library, interval=2.0, stability_seconds=5.0,on_batch=None,on_video=None,on_plate_batch=None,observer_factory=None):
         self.library = library
         self.interval = interval
         self.stability_seconds = stability_seconds
         self.on_batch=on_batch
         self.on_video=on_video
+        self.on_plate_batch=on_plate_batch
         self.observer_factory=observer_factory if observer_factory is not None else Observer
         self.observers={}
         self.notification_status={}
@@ -218,13 +219,15 @@ class SourceMonitor:
                             (row['source_run_id'],kind,details,now()))
 
     def _dispatch_batches(self,mission):
-        if not self.on_batch:return
+        settings=self.library.settings(mission)
+        callback=self.on_plate_batch if settings['analysis_mode']=='license_plate' else self.on_batch
+        if not callback:return
         with self.library.connect(mission) as conn:
             pending=conn.execute("SELECT source_run_id FROM monitor_batches WHERE status='pending' ORDER BY created,source_run_id").fetchall()
         for row in pending:
             source_run=row['source_run_id']
             try:
-                result=self.on_batch(mission,source_run)
+                result=callback(mission,source_run)
             except Exception as exc:
                 if getattr(exc,'retryable',False):return
                 with self.library.connect(mission) as conn:
@@ -328,11 +331,11 @@ class SourceMonitor:
                         for relative, checksum in ready:
                             conn.execute("UPDATE monitored_files SET imported_sha256=?,status='imported',error=NULL WHERE relative_path=?",
                                 (checksum, relative))
-                        if self.on_batch:
+                        if self.on_batch or (settings['analysis_mode']=='license_plate' and self.on_plate_batch):
                             conn.execute("INSERT OR IGNORE INTO monitor_batches(source_run_id,status,created) VALUES (?,'pending',?)",
                                 (result['run'],now()))
                             conn.execute("INSERT OR IGNORE INTO monitor_events(source_run_id,kind,details,created) VALUES (?,'new_data',?,?)",
-                                (result['run'],f'{len(ready)} image(s) imported and awaiting inference.',now()))
+                                (result['run'],f'{len(ready)} image(s) imported and awaiting automatic review.',now()))
                     self._state(mission, 'active', imported=True)
                     self._dispatch_batches(mission)
                     return {**self.status(mission), 'last_batch': result}

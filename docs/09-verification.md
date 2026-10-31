@@ -730,4 +730,9 @@ Switching English/Hebrew now re-renders the timezone-map status using the select
 
 ## Continuous video plate-chip monitoring — 2026-10-31
 
-Continuous video missions configured for plate-chip review now accept stable incoming video sources without requiring a vehicle detector/tracker policy. The monitor freezes a crop-only policy (score threshold 0.18, tiled scan enabled by default), dispatches through the existing supervised video worker slot, and saves plate chips into the human approval gallery. It does not run OCR or infer a plate or vehicle identity. Focused monitor and worker-supervisor tests passed (15 tests); `node --check web/app.js` and `git diff --check` passed. Continuous still-image plate monitoring and representative camera accuracy acceptance are separate remaining items.
+Continuous video missions configured for plate-chip review now accept stable incoming video sources without requiring a vehicle detector/tracker policy. The monitor freezes a crop-only policy (score threshold 0.18, tiled scan enabled by default), dispatches through the existing supervised video worker slot, and saves plate chips into the human approval gallery. It does not run OCR or infer a plate or vehicle identity. Focused monitor and worker-supervisor tests passed (15 tests); `node --check web/app.js` and `git diff --check` passed. Continuous still-image plate monitoring also uses a recoverable crop-only worker in the shared processing slot. Representative camera accuracy acceptance remains open.
+
+
+## Continuous still-image plate-chip monitoring — 2026-10-31
+
+Stable images arriving in a continuous plate-crop mission are now sent to a background crop-only worker. The worker loads the plate detector once per batch, records chips in the human approval gallery, shares the single processing slot with vehicle inference and learning, and returns interrupted queued batches to the retry queue after restart. The image proposal route remains separate from vehicle inference and does not add plate text recognition. Focused continuous-monitor and plate-worker tests passed; the full suite passed 430 tests after both continuous plate paths were added.

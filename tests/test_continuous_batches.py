@@ -68,6 +68,19 @@ class ContinuousBatchTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertEqual(monitor.status(self.mission)['batches'], {'queued': 1})
 
+    def test_plate_mode_dispatches_to_crop_worker_instead_of_vehicle_inference(self):
+        output=self.source.parent/'plate-output';output.mkdir()
+        plate_mission=self.library.create('Continuous plate crops','Lebanon','Asia/Beirut',{
+            'input_type':'images','analysis_mode':'license_plate','processing_mode':'continuous',
+            'source_root':str(self.source),'output_root':str(output)})
+        calls=[]
+        monitor=SourceMonitor(self.library,stability_seconds=0,
+            on_batch=lambda *_:self.fail('plate jobs must not use vehicle inference'),
+            on_plate_batch=lambda mission,source_run:calls.append((mission,source_run)) or {'run':None})
+        state=monitor.scan(plate_mission)
+        self.assertEqual(state['batches'],{'queued':1})
+        self.assertEqual(len(calls),1)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -19,7 +19,7 @@ class InferenceBusy(ValueError):
 class InferenceService:
     def __init__(self,library,pack):
         self.library,self.pack=library,Path(pack).resolve()
-        self.lock=threading.Lock();self.processes={};self.training_active=False
+        self.lock=threading.Lock();self.processes={};self.training_active=False;self.auxiliary_worker_active=False
         self.training_pause_requested=threading.Event();self.training_paused=threading.Event()
         self.training_resume=threading.Event();self.training_resume.set();self.training_yielded=False
         self.recover_after_restart()
@@ -123,6 +123,7 @@ class InferenceService:
             raise
 
     def _has_active_worker(self):
+        if self.auxiliary_worker_active:return True
         if any(process.poll() is None for process in self.processes.values()):return True
         for mission_row in self.library.missions():
             mission=mission_row['id'];inference_store.prepare(self.library,mission)

@@ -237,7 +237,7 @@ def _iou(a,b):
     return inter/(a[2]*a[3]+b[2]*b[3]-inter+1e-12)
 
 
-def propose(library,mission,image_id,pack,threshold=.18,tiled=True):
+def propose(library,mission,image_id,pack,threshold=.18,tiled=True,*,detector=None):
     from PIL import Image
     import numpy as np
     source=library.image_path(mission,image_id)
@@ -246,7 +246,7 @@ def propose(library,mission,image_id,pack,threshold=.18,tiled=True):
         row=conn.execute('SELECT name,sha256 FROM images WHERE id=?',(image_id,)).fetchone()
     if not row:raise ValueError('Image not found in mission')
     _,folder,db=_paths(library,mission)
-    detector=PlateDetector(pack,threshold,tiled=tiled)
+    detector=detector or PlateDetector(pack,threshold,tiled=tiled)
     with Image.open(source) as im:
         im=im.convert('RGB');boxes=detector.detect(np.asarray(im));saved=[]
         for item in boxes:

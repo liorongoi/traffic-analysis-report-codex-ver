@@ -38,8 +38,11 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
     from .video_inference import VideoInferenceService
     video_inference=VideoInferenceService(library,Path(web).parent/'model-packs'/'yolox-s',inference,
         plate_pack=Path(web).parent/'model-packs'/'license-plate-yolox')
+    from .plate_monitor import PlateBatchService
+    plate_monitor=PlateBatchService(library,Path(web).parent/'model-packs'/'license-plate-yolox',inference)
     monitor = SourceMonitor(library,on_batch=inference.start_continuous_batch,
-        on_video=video_inference.start_continuous_source)
+        on_video=video_inference.start_continuous_source,
+        on_plate_batch=plate_monitor.start_continuous_batch)
     video_clips.reconcile_exports(library)
     video_event_exports.reconcile_exports(library)
     token = secrets.token_urlsafe(32)
