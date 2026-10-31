@@ -73,13 +73,19 @@ def propose(rgb,context,vehicles,head=None):
         c.update(single_pixel=single_pixel,large_blob=large_blob)
         subtype,reasons=classify_component(c);c.update(subtype=subtype,reasons=reasons)
         components.append(c)
-    # Mutual-nearest pairing only among compact novel sources; recurring fixtures are not paired.
+    # Pair compact novel headlights when a compatible view background exists.
+    # Without one, retain a weaker geometry-only pairing hypothesis; its subtype
+    # stays uncertain and it can never become a confirmed vehicle or count.
+    def pair_eligible(component):
+        return ((component['subtype']=='headlight_candidate'
+                or (context is None and component['subtype']=='uncertain_light'))
+            and not component.get('large_blob') and not component.get('single_pixel'))
     closest={}
     for i,a in enumerate(components):
-        if a['subtype']!='headlight_candidate' or a.get('large_blob') or a.get('single_pixel'):continue
+        if not pair_eligible(a):continue
         options=[]
         for j,b in enumerate(components):
-            if i==j or b['subtype']!='headlight_candidate' or b.get('large_blob') or b.get('single_pixel'):continue
+            if i==j or not pair_eligible(b):continue
             dx=abs(a['center'][0]-b['center'][0]);dy=abs(a['center'][1]-b['center'][1])
             if 3<=dx<=min(60,w*.06) and dy<=max(2,dx*.18) and max(a['area'],b['area'])/min(a['area'],b['area'])<=2.5:
                 # A bright bridge between peaks is more consistent with a streak than separated headlights.
@@ -98,9 +104,14 @@ def propose(rgb,context,vehicles,head=None):
         right=max(a['box'][0]+a['box'][2] for a in group);bottom=max(a['box'][1]+a['box'][3] for a in group)
         box=[left,top,right-left,bottom-top]
         subtype=c['subtype'];features=patch_features(rgb,box)
-        item={'kind':'light','label':('possible headlight pair' if len(group)==2 else subtype.replace('_',' ')),
+        pair_is_contextual=all(a['subtype']=='headlight_candidate' for a in group)
+        pair_label=('possible headlight pair' if pair_is_contextual else 'possible paired vehicle lights')
+        pair_reason='mutual-nearest similar compact sources; pairing is a hypothesis'
+        if len(group)==2 and not pair_is_contextual:
+            pair_reason+='; no compatible view background, so subtype remains uncertain'
+        item={'kind':'light','label':(pair_label if len(group)==2 else subtype.replace('_',' ')),
             'box':box,'origin':'night-light-heuristic','evidence':'contextual-light-v4','light_subtype':subtype,
-            'reasons':c['reasons']+(['mutual-nearest similar compact sources; pairing is a hypothesis'] if len(group)==2 else []),
+            'reasons':c['reasons']+([pair_reason] if len(group)==2 else []),
             'light_components':group,'pairing':'hypothesis' if len(group)==2 else 'single','night_features':features,
             'feature_schema':FEATURE_SCHEMA,'coordinate_system':'normalized-original-image'}
         if head:
