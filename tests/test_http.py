@@ -102,7 +102,11 @@ class HttpTests(unittest.TestCase):
     def test_page_and_local_assets(self):
         for path in ('/','/app.js','/style.css'):
             with self.request(path) as response:
+                content=response.read().decode('utf-8')
                 self.assertEqual(response.status,200)
+                if path=='/':
+                    self.assertIn('id="captureTimeCorrection"',content)
+                    self.assertIn('id="captureTimeHistory"',content)
                 self.assertIn("default-src 'self'",response.headers['Content-Security-Policy'])
         with self.request('/app.js') as response:
             script=response.read().decode('utf-8')
@@ -1005,6 +1009,10 @@ class HttpTests(unittest.TestCase):
             with self.request('/api/images?mission='+mission) as response:image_id=json.load(response)[0]['id']
             with self.request('/api/image-capture-time',{'mission':mission,'image':image_id,
                 'capture_utc':'2026-05-18T08:30:00+03:00','operator':'=time','reason':'=clock corrected'}):pass
+            with self.request(f'/api/image-capture-time-history?mission={mission}&image={image_id}') as response:
+                time_history=json.load(response)
+            self.assertEqual(time_history[0]['operator'],'=time')
+            self.assertEqual(time_history[0]['reason'],'=clock corrected')
             with self.request('/api/review',{'mission':mission,'image':image_id,'revision':0,'annotations':[],
                 'operator':'=מפעיל','role':'none','status':'partial'}):pass
             with self.request('/api/export',{'mission':mission,'run':None}) as response:result=json.load(response)
