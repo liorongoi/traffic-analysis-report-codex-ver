@@ -2,7 +2,7 @@
 """Install the optional anonymous SAM 3.1 CPU runtime and local public weights.
 
 Run with the installed RoadLoom private runtime:
-  runtime\\python.exe scripts\\setup-sam3.1.py
+  runtime\python.exe scripts\setup-sam3.1.py
 This changes the installed runtime only; SAM remains outside the core installer.
 """
 import argparse
