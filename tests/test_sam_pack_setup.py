@@ -80,7 +80,7 @@ class SamPackSetupTests(unittest.TestCase):
         self.assertIn('huggingface_hub', installs[1])
 
         def old_python(command, **kwargs):
-            return SimpleNamespace(stdout='3.11')
+            return SimpleNamespace(stdout='3.10')
 
         with self.assertRaisesRegex(RuntimeError, 'Python 3.11'):
             module['install_runtime'](python='old-python', runner=old_python)
