@@ -107,6 +107,8 @@ class HttpTests(unittest.TestCase):
                 if path=='/':
                     self.assertIn('id="captureTimeCorrection"',content)
                     self.assertIn('id="captureTimeHistory"',content)
+                    self.assertIn('id="detectorMetricsPanel"',content)
+                    self.assertIn('id="detectorMetrics"',content)
                 self.assertIn("default-src 'self'",response.headers['Content-Security-Policy'])
         with self.request('/app.js') as response:
             script=response.read().decode('utf-8')
@@ -858,6 +860,12 @@ class HttpTests(unittest.TestCase):
             report=json.load(response)
         self.assertEqual(report['run']['id'],run)
         self.assertEqual(report['images'][0]['predictions'],original)
+        self.assertEqual(report['vehicle_detection_metrics']['fully_reviewed_images'],0)
+        self.assertEqual(report['vehicle_detection_metrics']['partial_review_images'],1)
+        with self.request('/api/inference/metrics?mission='+mission+'&run='+run) as response:
+            metrics=json.load(response)
+        self.assertIsNone(metrics['overall']['precision'])
+        self.assertIsNone(metrics['overall']['recall'])
 
     def test_inference_report_rejects_unknown_run(self):
         with self.request('/api/missions',{'name':'Report fixture','country':'Israel','zone':'Asia/Jerusalem'}) as response:

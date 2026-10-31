@@ -389,8 +389,14 @@ def serve(workspace, web, port=8765, open_browser=False, *, host='127.0.0.1',
                     run=query.get('run',[None])[0] or (jobs[0]['id'] if jobs else None)
                     job=next((j for j in jobs if j['id']==run),None)
                     if not job:raise ValueError('Inference run not found')
-                    return self.reply(200,{'run':job,'accuracy':'Not measured; model scores and light proposals are not independent ground truth.',
+                    from .vehicle_metrics import evaluate
+                    metrics=evaluate(library,mission,run)
+                    return self.reply(200,{'run':job,'evaluation_method':'precision and recall from complete, run-bound manual vehicle reviews',
+                        'vehicle_detection_metrics':metrics,
                         'images':library.images(mission,run)})
+                if parsed.path == '/api/inference/metrics':
+                    from .vehicle_metrics import evaluate
+                    return self.reply(200,evaluate(library,query['mission'][0],query['run'][0]))
                 if parsed.path == '/api/image':
                     path = library.image_path(query['mission'][0], query['image'][0])
                     return self.reply(200, path.read_bytes(), mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
