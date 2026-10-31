@@ -61,3 +61,30 @@ python scripts/evaluate-detection-benchmark.py --ground-truth D:\\RoadLoom\\revi
 ```
 
 For plate-region chips, set `--model-kind plate` and select the plate-localization model pack. The evaluator reports box precision/recall/F1, AP50 and mAP50:95, false alarms per image, per-image count error, and available country/condition/view/hardware strata. An optional per-image metadata JSON can supply `country`, `condition`, `camera_view`, and `hardware_profile`. The vehicle prediction command measures the standalone YOLOX detector; it does not measure the separate night-light hypotheses, background logic, scan masks, ROI restriction, road masks, or complete traffic pipeline. Plate scoring measures region localization only and never reads plate text. These commands calculate metrics but do not establish accuracy until run against a complete, independently labeled representative test split.
+
+## Sequence-level tracking benchmark
+
+Use paired JSON manifests with one sequence per recorded camera and one object list per frame. Ground-truth objects use `track_id`, `category_id`, and an original-frame `bbox` in `[x, y, width, height]` pixel coordinates. The prediction manifest can come directly from a completed RoadLoom run; the exporter converts the saved normalized boxes using the source's recorded dimensions and retains model/source hashes. Prediction and ground-truth files must contain identical sequence and frame IDs.
+
+Example ground-truth shape:
+
+```json
+{"sequences":[{"sequence_id":"camera-a.mp4","metadata":{"country":"Lebanon","condition":"night","camera_view":"north-1","hardware_profile":"conservative"},"frames":[{"frame_id":0,"objects":[{"track_id":"vehicle-1","category_id":"car","bbox":[120,80,64,42]}]}]}]}
+```
+
+Export saved predictions and score the two files:
+
+```powershell
+python scripts/export-video-tracking-run.py --database D:\\RoadLoom\\missions\\MISSION-ID\\mission.sqlite3 --run-id RUN-ID --output D:\\RoadLoom\\tracking-predictions.json
+python scripts/evaluate-tracking-benchmark.py --ground-truth D:\\RoadLoom\\tracking-ground-truth.json --predictions D:\\RoadLoom\\tracking-predictions.json --iou-threshold 0.5 --report D:\\RoadLoom\\tracking-report.json
+```
+
+The report includes class-aware per-frame box precision/recall, ID switches, fragmentations, MOTA, global-assignment ID precision/recall/IDF1, track-count error, and the share of ground-truth tracks split across multiple predicted IDs. That last value is a duplicate-track indicator, not a universal duplicate-event rate; event-level acceptance still needs a frozen definition and representative annotated sequences. Matching is within one sequence only: the evaluator never assigns identities across cameras or recordings. It calculates metrics and supplies no acceptance thresholds.
+
+### Public video candidates for development fixtures
+
+- The [Highway Vehicle Surveillance Dataset (HVSD)](https://data.mendeley.com/datasets/zdgmdg7p25/1) describes day, night, and rainy highway videos with annotated boxes and vehicle IDs. Its public record does not document absolute capture-UTC to video-PTS origin, so it may inform detector/tracker exercises but cannot close time acceptance.
+- The [MIT Traffic Dataset](https://mmlab.ie.cuhk.edu.hk/datasets/mit_traffic/index.html) provides 90 minutes from a stationary 720×480 camera split into 20 clips. The published ground truth covers sampled pedestrians, not vehicle tracks, and the page does not establish absolute UTC origin.
+- [RoundaboutHD](https://researchdata.bath.ac.uk/1574/) describes 40 minutes from four fixed-position 4K/15fps cameras with 512 annotated vehicle identities and an 8 GB archive. Its page does not document absolute capture UTC or PTS alignment; cross-camera identity scoring is outside this evaluator.
+
+These are development leads only. Target-camera acceptance still needs representative footage, independently verified frame/time provenance, labeled plate boxes, and product-approved thresholds.
