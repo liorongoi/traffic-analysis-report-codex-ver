@@ -16,7 +16,7 @@ TORCH_PACKAGES = ("torch==2.10.0", "torchvision==0.25.0")
 TRANSFORMER_PACKAGES = ("transformers==5.22.1", "safetensors", "huggingface_hub")
 
 
-def install_runtime(python=None, runner=subprocess.run):
+def install_runtime(model_dir, python=None, runner=subprocess.run):
     python = str(python or sys.executable)
     version = runner([python, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
         check=True, capture_output=True, text=True).stdout.strip()
@@ -26,7 +26,10 @@ def install_runtime(python=None, runner=subprocess.run):
         raise RuntimeError("Could not determine the app runtime's Python version") from exc
     if (major, minor) < (3, 12):
         raise RuntimeError("Optional SAM 3.1 setup requires the installed app runtime to use Python 3.12 or newer")
-    common = [python, "-m", "pip", "install", "--disable-pip-version-check", "--no-input"]
+    runtime = Path(model_dir).expanduser().resolve() / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    common = [python, "-m", "pip", "install", "--upgrade", "--disable-pip-version-check", "--no-input",
+        "--target", str(runtime)]
     runner(common + ["--index-url", TORCH_INDEX, *TORCH_PACKAGES], check=True)
     runner(common + list(TRANSFORMER_PACKAGES), check=True)
 
@@ -37,11 +40,11 @@ def _default_destination():
 
 
 def setup(destination=None, runtime_installer=None, downloader=None):
+    target = Path(destination).expanduser().resolve() if destination else _default_destination()
     installer = runtime_installer or install_runtime
-    installer()
+    installer(target)
     if downloader is None:
         downloader = runpy.run_path(str(Path(__file__).with_name("download-sam3.1.py")))["download"]
-    target = Path(destination).expanduser() if destination else _default_destination()
     return downloader(target)
 
 

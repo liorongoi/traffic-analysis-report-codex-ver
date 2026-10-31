@@ -41,8 +41,8 @@ class SamPackSetupTests(unittest.TestCase):
         module = runpy.run_path(str(script))
         calls = []
 
-        def install_runtime():
-            calls.append('runtime')
+        def install_runtime(destination):
+            calls.append(('runtime', Path(destination)))
 
         def download(destination):
             calls.append(('weights', Path(destination)))
@@ -51,7 +51,7 @@ class SamPackSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             result = module['setup'](Path(temporary) / 'model', install_runtime, download)
             self.assertEqual(result, Path(temporary) / 'model')
-        self.assertEqual(calls, ['runtime', ('weights', Path(temporary) / 'model')])
+        self.assertEqual(calls, [('runtime', Path(temporary) / 'model'), ('weights', Path(temporary) / 'model')])
 
     def test_runtime_setup_pins_cpu_model_stack_and_rejects_old_python(self):
         script = Path(__file__).resolve().parents[1] / 'scripts' / 'setup-sam3.1.py'
@@ -64,12 +64,17 @@ class SamPackSetupTests(unittest.TestCase):
                 return SimpleNamespace(stdout='3.12')
             return SimpleNamespace(stdout='')
 
-        module['install_runtime'](python='roadloom-python', runner=runner)
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime_dir = Path(temporary) / 'model'
+            module['install_runtime'](runtime_dir, python='roadloom-python', runner=runner)
+            self.assertTrue(runtime_dir.joinpath('runtime').is_dir())
         self.assertEqual(calls[0][0][0:3], ['roadloom-python', '-c', "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"])
         installs = [command for command, _ in calls[1:]]
         self.assertIn('torch==2.10.0', installs[0])
         self.assertIn('torchvision==0.25.0', installs[0])
         self.assertIn('--index-url', installs[0])
+        self.assertIn('--target', installs[0])
+        self.assertIn(str(runtime_dir / 'runtime'), installs[0])
         self.assertIn('https://download.pytorch.org/whl/cpu', installs[0])
         self.assertIn('transformers==5.22.1', installs[1])
         self.assertIn('huggingface_hub', installs[1])

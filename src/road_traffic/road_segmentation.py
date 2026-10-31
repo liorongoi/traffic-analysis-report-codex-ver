@@ -22,6 +22,11 @@ def _model_dir(project_root=None):
 
 @lru_cache(maxsize=1)
 def _load_sam(model_dir):
+    optional_runtime = Path(model_dir) / 'runtime'
+    if optional_runtime.is_dir():
+        runtime_path = str(optional_runtime.resolve())
+        if runtime_path not in os.sys.path:
+            os.sys.path.append(runtime_path)
     try:
         import torch
         from transformers import Sam3Model, Sam3Processor

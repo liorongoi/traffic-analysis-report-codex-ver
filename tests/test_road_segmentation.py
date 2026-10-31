@@ -17,6 +17,7 @@ class RoadSegmentationTests(unittest.TestCase):
             root = Path(temporary)
             (root / 'config.json').write_text('{}', encoding='utf-8')
             (root / 'model.safetensors').write_bytes(b'fixture')
+            (root / 'runtime').mkdir()
             calls = []
 
             class Model:
@@ -46,7 +47,8 @@ class RoadSegmentationTests(unittest.TestCase):
             transformers = SimpleNamespace(Sam3Model=ModelFactory, Sam3Processor=ProcessorFactory)
             road_segmentation._load_sam.cache_clear()
             try:
-                with (patch.dict(sys.modules, {'torch': torch, 'transformers': transformers}),
+                with (patch.object(sys, 'path', list(sys.path)) as module_path,
+                        patch.dict(sys.modules, {'torch': torch, 'transformers': transformers}),
                         patch.dict('os.environ', {'ROAD_TRAFFIC_SAM3_DIR': str(root)})):
                     loaded = road_segmentation._load_sam(str(root))
             finally:
