@@ -37,6 +37,8 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertIn("'upgrade-preservation-check.txt'", workflow)
         self.assertIn("if ((Get-Content -Raw $sentinel) -ne $env:GITHUB_RUN_ID)", workflow)
         self.assertIn('Reinstall changed existing workspace data.', workflow)
+        self.assertIn('obsolete OCR cleanup fixture', workflow)
+        self.assertIn('Reinstall left obsolete OCR file:', workflow)
         self.assertIn('Uninstall removed existing workspace data.', workflow)
         self.assertIn('"-o$outputDir" $script', workflow)
         self.assertNotIn('--output-dir=', workflow)
