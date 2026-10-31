@@ -226,6 +226,24 @@ class ObjectSearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Unsupported search terms'):
             interpret('Find trucks near Northbound lane',scope_snapshot=scope)
 
+    def test_12_hour_time_ranges_bounds_and_midnight_are_normalized(self):
+        scope={'run_id':'run-1','schedule':{'timezone':'Asia/Jerusalem'},
+            'view_assignments':[],'regions_by_view':{}}
+        between=interpret('Find cars between 5 pm and 7:30 p.m.',run_id='run-1',
+            scope_snapshot=scope)
+        midnight=interpret('Find trucks from 12 a.m. to 12 p.m.',run_id='run-1',
+            scope_snapshot=scope)
+        after=interpret('Find buses after 7pm on Friday',run_id='run-1',
+            scope_snapshot=scope)
+        before_midnight=interpret('Find motorcycles before 12 am',run_id='run-1',
+            scope_snapshot=scope)
+        self.assertEqual(between['schedule_filter'],{'start_time':'17:00','end_time':'19:30'})
+        self.assertEqual(midnight['schedule_filter'],{'start_time':'00:00','end_time':'12:00'})
+        self.assertEqual(after['schedule_filter'],{'start_time':'19:00','end_time':'00:00','weekdays':[4]})
+        self.assertTrue(before_midnight['schedule_filter']['empty_time_range'])
+        with self.assertRaisesRegex(ValueError,'valid time'):
+            interpret('Find cars after 13 pm',run_id='run-1',scope_snapshot=scope)
+
     def test_overnight_weekday_filter_uses_start_day_and_hebrew_query(self):
         scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
             'view_assignments': [], 'regions_by_view': {}}

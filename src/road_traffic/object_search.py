@@ -64,13 +64,17 @@ _WEEKDAY_GROUP_FORMS = {
 _WEEKDAY_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _WEEKDAY_FORMS), key=len, reverse=True)) + r')(?!\w)', re.I)
 _WEEKDAY_ALTERNATION = '|'.join(sorted(map(re.escape, _WEEKDAY_FORMS), key=len, reverse=True))
 _WEEKDAY_GROUP_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _WEEKDAY_GROUP_FORMS), key=len, reverse=True)) + r')(?!\w)', re.I)
+_TIME_TOKEN = r'\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?'
 _WEEKDAY_OVERNIGHT_PATTERN = re.compile(
     r'(?<!\w)(?:(?:from|on)\s+|מיום\s+)?(?P<start_day>' + _WEEKDAY_ALTERNATION + r')\s+'
-    r'(?P<start_time>\d{1,2}:\d{2})\s+(?:through|to|until|עד)\s+'
+    r'(?P<start_time>' + _TIME_TOKEN + r')\s+(?:through|to|until|עד)\s+'
     r'(?:יום\s+)?(?P<end_day>' + _WEEKDAY_ALTERNATION + r')\s+'
-    r'(?P<end_time>\d{1,2}:\d{2})(?!\w)', re.I)
-_TIME_RANGE_PATTERN = re.compile(r'(?<!\w)(?:between|from|בין)\s*(\d{1,2}:\d{2})\s*(?:and|to|through|ל|עד|-)\s*(\d{1,2}:\d{2})(?!\w)', re.I)
-_SINGLE_TIME_BOUND_PATTERN = re.compile(r'(?<!\w)(after|before|אחרי|לפני)\s*(\d{1,2}:\d{2})(?!\w)', re.I)
+    r'(?P<end_time>' + _TIME_TOKEN + r')(?!\w)', re.I)
+_TIME_RANGE_PATTERN = re.compile(r'(?<!\w)(?:between|from|בין)\s*('
+    + _TIME_TOKEN + r')\s*(?:and|to|through|ל|עד|-)\s*('
+    + _TIME_TOKEN + r')(?!\w)', re.I)
+_SINGLE_TIME_BOUND_PATTERN = re.compile(r'(?<!\w)(after|before|אחרי|לפני)\s*('
+    + _TIME_TOKEN + r')(?!\w)', re.I)
 _DAYPART_FORMS = {
     'morning': ('05:00', '12:00'), 'mornings': ('05:00', '12:00'),
     'afternoon': ('12:00', '17:00'), 'afternoons': ('12:00', '17:00'),
@@ -91,10 +95,22 @@ _RELATIVE_DATE_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape,
 
 def _parse_time(value):
     try:
-        hour, minute = (int(part) for part in value.split(':'))
+        match = re.fullmatch(r'\s*(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*',
+            str(value), re.I)
+        if not match:
+            raise ValueError
+        hour = int(match.group(1))
+        minute = int(match.group(2) or 0)
+        meridiem = (match.group(3) or '').replace('.', '').casefold()
+        if meridiem:
+            if not 1 <= hour <= 12:
+                raise ValueError
+            hour = hour % 12 + (12 if meridiem == 'pm' else 0)
+        elif match.group(2) is None:
+            raise ValueError
         return time(hour, minute)
     except (ValueError, TypeError):
-        raise ValueError('Use a valid 24-hour time such as 17:30') from None
+        raise ValueError('Use a valid time such as 17:30 or 5:30 pm') from None
 
 
 def _extract_temporal_filter(query, relative_today=None):
