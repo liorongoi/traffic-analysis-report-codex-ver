@@ -2,6 +2,7 @@
 from functools import lru_cache
 from pathlib import Path
 import os
+import sys
 
 MAX_SIDE = 1600
 MAX_CANDIDATES = 8
@@ -25,8 +26,8 @@ def _load_sam(model_dir):
     optional_runtime = Path(model_dir) / 'runtime'
     if optional_runtime.is_dir():
         runtime_path = str(optional_runtime.resolve())
-        if runtime_path not in os.sys.path:
-            os.sys.path.append(runtime_path)
+        if runtime_path not in sys.path:
+            sys.path.append(runtime_path)
     try:
         import torch
         from transformers import Sam3Model, Sam3Processor
