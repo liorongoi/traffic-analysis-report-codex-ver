@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import os
+import sys
+import time
 from io import BytesIO
 from pathlib import Path
 from posixpath import normpath
@@ -25,6 +28,54 @@ def _sha256(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _path_size(path):
+    path = Path(path)
+    if path.is_file():
+        return path.stat().st_size
+    if path.is_dir():
+        return sum(item.stat().st_size for item in path.rglob('*') if item.is_file())
+    return None
+
+
+def _peak_rss_bytes():
+    """Best-effort process peak resident set size using standard OS APIs."""
+    if os.name == 'nt':
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class ProcessMemoryCountersEx(ctypes.Structure):
+                _fields_ = [('cb', wintypes.DWORD), ('PageFaultCount', wintypes.DWORD),
+                    ('PeakWorkingSetSize', ctypes.c_size_t), ('WorkingSetSize', ctypes.c_size_t),
+                    ('QuotaPeakPagedPoolUsage', ctypes.c_size_t), ('QuotaPagedPoolUsage', ctypes.c_size_t),
+                    ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t), ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
+                    ('PagefileUsage', ctypes.c_size_t), ('PeakPagefileUsage', ctypes.c_size_t),
+                    ('PrivateUsage', ctypes.c_size_t)]
+            counters = ProcessMemoryCountersEx()
+            counters.cb = ctypes.sizeof(counters)
+            process = ctypes.windll.kernel32.GetCurrentProcess()
+            ok = ctypes.windll.psapi.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.cb)
+            return int(counters.PeakWorkingSetSize) if ok else None
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+    try:
+        import resource
+        value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return int(value if sys.platform == 'darwin' else value * 1024)
+    except (ImportError, OSError, ValueError):
+        return None
+
+
+def _latency_summary(values):
+    if not values:
+        return {'mean_seconds': None, 'p50_seconds': None, 'p95_seconds': None,
+                'max_seconds': None}
+    ordered = sorted(values)
+    nearest = lambda quantile: ordered[max(0, math.ceil(quantile * len(ordered)) - 1)]
+    return {'mean_seconds': sum(ordered) / len(ordered), 'p50_seconds': nearest(.50),
+            'p95_seconds': nearest(.95), 'max_seconds': ordered[-1]}
 
 
 def _finite_number(value, name):
@@ -312,6 +363,8 @@ def evaluate_files(ground_truth_path, prediction_path, output_path, *, split='te
         metadata={'prediction': prediction_metadata,
             'ground_truth_sha256': _sha256(ground_truth_path),
             'predictions_sha256': _sha256(prediction_path),
+            'storage_bytes': {'ground_truth': ground_truth_path.stat().st_size,
+                'predictions': prediction_path.stat().st_size},
             'ground_truth_file': ground_truth_path.name, 'predictions_file': prediction_path.name,
             'split': split})
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -347,6 +400,7 @@ def predict_coco_zip(dataset_path, model_pack, *, split='test', model_kind='vehi
         raise ValueError('threshold must be between 0.01 and 0.9')
     import numpy as np
     from PIL import Image
+    model_load_started = time.perf_counter()
     if detector_factory:
         detector = detector_factory(model_kind, model_pack, threshold, tiled)
     elif model_kind == 'vehicle':
@@ -355,6 +409,7 @@ def predict_coco_zip(dataset_path, model_pack, *, split='test', model_kind='vehi
     else:
         from .plate_review import PlateDetector
         detector = PlateDetector(model_pack, threshold=threshold)
+    model_initialization_seconds = time.perf_counter() - model_load_started
     categories = {row['id']: row for row in gt['categories']}
     next_id = max((key for key in categories if isinstance(key, int)), default=0) + 1
     added_categories = []
@@ -379,8 +434,11 @@ def predict_coco_zip(dataset_path, model_pack, *, split='test', model_kind='vehi
     else:
         mapped_classes['plate:region'] = category_id_for('plate:region', 'plate', 'region')
     predictions = []
+    image_latencies = []
+    processing_started = time.perf_counter()
     with zipfile.ZipFile(dataset_path) as archive:
         for row in gt['images']:
+            image_started = time.perf_counter()
             if _finite_number(row.get('width'), 'image width') * _finite_number(row.get('height'), 'image height') > 24_000_000:
                 raise ValueError('Benchmark image exceeds the 24-million-pixel adapter limit')
             filename = row.get('file_name')
@@ -410,6 +468,9 @@ def predict_coco_zip(dataset_path, model_pack, *, split='test', model_kind='vehi
                     'bbox': [x * rgb.shape[1], y * rgb.shape[0],
                              width * rgb.shape[1], height * rgb.shape[0]],
                     'score': float(detection.get('score', detection.get('confidence')))})
+            image_latencies.append(time.perf_counter() - image_started)
+    processing_seconds = time.perf_counter() - processing_started
+    peak_rss_bytes = _peak_rss_bytes()
     allowed_strata = {alias for aliases in GROUP_FIELDS.values() for alias in aliases}
     if image_metadata is not None and not isinstance(image_metadata, dict):
         raise ValueError('image_metadata must map COCO image IDs to metadata objects')
@@ -428,6 +489,17 @@ def predict_coco_zip(dataset_path, model_pack, *, split='test', model_kind='vehi
                            'mission ROI and road-mask logic' if model_kind == 'vehicle' else
                            'plate-region detector only; crop localization with no text recognition'),
         'split': split, 'source_dataset_sha256': _sha256(dataset_path),
+        'storage_bytes': {'source_dataset': dataset_path.stat().st_size,
+            'model_pack': _path_size(model_pack)},
+        'performance': {'images_processed': len(image_latencies),
+            'model_initialization_seconds': model_initialization_seconds,
+            'processing_wall_seconds': processing_seconds,
+            'images_per_second': len(image_latencies) / processing_seconds if processing_seconds > 0 else None,
+            'per_image_latency': _latency_summary(image_latencies),
+            'peak_process_rss_bytes': peak_rss_bytes,
+            'peak_vram_bytes': None,
+            'peak_vram_note': 'Not exposed portably by the configured ONNX Runtime provider; measure on target hardware.',
+            'measurement_scope': 'one prediction process over one frozen split; includes image read/decode and detector inference'},
         'created_utc': datetime.now(timezone.utc).isoformat(),
         'categories': added_categories, 'image_metadata': image_metadata or {},
         'strata': strata or {}}}

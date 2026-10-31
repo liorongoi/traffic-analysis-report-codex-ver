@@ -86,6 +86,7 @@ class DetectionBenchmarkTests(unittest.TestCase):
             self.assertEqual(saved, report)
             self.assertEqual(report['metadata']['prediction']['model_sha256'], 'a' * 64)
             self.assertEqual(len(report['metadata']['ground_truth_sha256']), 64)
+            self.assertEqual(report['metadata']['storage_bytes']['predictions'], predictions.stat().st_size)
 
     @unittest.skipUnless(importlib.util.find_spec('PIL') and importlib.util.find_spec('numpy'),
                          'prediction runner needs the installed image runtime')
@@ -116,6 +117,14 @@ class DetectionBenchmarkTests(unittest.TestCase):
             self.assertEqual(len(result['predictions']), 2)
             self.assertEqual(result['predictions'][0]['bbox'], [2., 2., 6., 4.])
             self.assertEqual(result['metadata']['categories'][0]['name'], 'vehicle:truck')
+            performance = result['metadata']['performance']
+            self.assertEqual(performance['images_processed'], 1)
+            self.assertGreater(performance['processing_wall_seconds'], 0)
+            self.assertGreater(performance['images_per_second'], 0)
+            self.assertGreater(performance['per_image_latency']['p95_seconds'], 0)
+            self.assertIn('peak_process_rss_bytes', performance)
+            self.assertIsNone(performance['peak_vram_bytes'])
+            self.assertEqual(result['metadata']['storage_bytes']['source_dataset'], dataset.stat().st_size)
             report = evaluate_coco(truth, result['predictions'],
                 prediction_categories=result['metadata']['categories'])
             self.assertEqual(report['overall']['micro']['tp'], 0)

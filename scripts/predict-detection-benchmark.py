@@ -30,11 +30,18 @@ def main():
     bundle = predict_coco_zip(args.dataset_zip, args.model_pack, split=args.split,
         model_kind=args.model_kind, threshold=args.threshold, tiled=not args.no_tiles,
         image_metadata=image_metadata, strata=strata)
+    bundle['metadata']['storage_bytes']['prediction_json'] = 0
+    encoded = ''
+    for _ in range(5):
+        encoded = json.dumps(bundle, ensure_ascii=False, indent=2, allow_nan=False) + '\n'
+        size = len(encoded.encode('utf-8'))
+        if bundle['metadata']['storage_bytes']['prediction_json'] == size:
+            break
+        bundle['metadata']['storage_bytes']['prediction_json'] = size
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_name('.' + args.output.name + '.tmp')
     try:
-        temporary.write_text(json.dumps(bundle, ensure_ascii=False, indent=2, allow_nan=False) + '\n',
-                             encoding='utf-8')
+        temporary.write_text(encoded, encoding='utf-8')
         temporary.replace(args.output)
     finally:
         temporary.unlink(missing_ok=True)
