@@ -658,6 +658,13 @@ def night_candidates(library, mission, run_id, *, limit=100, offset=0):
                 vehicle_id=detection.get('possible_light_candidate_vehicle_track_id')
                 if vehicle_id:
                     item['possible_vehicle_track_ids'].add(vehicle_id)
+            # Candidate-to-vehicle continuation hints are stored on the vehicle
+            # detection row, not on the light hypothesis row.
+            for detection in frame:
+                candidate_id=detection.get('possible_light_candidate_id')
+                vehicle_id=detection.get('possible_light_candidate_vehicle_track_id')
+                if candidate_id in grouped and isinstance(vehicle_id,str) and vehicle_id:
+                    grouped[candidate_id]['possible_vehicle_track_ids'].add(vehicle_id)
         if not grouped:
             return {'run_id':run_id,'total':0,'items':[]}
         reviews=conn.execute('''SELECT candidate_id,revision,operator,action,created

@@ -266,7 +266,7 @@ class VideoStoreTests(unittest.TestCase):
 
     def test_night_candidate_review_is_audited_and_never_creates_vehicle_event(self):
         source=register_video(self.library,self.mission,'clip.mkv')
-        run=create_run(self.library,self.mission,source['id'],self.config(),total_frames=2)
+        run=create_run(self.library,self.mission,source['id'],self.config(),total_frames=3)
         transition(self.library,self.mission,run['id'],'running')
         tracker=VideoTrackManager(TrackerPolicy(max_gap_seconds=Fraction(1,2),minimum_iou=.2,
             max_center_distance=.15,association_margin=.05),run_id=run['id'])
@@ -279,11 +279,19 @@ class VideoStoreTests(unittest.TestCase):
         second=tracker.update_review_hypotheses(VideoTimestamp(40,1,1000),[light])[0]
         checkpoint(self.library,self.mission,run['id'],frame_index=1,timestamp=VideoTimestamp(40,1,1000),
             tracker_state=tracker.state(),review_hypotheses=[second])
+        vehicle={'label':'car','box':[.3,.3,.1,.1]}
+        timestamp=VideoTimestamp(80,1,1000)
+        assignments=tracker.update(timestamp,[vehicle]).assignments
+        links=tracker.possible_light_candidate_links(timestamp,[vehicle],assignments)
+        vehicle.update(links.get(0,{}))
+        checkpoint(self.library,self.mission,run['id'],frame_index=2,timestamp=timestamp,
+            tracker_state=tracker.state(),detections=[vehicle],assignments=assignments)
         listing=night_candidates(self.library,self.mission,run['id'])
         self.assertEqual(listing['total'],1)
         item=listing['items'][0]
         self.assertEqual(item['observation_count'],2)
         self.assertEqual(len(item['states']),2)
+        self.assertEqual(item['possible_vehicle_track_ids'],[assignments[0].track.track_id])
         self.assertEqual(item['review_status'],'pending')
         reviewed=review_night_candidate(self.library,self.mission,run['id'],item['candidate_id'],
             0,'Operator','accept')
