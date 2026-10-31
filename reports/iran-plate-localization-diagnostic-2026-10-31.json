@@ -1,0 +1,452 @@
+{
+  "schema": "roadloom-detection-benchmark-v1",
+  "category_matching": "class-aware",
+  "metrics": {
+    "operating_iou": 0.5,
+    "ap_iou_thresholds": [
+      0.5,
+      0.55,
+      0.6,
+      0.65,
+      0.7,
+      0.75,
+      0.8,
+      0.85,
+      0.9,
+      0.95
+    ],
+    "matching": "class-aware greedy matching by descending prediction score, one-to-one within each image",
+    "ap": "101-point interpolated AP; macro mean over categories with ground-truth instances",
+    "count": "all predicted and ground-truth instances across categories per image",
+    "scope_note": "Metrics are only meaningful when every image has complete independent labels; unmarked objects are not assumed negative."
+  },
+  "metadata": {
+    "prediction": {
+      "model_kind": "plate",
+      "model_sha256": "e5350bb2152eb44fa129b2438d1e39bbbf3c27accfe51cd893ce6e17d028d0b9",
+      "model_pack": "license-plate-yolox",
+      "threshold": 0.18,
+      "tiled": true,
+      "inference_provider": "CPUExecutionProvider",
+      "pipeline_scope": "plate-region detector only; crop localization with no text recognition",
+      "split": "diagnostic",
+      "source_dataset_sha256": "015937d83711e447799c9c8a353ddff19ac793c0cb8faede10612518f6ca6197",
+      "storage_bytes": {
+        "source_dataset": 14260206,
+        "model_pack": 20196589,
+        "prediction_json": 10785
+      },
+      "performance": {
+        "images_processed": 40,
+        "model_initialization_seconds": 0.07119266601512209,
+        "processing_wall_seconds": 3.972985583008267,
+        "images_per_second": 10.067995255525892,
+        "per_image_latency": {
+          "mean_seconds": 0.09931937819637823,
+          "p50_seconds": 0.08548537502065301,
+          "p95_seconds": 0.17278620798606426,
+          "max_seconds": 0.17435062502045184
+        },
+        "peak_process_rss_bytes": 217153536,
+        "peak_vram_bytes": null,
+        "peak_vram_note": "Not exposed portably by the configured ONNX Runtime provider; measure on target hardware.",
+        "measurement_scope": "one prediction process over one frozen split; includes image read/decode and detector inference"
+      },
+      "created_utc": "2026-10-31T16:01:25.996408+00:00",
+      "categories": [],
+      "image_metadata": {},
+      "strata": {}
+    },
+    "ground_truth_sha256": "015937d83711e447799c9c8a353ddff19ac793c0cb8faede10612518f6ca6197",
+    "predictions_sha256": "85a88c06627b0bc4455b8e0fad0e6f93135a40ade2c8d51f6ae04e4077d98d55",
+    "storage_bytes": {
+      "ground_truth": 14260206,
+      "predictions": 10785
+    },
+    "ground_truth_file": "diagnostic.zip",
+    "predictions_file": "predictions.json",
+    "split": "diagnostic"
+  },
+  "images": 40,
+  "categories": {
+    "plate:region": {
+      "ground_truth": 40,
+      "predictions": 41,
+      "tp": 40,
+      "fp": 1,
+      "fn": 0,
+      "precision": 0.975609756097561,
+      "recall": 1.0,
+      "f1": 0.9876543209876543,
+      "false_alarms_per_image": 0.025,
+      "ap50": 0.9951702487321903,
+      "map50_95": 0.6082420806010197
+    }
+  },
+  "overall": {
+    "images": 40,
+    "categories": {
+      "plate:region": {
+        "ground_truth": 40,
+        "predictions": 41,
+        "tp": 40,
+        "fp": 1,
+        "fn": 0,
+        "precision": 0.975609756097561,
+        "recall": 1.0,
+        "f1": 0.9876543209876543,
+        "false_alarms_per_image": 0.025,
+        "ap50": 0.9951702487321903,
+        "map50_95": 0.6082420806010197
+      }
+    },
+    "micro": {
+      "tp": 40,
+      "fp": 1,
+      "fn": 0,
+      "precision": 0.975609756097561,
+      "recall": 1.0,
+      "f1": 0.9876543209876543,
+      "false_alarms_per_image": 0.025,
+      "ap50_macro": 0.9951702487321903,
+      "map50_95_macro": 0.6082420806010197
+    },
+    "count_error": {
+      "mae_objects_per_image": 0.025,
+      "mean_signed_objects_per_image": 0.025,
+      "exact_count_images_fraction": 0.975
+    }
+  },
+  "groups": {
+    "country": {
+      "Iran": {
+        "images": 40,
+        "categories": {
+          "plate:region": {
+            "ground_truth": 40,
+            "predictions": 41,
+            "tp": 40,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.975609756097561,
+            "recall": 1.0,
+            "f1": 0.9876543209876543,
+            "false_alarms_per_image": 0.025,
+            "ap50": 0.9951702487321903,
+            "map50_95": 0.6082420806010197
+          }
+        },
+        "micro": {
+          "tp": 40,
+          "fp": 1,
+          "fn": 0,
+          "precision": 0.975609756097561,
+          "recall": 1.0,
+          "f1": 0.9876543209876543,
+          "false_alarms_per_image": 0.025,
+          "ap50_macro": 0.9951702487321903,
+          "map50_95_macro": 0.6082420806010197
+        },
+        "count_error": {
+          "mae_objects_per_image": 0.025,
+          "mean_signed_objects_per_image": 0.025,
+          "exact_count_images_fraction": 0.975
+        }
+      }
+    },
+    "condition": {
+      "day": {
+        "images": 20,
+        "categories": {
+          "plate:region": {
+            "ground_truth": 20,
+            "predictions": 21,
+            "tp": 20,
+            "fp": 1,
+            "fn": 0,
+            "precision": 0.9523809523809523,
+            "recall": 1.0,
+            "f1": 0.975609756097561,
+            "false_alarms_per_image": 0.05,
+            "ap50": 0.992927864214993,
+            "map50_95": 0.6068342548540568
+          }
+        },
+        "micro": {
+          "tp": 20,
+          "fp": 1,
+          "fn": 0,
+          "precision": 0.9523809523809523,
+          "recall": 1.0,
+          "f1": 0.975609756097561,
+          "false_alarms_per_image": 0.05,
+          "ap50_macro": 0.992927864214993,
+          "map50_95_macro": 0.6068342548540568
+        },
+        "count_error": {
+          "mae_objects_per_image": 0.05,
+          "mean_signed_objects_per_image": 0.05,
+          "exact_count_images_fraction": 0.95
+        }
+      },
+      "night": {
+        "images": 20,
+        "categories": {
+          "plate:region": {
+            "ground_truth": 20,
+            "predictions": 20,
+            "tp": 20,
+            "fp": 0,
+            "fn": 0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "false_alarms_per_image": 0.0,
+            "ap50": 1.0,
+            "map50_95": 0.6245761013348299
+          }
+        },
+        "micro": {
+          "tp": 20,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "false_alarms_per_image": 0.0,
+          "ap50_macro": 1.0,
+          "map50_95_macro": 0.6245761013348299
+        },
+        "count_error": {
+          "mae_objects_per_image": 0.0,
+          "mean_signed_objects_per_image": 0.0,
+          "exact_count_images_fraction": 1.0
+        }
+      }
+    }
+  },
+  "diagnostic_context": {
+    "source_dataset": "IR-LPR-corners",
+    "source_dataset_url": "https://huggingface.co/datasets/mahdilotfi/IR-LPR-corners",
+    "source_model_card_url": "https://huggingface.co/faisalthaheem/open-lpr-models",
+    "anonymous_access": true,
+    "sample_size": 40,
+    "selection": "20 day_ and 20 night_ files selected at evenly spaced indices from their respective filename-sorted annotation rows",
+    "source_annotation_sha256": "d2eb896b1cf683088d219fd971223e1965f8c9316f0e31002073f6cd1e78279e",
+    "corner_to_box": "axis-aligned enclosing box from the four normalized supplied corners",
+    "threshold": 0.18,
+    "tiling": true,
+    "protected_train_validation_test_split": false,
+    "eligible_for_training": false,
+    "eligible_for_acceptance": false,
+    "model_training_overlap": "Unknown; model card says its training imagery is unpublished, so overlap cannot be excluded.",
+    "limitations": [
+      "Small convenience diagnostic; not a protected test set.",
+      "Public vehicle photographs do not establish the intended fixed-camera scale, optics, blur, occlusion, or lighting distribution.",
+      "Ground-truth boxes are derived from corner points and evaluated as enclosing rectangles.",
+      "No plate text is read or stored."
+    ],
+    "images": [
+      {
+        "name": "day_00006.jpg",
+        "sha256": "36bc315cdcce5c17218d2e4ba9cef3743d8e00d3cda21e4697e5ef8b34a0d054",
+        "bytes": 1051924
+      },
+      {
+        "name": "day_00293.jpg",
+        "sha256": "6a438bc20456221c5eb68524a29f9f87233137d596a5cd806d0a6445528308ac",
+        "bytes": 133018
+      },
+      {
+        "name": "day_00668.jpg",
+        "sha256": "fc5028ad9f1bc7469a005590a84953bc22ff4ea75a8b3c45c3f901e8f72ce250",
+        "bytes": 546598
+      },
+      {
+        "name": "day_01677.jpg",
+        "sha256": "987d29002df9f97a4e853e5df814c81a883a6c54339500c7e3319dabc6272e6c",
+        "bytes": 519936
+      },
+      {
+        "name": "day_03946.jpg",
+        "sha256": "59d22ffc5a72518085bf485f6635e2c955f80623dbf0477315e980e7f4d77b97",
+        "bytes": 480718
+      },
+      {
+        "name": "day_05902.jpg",
+        "sha256": "72292d7f71a4cf73f860fa631d4c98dd7fb4730b86be55ad9121de3d2173294a",
+        "bytes": 145663
+      },
+      {
+        "name": "day_06123.jpg",
+        "sha256": "f5e40c9bf6ece82a6705ef124c91cc9e2e23b7e51440729a54bf45daa83c8975",
+        "bytes": 764315
+      },
+      {
+        "name": "day_06338.jpg",
+        "sha256": "df26709e04028aa2e219808ade88c34a0a5a5948f912afde4a06083999883fd7",
+        "bytes": 607843
+      },
+      {
+        "name": "day_06787.jpg",
+        "sha256": "1ae6fa9b174f515e0c1eb9785a50eda1be79a8c0faf630f85df8c8e7fb4cf52f",
+        "bytes": 514475
+      },
+      {
+        "name": "day_07338.jpg",
+        "sha256": "e64c21839b8f7787847e035c8413a925feb099f95c0d6a85d8cfdb83919401fb",
+        "bytes": 1058658
+      },
+      {
+        "name": "day_08086.jpg",
+        "sha256": "ed396e9b6fb51fa6b2a632a5990de98e3c5a9a4684584d81c5ee1584bd1e782a",
+        "bytes": 182251
+      },
+      {
+        "name": "day_08435.jpg",
+        "sha256": "e309723778acb926ed2d7e0d71edf05a5d1b4fb8a41503c84fc9dd7a9356af84",
+        "bytes": 163567
+      },
+      {
+        "name": "day_11465.jpg",
+        "sha256": "3889d303e94962c904ecf3213abcca2ddffa1bd3d510e68db6b4e1bbe14f19a4",
+        "bytes": 160841
+      },
+      {
+        "name": "day_12312.jpg",
+        "sha256": "f7e5496615f0a827aeaeeb9a15dc0542a9416aad5073ed001ef573f8429a3b40",
+        "bytes": 407065
+      },
+      {
+        "name": "day_12453.jpg",
+        "sha256": "cb130863e08dcee566bdec833d8d272100675929311d140694ece1207beb68d0",
+        "bytes": 581430
+      },
+      {
+        "name": "day_13508.jpg",
+        "sha256": "854653c98638bcf96c061decfc2ade7941f988580177222a4bdc81d812d0b177",
+        "bytes": 145173
+      },
+      {
+        "name": "day_13821.jpg",
+        "sha256": "d7bd170602deaa35efa1df4ba95ab7820de6eed0ddd8e51197d34bea96bee7d2",
+        "bytes": 164967
+      },
+      {
+        "name": "day_13949.jpg",
+        "sha256": "a4d69028920608fb3542362e4351cf9d9b90eb558aaa0e572e34f860e5f7ce41",
+        "bytes": 170325
+      },
+      {
+        "name": "day_14294.jpg",
+        "sha256": "e3e698c979836682326178494a4e4e77950f8389a929b21548824fbddd04bf60",
+        "bytes": 498839
+      },
+      {
+        "name": "day_16947.jpg",
+        "sha256": "e3282415f21b99d57ace9964fdaec79baed9ceae9cfb2004d811dc161ea8fad7",
+        "bytes": 110699
+      },
+      {
+        "name": "night_1003.jpg",
+        "sha256": "6881ec3d3d6971cfc586ff669ced2a0ca0305851df691b9f1da06d4ac62b5fc6",
+        "bytes": 224924
+      },
+      {
+        "name": "night_1474.jpg",
+        "sha256": "568d1a0a1bb61855876e2d1d46a7f1b79258ee08034ceff17c56223f88928aa2",
+        "bytes": 146409
+      },
+      {
+        "name": "night_1517.jpg",
+        "sha256": "a9548d4d340a2c58a953595e4b02410eeed4dd361a413c754d09b18c22af3973",
+        "bytes": 486459
+      },
+      {
+        "name": "night_1569.jpg",
+        "sha256": "267f9885096d7d89750d4aa7376851839a0636953629be6520af09edb95bcdc2",
+        "bytes": 402068
+      },
+      {
+        "name": "night_1616.jpg",
+        "sha256": "4d97944633b7bd23fc2ce0df5daa2652d5b5315c6df4f6820328ffa613eca8d7",
+        "bytes": 393867
+      },
+      {
+        "name": "night_1662.jpg",
+        "sha256": "7ce16f98def7c000ecd502caedc09d07ffe1b3368e11b972e1ad34a1dc6cf502",
+        "bytes": 358580
+      },
+      {
+        "name": "night_1701.jpg",
+        "sha256": "4308041805858a8ef5eda8c4b441046d7d2b9ada0f190c3e5e31a543db5c84a7",
+        "bytes": 374120
+      },
+      {
+        "name": "night_1744.jpg",
+        "sha256": "0f78a6f857c48c8d7918c86b917498fafdd4766a72810bc8f2953fbb4f738143",
+        "bytes": 512719
+      },
+      {
+        "name": "night_1783.jpg",
+        "sha256": "26791964f3462060457ec18bae4bf4093b2e6e838fb591c8ed18789ca9fb9720",
+        "bytes": 416888
+      },
+      {
+        "name": "night_1822.jpg",
+        "sha256": "ff2c59a9740567414705f84433bda69fadfe44f486c33f28a2a1a0f580eb5342",
+        "bytes": 418559
+      },
+      {
+        "name": "night_2864.jpg",
+        "sha256": "9630b568784847f69892158f4977232c6e958374be00c818ba9a4fa608b06b4c",
+        "bytes": 130314
+      },
+      {
+        "name": "night_3776.jpg",
+        "sha256": "8d4ff4a8e72fa4d551d86e2519231f9be2426de0069181cb94a49bb7ce06b7ef",
+        "bytes": 70208
+      },
+      {
+        "name": "night_3794.jpg",
+        "sha256": "d96eac817a566cf9f450bee10d7221df090bd3f4a77d21b533f5b0e196552b4b",
+        "bytes": 58851
+      },
+      {
+        "name": "night_3813.jpg",
+        "sha256": "f93cdd3042352223a7b5f3ce08052594a0aa82a5bbb63fbbac7e593ebda7ade2",
+        "bytes": 522763
+      },
+      {
+        "name": "night_3854.jpg",
+        "sha256": "eb2b65e3e129436c6f24c2b3dad69c4c05817c363d8773f763e6a06572eb9f20",
+        "bytes": 442653
+      },
+      {
+        "name": "night_615.jpg",
+        "sha256": "e7e0837e9c8b34f859b176bd5e3e5410347c8782aa65c4a54dcf1be62b3b940f",
+        "bytes": 197822
+      },
+      {
+        "name": "night_780.jpg",
+        "sha256": "c453cfe8199a3b55e78d6fb761b1c7a15c4efa354b1fcd3863317036cb258e93",
+        "bytes": 206769
+      },
+      {
+        "name": "night_835.jpg",
+        "sha256": "06fb2c2a072ae34b92747b439265130bb66bc06eaf46a4aa70f41a00a6bdcc39",
+        "bytes": 149342
+      },
+      {
+        "name": "night_904.jpg",
+        "sha256": "e0dcd4d1266fd71fec43d9623905b207aa196dd8bddada83dfb120a245419c57",
+        "bytes": 207111
+      },
+      {
+        "name": "night_980.jpg",
+        "sha256": "7bc48ca2afd4b0f8bf9e614ddbd38a0c50bf420d742c865e58a30bb43b24e34c",
+        "bytes": 114330
+      }
+    ]
+  }
+}
