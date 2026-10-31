@@ -56,6 +56,20 @@ class VideoTrackManagerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'reuse'):
             VideoTrackManager(configured, run_id='recording-1', state=checkpoint)
 
+    def test_legacy_checkpoint_migrates_without_reusing_vehicle_ids(self):
+        configured=policy()
+        original=VideoTrackManager(configured,run_id='legacy-recording')
+        vehicle=original.update(timestamp(0),[detection(.3)]).assignments[0]
+        legacy=original.state()
+        legacy['version']=1
+        legacy.pop('review_hypotheses')
+        resumed=VideoTrackManager(configured,run_id='legacy-recording',state=legacy)
+        continued=resumed.update(timestamp(40),[detection(.31)]).assignments[0]
+        candidate=resumed.update_review_hypotheses(timestamp(80),[light(.31)])[0]
+        self.assertEqual(continued.track.track_id,vehicle.track.track_id)
+        self.assertEqual(candidate['review_track_id'],'legacy-recording:night-00000001')
+        self.assertEqual(candidate['review_observation_index'],1)
+
     def test_ambiguous_competing_tracks_remain_uncertain(self):
         manager = VideoTrackManager(policy(max_center_distance=.25), run_id='ambiguous')
         manager.update(timestamp(0), [detection(.2), detection(.6)])
