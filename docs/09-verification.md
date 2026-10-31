@@ -542,6 +542,12 @@ The Windows installer now sets `CloseApplications=yes`. Run [41191072228](https:
 
 Windows run [41192125897](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/41192125897) on commit `14f2d2106cebd5b8d6eaa9211a1f825f6b71d906` passed all **365 tests in 199.181 seconds**, staged the offline payload, compiled the single installer, then seeded the installed plate-model folder with the five OCR model/config files from the superseded OCR-enabled build. Reinstall removed all five files, preserved the verified receipt and workspace sentinel, and closed the running RoadLoom app. The repository currently stages only the plate-region detector. Preview artifact [13039786203](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/41192125897/artifacts/13039786203) is 258,226,100 bytes (uploaded artifact SHA-256 `ee4da785446ccc52c41be5f45aaafa7e07952f787ad6d28fcf37b90bc7d51a10`) and expires 2026-11-07 10:25 UTC. This verifies cleanup on the hosted Windows runner; it does not purge legacy text columns in existing review databases or replace target-workstation acceptance.
 
+## Current Windows delivery and UI regression — 2026-10-31
+
+After the road-mask view-selection regression was fixed, Windows run [41193659088](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/41193659088) on commit `ab1151c9b32bf902c5e55f8a87a517c0fd9fc7c7` passed **366 tests in 260.911 seconds**, staged the offline runtime, compiled the single installer, and passed install/reinstall/uninstall verification. The lifecycle step confirmed local HTTP 200 launch, that reinstall closes a running app, obsolete OCR assets are removed, and mission workspace data survives uninstall. The artifact is available until 2026-11-07 10:49 UTC: [preview installer](https://github.com/liorongoi/traffic-analysis-report-codex-ver/actions/runs/41193659088/artifacts/13039889088), 258,322,584 bytes, digest `sha256:e856197dda09155914db2fd57fb05553cb751ffcfc5a6248b83671e71b497a3c`.
+
+The restored Mac checkout also passed **366 tests in 12.214 seconds** with the locked development dependencies, `node --check web/app.js`, the focused UI bootstrap checks, and a local browser smoke confirming “Suggest road masks (SAM 3.1)” is disabled until a mission image/view is selected. This is source/UI validation on the Mac plus hosted Windows package validation; acceptance on the user's target workstation, real representative road/video data, and real SAM hardware inference remain open.
+
 
 ## Restored local checkout validation — 2026-10-31
 
