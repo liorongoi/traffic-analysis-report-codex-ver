@@ -84,7 +84,7 @@ class SamPackSetupTests(unittest.TestCase):
             return SimpleNamespace(stdout='3.10')
 
         with self.assertRaisesRegex(RuntimeError, 'Python 3.11'):
-            module['install_runtime'](python='old-python', runner=old_python)
+            module['install_runtime'](Path(temporary) / 'model', python='old-python', runner=old_python)
 
 
 if __name__ == '__main__':
