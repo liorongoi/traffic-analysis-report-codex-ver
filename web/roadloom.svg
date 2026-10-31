@@ -1,11 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" role="img" aria-labelledby="title">
   <title id="title">RoadLoom mark</title>
   <defs>
-    <linearGradient id="road" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#58e0c1"/><stop offset="1" stop-color="#69a7ff"/></linearGradient>
+    <linearGradient id="road" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#55d6b2"/><stop offset="1" stop-color="#83a7bb"/></linearGradient>
   </defs>
-  <rect x="4" y="4" width="72" height="72" rx="22" fill="#101d31" stroke="#3b5877" stroke-width="2"/>
-  <path d="M25 67 36 14M55 67 44 14" fill="none" stroke="#7088a7" stroke-linecap="round" stroke-width="5"/>
-  <path d="m40 62 1.5-8m3-12 1.5-8m3-12 1.5-8" fill="none" stroke="#d5e5ff" stroke-linecap="round" stroke-width="3"/>
-  <path d="M12 51h18l7-11 8 13 7-9h16" fill="none" stroke="url(#road)" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/>
-  <circle cx="68" cy="44" r="3" fill="#ffc76b"/>
+  <rect x="4" y="4" width="72" height="72" rx="21" fill="#101a22" stroke="#455c66" stroke-width="2"/>
+  <path d="M17 62C27 56 31 47 39 40S53 26 63 18" fill="none" stroke="#0a141a" stroke-linecap="round" stroke-width="13"/>
+  <path d="M17 62C27 56 31 47 39 40S53 26 63 18" fill="none" stroke="#83a7bb" stroke-linecap="round" stroke-width="6"/>
+  <path d="M18 18c10 5 14 14 21 22s13 17 23 22" fill="none" stroke="#0a141a" stroke-linecap="round" stroke-width="15"/>
+  <path d="M18 18c10 5 14 14 21 22s13 17 23 22" fill="none" stroke="url(#road)" stroke-linecap="round" stroke-width="7"/>
+  <path d="M21 20c9 5 12 12 18 20s12 16 20 20" fill="none" stroke="#e8eef1" stroke-dasharray="2 8" stroke-linecap="round" stroke-width="1.8"/>
+  <path d="M31 32v-5h7m11 0h6v6m0 15v5h-7m-11 0h-6v-6" fill="none" stroke="#f3b85b" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"/>
+  <circle cx="40" cy="40" r="2.5" fill="#e8eef1"/>
 </svg>

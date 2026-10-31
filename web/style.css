@@ -39,12 +39,12 @@ fieldset{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:
 .monitoring-panel[hidden]{display:none}
 .empty-workflow{min-height:calc(100vh - 150px);display:grid;align-content:center;padding:clamp(24px,6vw,72px);border-inline-start:3px solid var(--accent);background:radial-gradient(ellipse at 88% 18%,rgba(88,224,193,.09),transparent 42rem)}.empty-workflow[hidden]{display:none}.empty-workflow h2{max-width:18ch;margin:0;font-size:clamp(1.7rem,3vw,2.35rem)}.empty-workflow p{max-width:48ch;margin-top:12px}
 
-/* RoadLoom visual identity: calm dark workspace with a subtle route-map glow. */
-:root { --bg:#08111f; --panel:#122137; --line:#2b405a; --muted:#a5b6ca; --accent:#58e0c1; }
-body { background:radial-gradient(ellipse at 82% -8%,rgba(82,132,204,.27),transparent 36rem),radial-gradient(ellipse at 8% 72%,rgba(42,141,131,.14),transparent 34rem),linear-gradient(142deg,#08111f,#0c1929 60%,#0c1c2c); }
-body::before { content:"";position:fixed;inset:0;pointer-events:none;opacity:.12;background:repeating-linear-gradient(132deg,transparent 0 100px,rgba(157,193,226,.11) 101px,transparent 103px 210px);mask-image:linear-gradient(to bottom,#000,transparent 84%); }
+/* RoadLoom visual identity: asphalt, lane chalk, and a woven route crossing. */
+:root { --bg:#101a22; --panel:#192a34; --line:#394d57; --muted:#b4c3c8; --accent:#55d6b2; --route-blue:#83a7bb; --route-amber:#f3b85b; --chalk:#e8eef1; }
+body { background:linear-gradient(145deg,#101a22,#14232b 62%,#192a31); }
+body::before { content:"";position:fixed;inset:0;pointer-events:none;opacity:.72;background:radial-gradient(ellipse 52rem 34rem at 84% 0%,rgba(85,214,178,.075),transparent 74%),repeating-radial-gradient(ellipse at 78% 18%,transparent 0 82px,rgba(184,203,207,.028) 83px 84px,transparent 85px 112px);mask-image:linear-gradient(to bottom,#000 0%,transparent 86%); }
 header { position:sticky;top:0;z-index:5;background:rgba(8,17,31,.84);backdrop-filter:blur(14px);border-color:rgba(135,170,207,.17); }
-.brand-logo { width:46px;height:46px;filter:drop-shadow(0 5px 14px rgba(88,224,193,.16)); }
+.brand-logo { width:46px;height:46px;filter:drop-shadow(0 4px 10px rgba(85,214,178,.12)); }
 .brand .mark { display:none; }
 .brand strong { letter-spacing:.02em; }
 .brand small { text-transform:uppercase;letter-spacing:.07em;font-size:10px; }
