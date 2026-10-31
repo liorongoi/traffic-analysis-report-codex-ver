@@ -91,6 +91,34 @@ jobs:
           $uninstaller = Join-Path $install 'unins000.exe'
           if (-not (Test-Path $uninstaller)) { throw 'Current-user uninstall entry point is missing.' }
 
+          $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+          $listener.Start()
+          $appPort = $listener.LocalEndpoint.Port
+          $listener.Stop()
+          $env:ROADLOOM_PORT = [string]$appPort
+          $env:ROADLOOM_OPEN_BROWSER = '0'
+          $python = Join-Path $install 'runtime\\python.exe'
+          $appProcess = Start-Process -FilePath $python -ArgumentList @('scripts\\launch.py') -WorkingDirectory $install -PassThru -WindowStyle Hidden
+          try {
+            $page = $null
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              if ($appProcess.HasExited) { throw "Installed app exited with code $($appProcess.ExitCode)." }
+              try {
+                $page = Invoke-WebRequest -Uri "http://127.0.0.1:$appPort/" -TimeoutSec 2
+                break
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if ($null -eq $page -or $page.StatusCode -ne 200) { throw 'Installed app did not serve its local page.' }
+            if ($page.Content -notmatch 'RoadLoom') { throw 'Installed app page did not contain RoadLoom branding.' }
+          } finally {
+            if (-not $appProcess.HasExited) {
+              Stop-Process -Id $appProcess.Id -Force
+              $appProcess.WaitForExit(10000) | Out-Null
+            }
+            Remove-Item Env:ROADLOOM_PORT -ErrorAction SilentlyContinue
+            Remove-Item Env:ROADLOOM_OPEN_BROWSER -ErrorAction SilentlyContinue
+          }
+
           $workspace = Join-Path $env:LOCALAPPDATA 'RoadTrafficAnalysis\Workspace'
           New-Item -ItemType Directory -Path $workspace -Force | Out-Null
           $sentinel = Join-Path $workspace 'upgrade-preservation-check.txt'
