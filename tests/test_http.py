@@ -490,8 +490,15 @@ class HttpTests(unittest.TestCase):
                 'candidate_id':candidate_id,'expected_revision':0,'operator':'Operator','action':'reject'}) as response:
                 review=json.load(response)
             self.assertEqual(review['review_status'],'rejected')
+            with self.request('/api/video/night-candidates/corrections',{'mission':mission,'run':run['id'],
+                'candidate_id':candidate_id,'correction_type':'pairing','expected_revision':0,
+                'operator':'Operator','value':'hypothesis'}) as response:
+                correction=json.load(response)
+            self.assertEqual(correction['value'],'hypothesis')
             with self.request(query) as response:
-                self.assertEqual(json.load(response)['items'][0]['review_status'],'rejected')
+                candidate=json.load(response)['items'][0]
+            self.assertEqual(candidate['review_status'],'rejected')
+            self.assertEqual(candidate['effective_pairing'],'hypothesis')
 
     def test_continuous_video_requires_and_persists_explicit_policy(self):
         with tempfile.TemporaryDirectory() as external:

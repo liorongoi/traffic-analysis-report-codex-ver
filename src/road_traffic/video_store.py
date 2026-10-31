@@ -68,6 +68,11 @@ def schema(conn):
       candidate_id TEXT NOT NULL,revision INTEGER NOT NULL,operator TEXT NOT NULL,
       action TEXT NOT NULL CHECK(action IN ('accept','reject','reopen')),
       created TEXT NOT NULL,UNIQUE(run_id,candidate_id,revision));
+    CREATE TABLE IF NOT EXISTS video_night_candidate_corrections(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL REFERENCES video_runs(id),
+      candidate_id TEXT NOT NULL,correction_type TEXT NOT NULL CHECK(correction_type IN ('pairing','background')),
+      revision INTEGER NOT NULL,operator TEXT NOT NULL,value TEXT NOT NULL,created TEXT NOT NULL,
+      UNIQUE(run_id,candidate_id,correction_type,revision));
     CREATE TABLE IF NOT EXISTS video_clip_exports(
       id TEXT PRIMARY KEY,mission_id TEXT NOT NULL REFERENCES mission(id),
       run_id TEXT NOT NULL REFERENCES video_runs(id),event_id TEXT NOT NULL REFERENCES video_events(id),
@@ -99,6 +104,10 @@ def schema(conn):
       BEGIN SELECT RAISE(ABORT,'video night-candidate reviews are append-only'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_night_reviews_d BEFORE DELETE ON video_night_candidate_reviews
       BEGIN SELECT RAISE(ABORT,'video night-candidate reviews are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_video_night_corrections_u BEFORE UPDATE ON video_night_candidate_corrections
+      BEGIN SELECT RAISE(ABORT,'video night-candidate corrections are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS immutable_video_night_corrections_d BEFORE DELETE ON video_night_candidate_corrections
+      BEGIN SELECT RAISE(ABORT,'video night-candidate corrections are append-only'); END;
     CREATE TRIGGER IF NOT EXISTS immutable_video_run_config BEFORE UPDATE OF id,mission_id,source_id,config,created
       ON video_runs BEGIN SELECT RAISE(ABORT,'video run configuration is immutable'); END;
     ''')
@@ -673,6 +682,12 @@ def night_candidates(library, mission, run_id, *, limit=100, offset=0):
         latest={}
         for review in reviews:
             latest[review['candidate_id']]=dict(review)
+        correction_rows=conn.execute('''SELECT candidate_id,correction_type,revision,operator,value,created
+            FROM video_night_candidate_corrections WHERE run_id=? ORDER BY candidate_id,correction_type,revision''',
+            (run_id,)).fetchall()
+        corrections={}
+        for correction in correction_rows:
+            corrections.setdefault(correction['candidate_id'],{})[correction['correction_type']]=dict(correction)
         ordered=sorted(grouped.values(),key=lambda item:(item['first_offset_seconds'],item['candidate_id']))
         result=[]
         for item in ordered[offset:offset+limit]:
@@ -680,12 +695,27 @@ def night_candidates(library, mission, run_id, *, limit=100, offset=0):
             item['uncertainty_reasons']=sorted(item['uncertainty_reasons'])
             item['possible_vehicle_track_ids']=sorted(item['possible_vehicle_track_ids'])
             review=latest.get(item['candidate_id'])
+            candidate_corrections=corrections.get(item['candidate_id'],{})
+            pairing_edit=candidate_corrections.get('pairing')
+            background_edit=candidate_corrections.get('background')
+            corrected_pairing=None
+            if pairing_edit:
+                saved_value=pairing_edit['value']
+                corrected_pairing=None if saved_value=='clear' else saved_value
+            background_label='unlabeled'
+            if background_edit and background_edit['value']!='clear':
+                background_label=background_edit['value']
             item.update({'revision':review['revision'] if review else 0,
                 'operator':review['operator'] if review else None,
                 'action':review['action'] if review else None,
                 'reviewed_at':review['created'] if review else None,
                 'review_status':{'accept':'accepted','reject':'rejected','reopen':'pending'}.get(
-                    review['action'] if review else None,'pending')})
+                    review['action'] if review else None,'pending'),
+                'corrected_pairing':corrected_pairing,
+                'effective_pairing':corrected_pairing or item['pairing'],
+                'background_label':background_label,
+                'pairing_correction_revision':pairing_edit['revision'] if pairing_edit else 0,
+                'background_correction_revision':background_edit['revision'] if background_edit else 0})
             result.append(item)
         return {'run_id':run_id,'total':len(ordered),'items':result}
 
@@ -730,6 +760,51 @@ def review_night_candidate(library, mission, run_id, candidate_id, expected_revi
         return {'run_id':run_id,'candidate_id':candidate_id,'revision':revision,
             'operator':operator,'action':action,'review_status':{'accept':'accepted','reject':'rejected',
             'reopen':'pending'}[action],'reviewed_at':created}
+
+
+def correct_night_candidate(library, mission, run_id, candidate_id, correction_type,
+                            expected_revision, operator, value):
+    """Append a reviewer correction for light grouping or persistent background labels."""
+    prepare(library, mission)
+    if isinstance(expected_revision,bool) or not isinstance(expected_revision,int) or expected_revision<0:
+        raise ValueError('expected_revision must be a non-negative integer')
+    operator=operator.strip() if isinstance(operator,str) else ''
+    if not 1<=len(operator)<=120:
+        raise ValueError('Operator is required for video candidate correction')
+    allowed={'pairing':('single','hypothesis','clear'),
+        'background':('persistent','not_persistent','clear')}
+    if correction_type not in allowed or value not in allowed[correction_type]:
+        raise ValueError('Unsupported nighttime candidate correction')
+    if not isinstance(candidate_id,str) or not candidate_id.startswith(run_id+':night-'):
+        raise ValueError('Nighttime candidate does not belong to this run')
+    with library.connect(mission) as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        if not conn.execute('SELECT 1 FROM video_runs WHERE id=? AND mission_id=?',
+                (run_id,mission)).fetchone():
+            raise ValueError('Video run not found')
+        exists=False
+        for row in conn.execute('SELECT detections FROM video_frame_detections WHERE mission_id=? AND run_id=?',
+                (mission,run_id)):
+            try:
+                if any(item.get('review_track_id')==candidate_id for item in json.loads(row['detections'])):
+                    exists=True
+                    break
+            except (TypeError,json.JSONDecodeError) as exc:
+                raise ValueError('Saved video frame detections are corrupt') from exc
+        if not exists:
+            raise ValueError('Nighttime candidate not found in this run')
+        previous=conn.execute('''SELECT MAX(revision) FROM video_night_candidate_corrections
+            WHERE run_id=? AND candidate_id=? AND correction_type=?''',
+            (run_id,candidate_id,correction_type)).fetchone()[0] or 0
+        if previous!=expected_revision:
+            raise ValueError('Correction revision changed; reload the candidate before saving')
+        revision=previous+1
+        created=now()
+        conn.execute('''INSERT INTO video_night_candidate_corrections
+            (run_id,candidate_id,correction_type,revision,operator,value,created)
+            VALUES (?,?,?,?,?,?,?)''',(run_id,candidate_id,correction_type,revision,operator,value,created))
+        return {'run_id':run_id,'candidate_id':candidate_id,'correction_type':correction_type,
+            'revision':revision,'operator':operator,'value':value,'created':created}
 
 
 def set_total_frames(library, mission, run_id, total_frames):

@@ -20,6 +20,7 @@ from road_traffic.store import Library
 from road_traffic.tracking import TrackerPolicy, VideoTrackManager
 from road_traffic.video_store import (checkpoint, create_run, events, register_video,
     execute_video_run, event_thumbnail, frame_overlay, night_candidates, review_night_candidate,
+    correct_night_candidate,
     review_event, run_detail, runs,
     source_path, transition, update_runtime_details)
 from road_traffic.video_timeline import VideoTimestamp
@@ -293,6 +294,21 @@ class VideoStoreTests(unittest.TestCase):
         self.assertEqual(len(item['states']),2)
         self.assertEqual(item['possible_vehicle_track_ids'],[assignments[0].track.track_id])
         self.assertEqual(item['review_status'],'pending')
+        corrected=correct_night_candidate(self.library,self.mission,run['id'],item['candidate_id'],
+            'pairing',0,'Operator','single')
+        self.assertEqual(corrected['revision'],1)
+        correct_night_candidate(self.library,self.mission,run['id'],item['candidate_id'],
+            'background',0,'Operator','persistent')
+        corrected_item=night_candidates(self.library,self.mission,run['id'])['items'][0]
+        self.assertEqual(corrected_item['pairing'],'hypothesis')
+        self.assertEqual(corrected_item['effective_pairing'],'single')
+        self.assertEqual(corrected_item['background_label'],'persistent')
+        with self.assertRaisesRegex(ValueError,'changed'):
+            correct_night_candidate(self.library,self.mission,run['id'],item['candidate_id'],
+                'pairing',0,'Operator','single')
+        with self.assertRaisesRegex(ValueError,'Unsupported'):
+            correct_night_candidate(self.library,self.mission,run['id'],item['candidate_id'],
+                'pairing',1,'Operator','merge')
         reviewed=review_night_candidate(self.library,self.mission,run['id'],item['candidate_id'],
             0,'Operator','accept')
         self.assertEqual(reviewed['review_status'],'accepted')
