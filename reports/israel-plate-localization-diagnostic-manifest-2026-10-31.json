@@ -1,0 +1,52 @@
+{
+  "path": "/private/tmp/roadloom-israel-manifest-copy.zip",
+  "format": "RoadLoom plate localization diagnostic v1",
+  "source_name": "Israeli license-plate object-detection dataset",
+  "source_url": "https://huggingface.co/datasets/Norod78/il-license-plates",
+  "source_annotations_sha256": "c5df0ddb40a47dd5532c99d30f32667ba5d13f30278a7dbb1f6de4caf384de99",
+  "country": "Israel",
+  "task": "plate-region box localization only; no text recognition",
+  "image_count": 182,
+  "box_count": 247,
+  "split": "diagnostic",
+  "split_policy": "The source has no protected train/validation/held-out partition; retained rows remain in one diagnostic set.",
+  "excluded_image_count": 8,
+  "excluded_images": [
+    {
+      "imagefilename": "img/il_plates_img-00042.jpg",
+      "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+    },
+    {
+      "imagefilename": "img/il_plates_img-00188.jpg",
+      "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+    },
+    {
+      "imagefilename": "img/il_plates_img-00183.jpg",
+      "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+    },
+    {
+      "imagefilename": "img/il_plates_img-00167.jpg",
+      "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+    },
+    {
+      "imagefilename": "img/il_plates_img-00106.jpg",
+      "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+    },
+    {
+      "imagefilename": "img/il_plates_img-00057.jpg",
+      "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+    },
+    {
+      "imagefilename": "img/il_plates_img-00185.jpg",
+      "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+    },
+    {
+      "imagefilename": "img/il_plates_img-00161.jpg",
+      "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+    }
+  ],
+  "exclusion_list_sha256": "542f760e8de25297efe44305d4e3dac0401cb566746c5528eae52a98f89fe7e6",
+  "eligible_for_training": false,
+  "eligible_for_acceptance": false,
+  "archive_bytes": 70389492
+}

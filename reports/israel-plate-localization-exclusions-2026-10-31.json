@@ -1,0 +1,34 @@
+[
+  {
+    "imagefilename": "img/il_plates_img-00042.jpg",
+    "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+  },
+  {
+    "imagefilename": "img/il_plates_img-00188.jpg",
+    "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+  },
+  {
+    "imagefilename": "img/il_plates_img-00183.jpg",
+    "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+  },
+  {
+    "imagefilename": "img/il_plates_img-00167.jpg",
+    "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+  },
+  {
+    "imagefilename": "img/il_plates_img-00106.jpg",
+    "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+  },
+  {
+    "imagefilename": "img/il_plates_img-00057.jpg",
+    "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+  },
+  {
+    "imagefilename": "img/il_plates_img-00185.jpg",
+    "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+  },
+  {
+    "imagefilename": "img/il_plates_img-00161.jpg",
+    "reason": "two source boxes have IoU at least 0.90 and appear duplicated"
+  }
+]

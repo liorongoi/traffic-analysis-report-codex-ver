@@ -1,0 +1,158 @@
+{
+  "schema": "roadloom-detection-benchmark-v1",
+  "category_matching": "class-aware",
+  "metrics": {
+    "operating_iou": 0.5,
+    "ap_iou_thresholds": [
+      0.5,
+      0.55,
+      0.6,
+      0.65,
+      0.7,
+      0.75,
+      0.8,
+      0.85,
+      0.9,
+      0.95
+    ],
+    "matching": "class-aware greedy matching by descending prediction score, one-to-one within each image",
+    "ap": "101-point interpolated AP; macro mean over categories with ground-truth instances",
+    "count": "all predicted and ground-truth instances across categories per image",
+    "scope_note": "Metrics are only meaningful when every image has complete independent labels; unmarked objects are not assumed negative."
+  },
+  "metadata": {
+    "prediction": {
+      "model_kind": "plate",
+      "model_sha256": "e5350bb2152eb44fa129b2438d1e39bbbf3c27accfe51cd893ce6e17d028d0b9",
+      "model_pack": "license-plate-yolox",
+      "threshold": 0.18,
+      "tiled": true,
+      "inference_provider": "CPUExecutionProvider",
+      "pipeline_scope": "plate-region detector only; crop localization with no text recognition",
+      "split": "diagnostic",
+      "source_dataset_sha256": "3edd77505ce344e2f32774f0822b37a0ecdfe5a203c20257a1b6b3a00d08c396",
+      "storage_bytes": {
+        "source_dataset": 70389492,
+        "model_pack": 20196589,
+        "prediction_json": 67770
+      },
+      "performance": {
+        "images_processed": 182,
+        "model_initialization_seconds": 0.0721990839811042,
+        "processing_wall_seconds": 29.630625208024867,
+        "images_per_second": 6.142293614199842,
+        "per_image_latency": {
+          "mean_seconds": 0.16280356433196505,
+          "p50_seconds": 0.08597612503217533,
+          "p95_seconds": 0.5118247920181602,
+          "max_seconds": 1.7827549999929033
+        },
+        "peak_process_rss_bytes": 484016128,
+        "peak_vram_bytes": null,
+        "peak_vram_note": "Not exposed portably by the configured ONNX Runtime provider; measure on target hardware.",
+        "measurement_scope": "one prediction process over one frozen split; includes image read/decode and detector inference"
+      },
+      "created_utc": "2026-10-31T16:34:32.053055+00:00",
+      "categories": [],
+      "image_metadata": {},
+      "strata": {}
+    },
+    "ground_truth_sha256": "3edd77505ce344e2f32774f0822b37a0ecdfe5a203c20257a1b6b3a00d08c396",
+    "predictions_sha256": "715ca4be7666e8a75923c3f264191af82e26e5698331a0d04627f7f16ab00baa",
+    "storage_bytes": {
+      "ground_truth": 70389492,
+      "predictions": 67770
+    },
+    "ground_truth_file": "roadloom-israel-diagnostic-corners.zip",
+    "predictions_file": "roadloom-israel-predictions-corners.json",
+    "split": "diagnostic"
+  },
+  "images": 182,
+  "categories": {
+    "plate:region": {
+      "ground_truth": 247,
+      "predictions": 293,
+      "tp": 195,
+      "fp": 98,
+      "fn": 52,
+      "precision": 0.6655290102389079,
+      "recall": 0.7894736842105263,
+      "f1": 0.7222222222222222,
+      "false_alarms_per_image": 0.5384615384615384,
+      "ap50": 0.7105184722026061,
+      "map50_95": 0.3253761644198546
+    }
+  },
+  "overall": {
+    "images": 182,
+    "categories": {
+      "plate:region": {
+        "ground_truth": 247,
+        "predictions": 293,
+        "tp": 195,
+        "fp": 98,
+        "fn": 52,
+        "precision": 0.6655290102389079,
+        "recall": 0.7894736842105263,
+        "f1": 0.7222222222222222,
+        "false_alarms_per_image": 0.5384615384615384,
+        "ap50": 0.7105184722026061,
+        "map50_95": 0.3253761644198546
+      }
+    },
+    "micro": {
+      "tp": 195,
+      "fp": 98,
+      "fn": 52,
+      "precision": 0.6655290102389079,
+      "recall": 0.7894736842105263,
+      "f1": 0.7222222222222222,
+      "false_alarms_per_image": 0.5384615384615384,
+      "ap50_macro": 0.7105184722026061,
+      "map50_95_macro": 0.3253761644198546
+    },
+    "count_error": {
+      "mae_objects_per_image": 0.5384615384615384,
+      "mean_signed_objects_per_image": 0.25274725274725274,
+      "exact_count_images_fraction": 0.5934065934065934
+    }
+  },
+  "groups": {
+    "country": {
+      "Israel": {
+        "images": 182,
+        "categories": {
+          "plate:region": {
+            "ground_truth": 247,
+            "predictions": 293,
+            "tp": 195,
+            "fp": 98,
+            "fn": 52,
+            "precision": 0.6655290102389079,
+            "recall": 0.7894736842105263,
+            "f1": 0.7222222222222222,
+            "false_alarms_per_image": 0.5384615384615384,
+            "ap50": 0.7105184722026061,
+            "map50_95": 0.3253761644198546
+          }
+        },
+        "micro": {
+          "tp": 195,
+          "fp": 98,
+          "fn": 52,
+          "precision": 0.6655290102389079,
+          "recall": 0.7894736842105263,
+          "f1": 0.7222222222222222,
+          "false_alarms_per_image": 0.5384615384615384,
+          "ap50_macro": 0.7105184722026061,
+          "map50_95_macro": 0.3253761644198546
+        },
+        "count_error": {
+          "mae_objects_per_image": 0.5384615384615384,
+          "mean_signed_objects_per_image": 0.25274725274725274,
+          "exact_count_images_fraction": 0.5934065934065934
+        }
+      }
+    }
+  }
+}
