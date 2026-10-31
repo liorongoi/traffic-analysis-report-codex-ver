@@ -6,7 +6,6 @@ on:
       - codex/mission-configuration
     paths:
       - '.github/workflows/windows-preview-package.yml'
-      - 'docs/**'
       - 'installer/windows/**'
       - 'model-packs/**'
       - 'requirements-inference-windows.lock.txt'
