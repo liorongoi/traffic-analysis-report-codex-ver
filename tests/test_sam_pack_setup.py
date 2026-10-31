@@ -36,6 +36,50 @@ class SamPackSetupTests(unittest.TestCase):
             self.assertIn('*INT8*', calls[0]['ignore_patterns'])
             self.assertNotIn('sam3.1-INT8.safetensors', calls[0]['allow_patterns'])
 
+    def test_setup_installs_optional_runtime_before_downloading_weights(self):
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'setup-sam3.1.py'
+        module = runpy.run_path(str(script))
+        calls = []
+
+        def install_runtime():
+            calls.append('runtime')
+
+        def download(destination):
+            calls.append(('weights', Path(destination)))
+            return Path(destination)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            result = module['setup'](Path(temporary) / 'model', install_runtime, download)
+            self.assertEqual(result, Path(temporary) / 'model')
+        self.assertEqual(calls, ['runtime', ('weights', Path(temporary) / 'model')])
+
+    def test_runtime_setup_pins_cpu_model_stack_and_rejects_old_python(self):
+        script = Path(__file__).resolve().parents[1] / 'scripts' / 'setup-sam3.1.py'
+        module = runpy.run_path(str(script))
+        calls = []
+
+        def runner(command, **kwargs):
+            calls.append((command, kwargs))
+            if '-c' in command:
+                return SimpleNamespace(stdout='3.12')
+            return SimpleNamespace(stdout='')
+
+        module['install_runtime'](python='roadloom-python', runner=runner)
+        self.assertEqual(calls[0][0][0:3], ['roadloom-python', '-c', "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"])
+        installs = [command for command, _ in calls[1:]]
+        self.assertIn('torch==2.10.0', installs[0])
+        self.assertIn('torchvision==0.25.0', installs[0])
+        self.assertIn('--index-url', installs[0])
+        self.assertIn('https://download.pytorch.org/whl/cpu', installs[0])
+        self.assertIn('transformers==5.22.1', installs[1])
+        self.assertIn('huggingface_hub', installs[1])
+
+        def old_python(command, **kwargs):
+            return SimpleNamespace(stdout='3.11')
+
+        with self.assertRaisesRegex(RuntimeError, 'Python 3.12'):
+            module['install_runtime'](python='old-python', runner=old_python)
+
 
 if __name__ == '__main__':
     unittest.main()
