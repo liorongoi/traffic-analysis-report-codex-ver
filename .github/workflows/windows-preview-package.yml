@@ -91,6 +91,11 @@ jobs:
           $uninstaller = Join-Path $install 'unins000.exe'
           if (-not (Test-Path $uninstaller)) { throw 'Current-user uninstall entry point is missing.' }
 
+          $workspace = Join-Path $env:LOCALAPPDATA 'RoadTrafficAnalysis\\Workspace'
+          New-Item -ItemType Directory -Path $workspace -Force | Out-Null
+          $sentinel = Join-Path $workspace 'upgrade-preservation-check.txt'
+          Set-Content -Path $sentinel -Value $env:GITHUB_RUN_ID -NoNewline
+
           $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
           $listener.Start()
           $appPort = $listener.LocalEndpoint.Port
@@ -110,6 +115,13 @@ jobs:
             }
             if ($null -eq $page -or $page.StatusCode -ne 200) { throw 'Installed app did not serve its local page.' }
             if ($page.Content -notmatch 'RoadLoom') { throw 'Installed app page did not contain RoadLoom branding.' }
+
+            $reinstall = Start-Process -FilePath $setup -ArgumentList ("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=$install") -Wait -PassThru
+            if ($reinstall.ExitCode -ne 0) { throw "Reinstall exited with code $($reinstall.ExitCode)." }
+            $appProcess.Refresh()
+            if (-not $appProcess.HasExited) { throw 'Reinstall did not close the running RoadLoom app.' }
+            if (-not (Test-Path $receipt)) { throw 'Reinstall removed the verified payload receipt.' }
+            if ((Get-Content -Raw $sentinel) -ne $env:GITHUB_RUN_ID) { throw 'Reinstall changed existing workspace data.' }
           } finally {
             if (-not $appProcess.HasExited) {
               Stop-Process -Id $appProcess.Id -Force
@@ -118,14 +130,7 @@ jobs:
             Remove-Item Env:ROADLOOM_PORT -ErrorAction SilentlyContinue
             Remove-Item Env:ROADLOOM_OPEN_BROWSER -ErrorAction SilentlyContinue
           }
-
-          $workspace = Join-Path $env:LOCALAPPDATA 'RoadTrafficAnalysis\Workspace'
-          New-Item -ItemType Directory -Path $workspace -Force | Out-Null
-          $sentinel = Join-Path $workspace 'upgrade-preservation-check.txt'
-          Set-Content -Path $sentinel -Value $env:GITHUB_RUN_ID -NoNewline
-          $reinstall = Start-Process -FilePath $setup -ArgumentList ("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=$install") -Wait -PassThru
-          if ($reinstall.ExitCode -ne 0) { throw "Reinstall exited with code $($reinstall.ExitCode)." }
-          if (-not (Test-Path $receipt)) { throw 'Reinstall removed the verified payload receipt.' }
+          if (-not $appProcess.HasExited) { throw 'The RoadLoom app is still running after reinstall.' }
           if ((Get-Content -Raw $sentinel) -ne $env:GITHUB_RUN_ID) { throw 'Reinstall changed existing workspace data.' }
 
           $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait -PassThru

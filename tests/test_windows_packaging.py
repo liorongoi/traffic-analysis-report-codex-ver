@@ -24,6 +24,7 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertIn('AppName=RoadLoom Preview', script)
         self.assertIn('DefaultDirName={localappdata}\\Programs\\RoadTrafficAnalysis', script)
         self.assertIn('OutputBaseFilename=RoadLoom-Preview-Setup', script)
+        self.assertIn('CloseApplications=yes', script)
         self.assertIn('SetupIconFile=..\\..\\web\\roadloom.ico', script)
         self.assertIn('IconFilename: "{app}\\web\\roadloom.ico"', script)
         workflow = (ROOT / '.github' / 'workflows' / 'windows-preview-package.yml').read_text(encoding='utf-8')

@@ -15,6 +15,7 @@ UninstallDisplayIcon={app}\web\roadloom.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+CloseApplications=yes
 UninstallDisplayName=RoadLoom Preview
 [Files]
 Source: "..\..\staging\windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
