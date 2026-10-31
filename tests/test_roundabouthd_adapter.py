@@ -60,11 +60,35 @@ class RoundaboutHDAdapterTests(unittest.TestCase):
             self.assertEqual([item['frames'][0]['objects'][0]['track_id']
                 for item in result['sequences']], ['c001:1', 'c002:1'])
 
+    def test_preserves_uninterpreted_seventh_source_label(self):
+        with tempfile.TemporaryDirectory() as directory:
+            labels = Path(directory) / 'camera-SCT_GT.txt'
+            labels.write_text('1 42 100 200 300 400 2\n', encoding='utf-8')
+            result = convert_sct_labels([('camera', labels)], frame_count=1,
+                width=500, height=500, frame_offset=1)
+            obj = result['sequences'][0]['frames'][0]['objects'][0]
+            self.assertEqual(obj, {
+                'track_id': 'camera:42', 'category_id': 'vehicle',
+                'bbox': [100.0, 200.0, 200.0, 200.0], 'source_label': '2',
+            })
+
+    def test_can_preserve_duplicate_source_track_rows_without_fabricating_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            labels = Path(directory) / 'camera-SCT_GT.txt'
+            labels.write_text('0 42 10 10 20 20 2\n0 42 30 30 40 40 2\n', encoding='utf-8')
+            result = convert_sct_labels([('camera', labels)], frame_count=1,
+                width=100, height=100, allow_duplicate_track_rows=True)
+            sequence = result['sequences'][0]
+            self.assertEqual(sequence['metadata']['duplicate_track_id_frame_rows'], 1)
+            self.assertEqual([item['track_id'] for item in sequence['frames'][0]['objects']],
+                ['camera:42', 'camera:42'])
+
     def test_rejects_invalid_rows_boxes_and_frame_ranges(self):
         with tempfile.TemporaryDirectory() as directory:
             labels = Path(directory) / 'labels.txt'
             for content, message in (
-                    ('0 1 0 0 10\n', 'expected 6 columns'),
+                    ('0 1 0 0 10\n', 'expected 6 or 7 columns'),
+                    ('0 1 0 0 10 10 2 extra\n', 'expected 6 or 7 columns'),
                     ('3 1 0 0 10 10\n', 'outside the requested clip'),
                     ('0 1 0 0 25 10\n', 'outside 20x20'),
                     ('0 1 nan 0 10 10\n', 'must be finite'),

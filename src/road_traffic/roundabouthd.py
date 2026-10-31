@@ -22,11 +22,13 @@ def _number(token, name):
 
 
 def convert_sct_labels(label_sources, *, frame_count, width, height, frame_offset=0,
-                       country='United States'):
+                       country='United States', allow_duplicate_track_rows=False):
     """Return a paired-tracking ground-truth manifest.
 
-    ``label_sources`` is an iterable of ``(sequence_id, path)`` pairs. The
-    official SCT row layout is frame, object ID, xmin, ymin, xmax, ymax.
+    ``label_sources`` is an iterable of ``(sequence_id, path)`` pairs. SCT
+    rows may use the documented six-column layout (frame, object ID, xmin,
+    ymin, xmax, ymax) or the observed seven-column variant with a trailing
+    source label. That label is preserved without assigning it semantics.
     ``frame_offset`` is explicit because frame numbering must never be guessed.
     Every frame in the requested clip is emitted, including empty frames.
     """
@@ -37,6 +39,8 @@ def convert_sct_labels(label_sources, *, frame_count, width, height, frame_offse
         raise ValueError('frame_offset must be an integer')
     if country is not None and (not isinstance(country, str) or not country.strip()):
         raise ValueError('country must be a non-empty string or null')
+    if not isinstance(allow_duplicate_track_rows, bool):
+        raise ValueError('allow_duplicate_track_rows must be a boolean')
 
     sequences = []
     seen_ids = set()
@@ -59,13 +63,14 @@ def convert_sct_labels(label_sources, *, frame_count, width, height, frame_offse
 
         frames = [[] for _ in range(frame_count)]
         occupied = set()
+        duplicate_track_id_frame_rows = 0
         for line_number, raw_line in enumerate(text.splitlines(), start=1):
             line = raw_line.strip()
             if not line or line.startswith('#'):
                 continue
             fields = line.split()
-            if len(fields) != 6:
-                raise ValueError(f'{path}:{line_number}: expected 6 columns, got {len(fields)}')
+            if len(fields) not in (6, 7):
+                raise ValueError(f'{path}:{line_number}: expected 6 or 7 columns, got {len(fields)}')
             try:
                 source_frame = int(fields[0])
                 object_id = int(fields[1])
@@ -74,18 +79,25 @@ def convert_sct_labels(label_sources, *, frame_count, width, height, frame_offse
             frame_id = source_frame - frame_offset
             if frame_id < 0 or frame_id >= frame_count:
                 raise ValueError(f'{path}:{line_number}: frame ID {source_frame} is outside the requested clip')
-            x1, y1, x2, y2 = (_number(value, 'bounding-box coordinate') for value in fields[2:])
+            x1, y1, x2, y2 = (_number(value, 'bounding-box coordinate') for value in fields[2:6])
             if x1 < 0 or y1 < 0 or x2 > width or y2 > height or x2 <= x1 or y2 <= y1:
                 raise ValueError(f'{path}:{line_number}: bounding box is invalid or outside {width}x{height}')
             identity = (frame_id, object_id)
             if identity in occupied:
-                raise ValueError(f'{path}:{line_number}: duplicate object {object_id} in frame {source_frame}')
+                if not allow_duplicate_track_rows:
+                    raise ValueError(f'{path}:{line_number}: duplicate object {object_id} in frame {source_frame}')
+                duplicate_track_id_frame_rows += 1
             occupied.add(identity)
-            frames[frame_id].append({
+            annotation = {
                 'track_id': f'{sequence_id}:{object_id}',
                 'category_id': 'vehicle',
                 'bbox': [x1, y1, x2 - x1, y2 - y1],
-            })
+            }
+            if len(fields) == 7:
+                if not fields[6]:
+                    raise ValueError(f'{path}:{line_number}: trailing source label must not be empty')
+                annotation['source_label'] = fields[6]
+            frames[frame_id].append(annotation)
 
         for objects in frames:
             objects.sort(key=lambda item: item['track_id'])
@@ -96,6 +108,7 @@ def convert_sct_labels(label_sources, *, frame_count, width, height, frame_offse
             'frame_height': height,
             'frame_count': frame_count,
             'frame_offset': frame_offset,
+            'duplicate_track_id_frame_rows': duplicate_track_id_frame_rows,
             'source_annotation': path.name,
             'source_annotation_sha256': hashlib.sha256(data).hexdigest(),
         }

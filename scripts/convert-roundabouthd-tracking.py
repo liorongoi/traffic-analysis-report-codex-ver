@@ -27,7 +27,9 @@ def main(argv=None):
     parser.add_argument('--width', required=True, type=int, help='source video width in pixels')
     parser.add_argument('--height', required=True, type=int, help='source video height in pixels')
     parser.add_argument('--frame-offset', type=int, default=0,
-                        help='source frame ID corresponding to output frame 0 (default: 0)')
+                        help='source frame ID corresponding to output frame 0 (default: 0; observed RoundaboutHD SCT labels start at 1)')
+    parser.add_argument('--preserve-duplicate-track-rows', action='store_true',
+                        help='preserve repeated same-track boxes within a frame and report their count; never synthesize new identities')
     parser.add_argument('--country', default='United States',
                         help='dataset country metadata (default: United States)')
     parser.add_argument('--output', required=True, help='output ground-truth JSON path')
@@ -35,7 +37,7 @@ def main(argv=None):
     try:
         manifest = convert_sct_labels(args.labels, frame_count=args.frame_count,
             width=args.width, height=args.height, frame_offset=args.frame_offset,
-            country=args.country)
+            country=args.country, allow_duplicate_track_rows=args.preserve_duplicate_track_rows)
         write_manifest(manifest, args.output)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
@@ -43,7 +45,8 @@ def main(argv=None):
         'sequences': [{'sequence_id': sequence['sequence_id'],
             'frames': len(sequence['frames']),
             'annotated_frames': sum(bool(frame['objects']) for frame in sequence['frames']),
-            'objects': sum(len(frame['objects']) for frame in sequence['frames'])}
+            'objects': sum(len(frame['objects']) for frame in sequence['frames']),
+            'duplicate_track_id_frame_rows': sequence['metadata']['duplicate_track_id_frame_rows']}
             for sequence in manifest['sequences']]}, ensure_ascii=False))
     return 0
 
