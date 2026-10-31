@@ -557,6 +557,8 @@ def predict_coco_zip(dataset_path, model_pack, *, split='test', model_kind='vehi
     gt = _load_ground_truth(dataset_path, split)
     if model_kind not in ('vehicle', 'plate'):
         raise ValueError('model_kind must be vehicle or plate')
+    if split not in ('training', 'validation', 'test', 'diagnostic'):
+        raise ValueError('split must be training, validation, test, or diagnostic')
     if threshold is None:
         threshold = .18 if model_kind == 'vehicle' else .3
     threshold = _finite_number(threshold, 'threshold')
@@ -572,7 +574,7 @@ def predict_coco_zip(dataset_path, model_pack, *, split='test', model_kind='vehi
         detector = VehicleDetector(model_pack, threshold=threshold, tiled=tiled)
     else:
         from .plate_review import PlateDetector
-        detector = PlateDetector(model_pack, threshold=threshold)
+        detector = PlateDetector(model_pack, threshold=threshold, tiled=tiled)
     model_initialization_seconds = time.perf_counter() - model_load_started
     categories = {row['id']: row for row in gt['categories']}
     next_id = max((key for key in categories if isinstance(key, int)), default=0) + 1
@@ -647,7 +649,7 @@ def predict_coco_zip(dataset_path, model_pack, *, split='test', model_kind='vehi
     return {'predictions': predictions, 'metadata': {
         'model_kind': model_kind, 'model_sha256': detector.sha,
         'model_pack': Path(model_pack).name, 'threshold': threshold,
-        'tiled': bool(tiled) if model_kind == 'vehicle' else False,
+        'tiled': bool(tiled),
         'inference_provider': getattr(getattr(detector, 'session', None), 'provider', None),
         'pipeline_scope': ('YOLOX vehicle detector only; excludes night-light, persistent-background, '
                            'mission ROI and road-mask logic' if model_kind == 'vehicle' else

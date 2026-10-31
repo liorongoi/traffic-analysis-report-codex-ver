@@ -14,11 +14,11 @@ def main():
     parser.add_argument('--dataset-zip', required=True, type=Path)
     parser.add_argument('--model-pack', required=True, type=Path)
     parser.add_argument('--model-kind', choices=('vehicle', 'plate'), default='vehicle')
-    parser.add_argument('--split', choices=('training', 'validation', 'test'), default='test')
+    parser.add_argument('--split', choices=('training', 'validation', 'test', 'diagnostic'), default='test')
     parser.add_argument('--threshold', type=float,
         help='Confidence threshold; defaults to 0.18 for vehicles or 0.30 for plate regions')
     parser.add_argument('--no-tiles', action='store_true',
-        help='Disable the vehicle detector native-resolution tile pass')
+        help='Disable overlapping native-resolution tiling for the selected detector')
     parser.add_argument('--image-metadata', type=Path,
         help='Optional JSON object mapping COCO image IDs to country/condition/view/hardware labels')
     parser.add_argument('--hardware-profile',

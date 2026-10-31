@@ -20,7 +20,15 @@ The user-provided Lebanese plate-reference images show private-vehicle examples 
 
 ### Public plate-localization leads (2026-10-31)
 
-- The public [IR-LPR-corners subset](https://huggingface.co/datasets/mahdilotfi/IR-LPR-corners) lists 1,883 Iranian vehicle images with four normalized plate-corner labels. Its [source repository](https://github.com/mahdilotfi167/IR-LPR-corners) describes the images as a subset of IR-LPR and the annotations as manually verified. The dataset and file listings were inspected without signing in; no images were downloaded, converted, or scored. It is a possible Iranian localization diagnostic, not target-camera acceptance evidence.
+- The public [IR-LPR-corners subset](https://huggingface.co/datasets/mahdilotfi/IR-LPR-corners) lists 1,883 Iranian vehicle images with four normalized plate-corner labels. Its [source repository](https://github.com/mahdilotfi167/IR-LPR-corners) describes the images as a subset of IR-LPR and the annotations as manually verified. The public image tree reports about 641 MB. No images were downloaded or scored. A local converter now builds a single `diagnostic` COCO split from those corners; it explicitly marks the set as ineligible for training and acceptance because the source supplies no protected train/validation/test partition. When the files are available locally, run:
+
+  ```sh
+  python scripts/convert-ir-lpr-corners.py --dataset-dir /path/to/IR-LPR-corners --output /path/to/ir-lpr-corners-diagnostic.zip
+  python scripts/predict-detection-benchmark.py --dataset-zip /path/to/ir-lpr-corners-diagnostic.zip --model-pack model-packs/license-plate-yolox --model-kind plate --split diagnostic --threshold 0.18 --output /path/to/plate-predictions.json
+  python scripts/evaluate-detection-benchmark.py --ground-truth /path/to/ir-lpr-corners-diagnostic.zip --predictions /path/to/plate-predictions.json --split diagnostic --report /path/to/plate-diagnostic-report.json
+  ```
+
+  These results measure only plate-box localization on this external Iranian sample. The converter creates no OCR/text data, the diagnostic split cannot be used by the protected vehicle-training path or paired model-comparison/promotion workflow, and it cannot establish target-camera quality.
 - The public [Lebanese Plates Detection project](https://universe.roboflow.com/gg-6ss5j/lebanese-plates-detection) lists 613 images across five dataset versions and 328 images in version 1, with one `License_Plate` class. Its files and annotations were not downloaded or spot-checked, and no camera/time provenance is established here. It is a potential Lebanese diagnostic lead only.
 - No suitable public image-box sets for Israel or Latvia were verified in this search. All four target countries still need camera-representative, independently labeled plate boxes before localization quality can be accepted. No plate text is used or evaluated.
 

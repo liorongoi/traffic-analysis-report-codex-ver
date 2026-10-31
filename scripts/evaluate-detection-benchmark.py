@@ -14,7 +14,7 @@ def main():
         help='COCO annotation JSON or RoadLoom dataset ZIP containing <split>/annotations.json')
     parser.add_argument('--predictions', required=True, type=Path,
         help='COCO result array, optionally wrapped as {predictions: [...], metadata: {...}}')
-    parser.add_argument('--split', default='test', choices=('training', 'validation', 'test'))
+    parser.add_argument('--split', default='test', choices=('training', 'validation', 'test', 'diagnostic'))
     parser.add_argument('--operating-iou', default=.5, type=float,
         help='IoU threshold used for the displayed precision/recall/F1 (default: 0.5)')
     parser.add_argument('--class-agnostic', action='store_true',
