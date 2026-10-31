@@ -22,6 +22,22 @@ from xml.sax.saxutils import escape
 _SCHEMA_MIGRATION_LOCK = threading.RLock()
 
 
+def _ensure_column(conn, table, column, declaration):
+    """Apply an additive column migration once, including concurrent openers."""
+    with _SCHEMA_MIGRATION_LOCK:
+        columns = {row['name'] for row in conn.execute(f'PRAGMA table_info({table})')}
+        if column in columns:
+            return
+        try:
+            conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {declaration}')
+        except sqlite3.OperationalError:
+            # A second process can migrate between our schema read and ALTER.
+            # Accept that race only when the requested column now exists.
+            columns = {row['name'] for row in conn.execute(f'PRAGMA table_info({table})')}
+            if column not in columns:
+                raise
+
+
 CSV_EXPORT_HEADERS = ['mission_id','inference_run','source_id','source_run_id','source_sha256',
     'filename','capture_utc','timestamp_precision','review_status','revision',
     'confirmed_vehicle_count','candidate_count','light_count','annotations',
@@ -225,7 +241,17 @@ class Library:
 
     @contextmanager
     def connect(self, mission):
-        conn = self._open_connection(mission)
+        conn = None
+        try:
+            # Commit schema initialization before another request thread opens
+            # the same legacy database and performs its own schema checks.
+            with _SCHEMA_MIGRATION_LOCK:
+                conn = self._open_connection(mission)
+                conn.commit()
+        except BaseException:
+            if conn is not None:
+                conn.close()
+            raise
         try:
             yield conn
             conn.commit()
@@ -263,13 +289,9 @@ class Library:
                 INSERT OR IGNORE INTO mission_settings(mission_id)
                 SELECT id FROM mission;
             ''')
-        settings_columns={row['name'] for row in conn.execute('PRAGMA table_info(mission_settings)')}
-        if 'continuous_video_policy' not in settings_columns:
-            conn.execute("ALTER TABLE mission_settings ADD COLUMN continuous_video_policy TEXT NOT NULL DEFAULT ''")
-        if 'resource_profile' not in settings_columns:
-            conn.execute("ALTER TABLE mission_settings ADD COLUMN resource_profile TEXT NOT NULL DEFAULT 'auto'")
-        if 'vehicle_model_id' not in settings_columns:
-            conn.execute("ALTER TABLE mission_settings ADD COLUMN vehicle_model_id TEXT NOT NULL DEFAULT 'base'")
+        _ensure_column(conn, 'mission_settings', 'continuous_video_policy', "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, 'mission_settings', 'resource_profile', "TEXT NOT NULL DEFAULT 'auto'")
+        _ensure_column(conn, 'mission_settings', 'vehicle_model_id', "TEXT NOT NULL DEFAULT 'base'")
         conn.execute('''CREATE TABLE IF NOT EXISTS exports(
             id TEXT PRIMARY KEY, mission_id TEXT NOT NULL REFERENCES mission(id),
             inference_run TEXT, format TEXT NOT NULL, output_path TEXT NOT NULL,
@@ -277,9 +299,7 @@ class Library:
             status TEXT NOT NULL, created TEXT NOT NULL, finished TEXT, error TEXT,
             bulk_approval_id TEXT
         )''')
-        export_columns={row['name'] for row in conn.execute('PRAGMA table_info(exports)')}
-        if 'bulk_approval_id' not in export_columns:
-            conn.execute('ALTER TABLE exports ADD COLUMN bulk_approval_id TEXT')
+        _ensure_column(conn, 'exports', 'bulk_approval_id', 'TEXT')
         conn.execute('''CREATE TABLE IF NOT EXISTS monitored_files(
             relative_path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
             stable_since TEXT NOT NULL, last_seen TEXT NOT NULL, imported_sha256 TEXT,
@@ -293,9 +313,7 @@ class Library:
             source_id TEXT PRIMARY KEY, status TEXT NOT NULL, video_run_id TEXT,
             created TEXT NOT NULL, error TEXT, policy_json TEXT NOT NULL DEFAULT ''
         )''')
-        video_batch_columns={row['name'] for row in conn.execute('PRAGMA table_info(video_monitor_batches)')}
-        if 'policy_json' not in video_batch_columns:
-            conn.execute("ALTER TABLE video_monitor_batches ADD COLUMN policy_json TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, 'video_monitor_batches', 'policy_json', "TEXT NOT NULL DEFAULT ''")
         conn.execute('''CREATE TABLE IF NOT EXISTS monitor_control(
             id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1))
         )''')
@@ -351,18 +369,9 @@ class Library:
             CREATE TRIGGER IF NOT EXISTS immutable_view_region_history_d BEFORE DELETE ON view_region_history
                 BEGIN SELECT RAISE(ABORT,'view region history is immutable'); END;
         ''')
-        # Multiple request/monitor threads may open the same legacy mission at
-        # once. Serialize these check-then-ALTER migrations so a second opener
-        # re-reads the schema after the first connection adds the column.
-        with _SCHEMA_MIGRATION_LOCK:
-            region_columns={row['name'] for row in conn.execute('PRAGMA table_info(view_region_history)')}
-            if 'name' not in region_columns:
-                conn.execute("ALTER TABLE view_region_history ADD COLUMN name TEXT NOT NULL DEFAULT ''")
-            if 'role' not in region_columns:
-                conn.execute("ALTER TABLE view_region_history ADD COLUMN role TEXT NOT NULL DEFAULT 'analysis'")
-            view_columns={row['name'] for row in conn.execute('PRAGMA table_info(views)')}
-            if 'merged_into' not in view_columns:
-                conn.execute('ALTER TABLE views ADD COLUMN merged_into TEXT REFERENCES views(id)')
+        _ensure_column(conn, 'view_region_history', 'name', "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, 'view_region_history', 'role', "TEXT NOT NULL DEFAULT 'analysis'")
+        _ensure_column(conn, 'views', 'merged_into', 'TEXT REFERENCES views(id)')
         conn.execute('''CREATE TRIGGER IF NOT EXISTS one_way_view_merge BEFORE UPDATE OF merged_into ON views
             WHEN OLD.merged_into IS NOT NULL OR NEW.merged_into IS NULL
             BEGIN SELECT RAISE(ABORT,'camera view merge history cannot be reversed'); END''')

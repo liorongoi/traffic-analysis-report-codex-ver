@@ -37,6 +37,23 @@ class CameraViewTests(unittest.TestCase):
                 columns={row['name'] for row in conn.execute('PRAGMA table_info(views)')}
                 self.assertIn('merged_into',columns)
 
+    def test_concurrent_legacy_export_openers_serialize_additive_migration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            library=Library(Path(temp)/'workspace')
+            mission=library.create('Legacy exports','Israel','Asia/Jerusalem')
+            with library.connect(mission) as conn:
+                conn.execute('ALTER TABLE exports DROP COLUMN bulk_approval_id')
+
+            def open_legacy_mission(_):
+                with library.connect(mission) as conn:
+                    return conn.execute('SELECT COUNT(*) FROM exports').fetchone()[0]
+
+            with ThreadPoolExecutor(max_workers=8) as workers:
+                self.assertEqual(list(workers.map(open_legacy_mission,range(16))),[0]*16)
+            with library.connect(mission) as conn:
+                columns={row['name'] for row in conn.execute('PRAGMA table_info(exports)')}
+                self.assertIn('bulk_approval_id',columns)
+
     def test_batch_assignment_is_atomic_and_keeps_per_image_history(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);library=Library(root/'workspace')
