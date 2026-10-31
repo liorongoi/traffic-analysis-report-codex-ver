@@ -115,6 +115,11 @@ class UiBootstrapTests(unittest.TestCase):
         self.assertIn("!['general_traffic','object_search'].includes(selected?.analysis_mode)", source)
         self.assertIn("selected.analysis_mode==='object_search'&&!jobs.length", source)
 
+    def test_open_plate_gallery_refreshes_when_monitor_batch_changes(self):
+        source = (ROOT / 'web' / 'app.js').read_text(encoding='utf-8')
+        self.assertIn("selected.analysis_mode==='license_plate'&&!$('plateWorkflow').hidden", source)
+        self.assertIn('plateMonitorBatchSignature=signature;await refreshPlateCrops();', source)
+
     def test_keyboard_focus_is_visible_on_non_form_controls(self):
         styles = (ROOT / 'web' / 'style.css').read_text(encoding='utf-8')
         for selector in ('a:focus-visible', 'summary:focus-visible',
