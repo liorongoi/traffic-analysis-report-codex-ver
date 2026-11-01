@@ -1,0 +1,7 @@
+# macOS preview setup
+
+This checkout can run RoadLoom on macOS using its local Python environment and browser. It is a source-based preview, not a signed `.app` installer. From the project folder, run `bash scripts/Install-RoadLoom-Mac.command` to create the local environment if needed, install the pinned inference dependencies, and prepare the optional SAM 3.1 CPU runtime plus public BF16 weights under `~/Library/Application Support/RoadTrafficAnalysis/Models/sam3.1-unsloth`. The first setup needs internet and several GB of free disk space; no Hugging Face login, account, or token is used. After setup, run `bash scripts/Start-RoadLoom-Mac.command`; the app opens in the existing browser. Core application use and SAM inference then read local files.
+
+This build uses CPU for SAM road masks. CUDA is an NVIDIA-only backend and does not run on macOS. The separately staged Windows CUDA bundle fine-tunes YOLOX vehicle detection, not SAM. Apple Silicon has PyTorch MPS as a possible later YOLOX training backend, but the current trainer requires CUDA and has not been ported or validated for MPS. MPS availability depends on Apple Silicon, the installed PyTorch build, and macOS version; see the [official PyTorch MPS guide](https://docs.pytorch.org/docs/main/notes/mps.html). This preview does not claim MPS fine-tuning support.
+
+The SAM weights and optional runtime are intentionally outside Git and the Windows core installer. Keep the local model folder intact. To use a different folder, edit both `.command` scripts so `SAM_DIR` points to the same location.
