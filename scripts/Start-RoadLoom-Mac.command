@@ -11,5 +11,6 @@ if [[ ! -x "$PY" ]]; then
   exit 1
 fi
 
+export LOCALAPPDATA="${LOCALAPPDATA:-$HOME/Library/Application Support}"
 export ROAD_TRAFFIC_SAM3_DIR="$SAM_DIR"
 exec "$PY" "$ROOT/scripts/launch.py"
