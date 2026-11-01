@@ -49,6 +49,8 @@ PYTHONPATH=src .venv/bin/python -m road_traffic serve --workspace workspace/samp
 
 Open http://127.0.0.1:8765 in a browser. The default development preview binds **only to loopback**. LAN mode is available with `--host 0.0.0.0`, an exact browser-facing `--public-host`, and a trusted TLS certificate/key. RoadLoom has no account or sign-in screen; one operator uses the local app. LAN requests still require HTTPS, the configured Host and Origin, and a process-local token for writes. Provide the certificate through an organization-approved trust chain and restrict the host firewall to authorized clients. Native Windows offline hardware acceptance remains pending; LAN acceptance is out of scope.
 
+On macOS, run `bash scripts/Install-RoadLoom-Mac.command`, then `bash scripts/Start-RoadLoom-Mac.command`. See the [macOS preview setup](docs/13-macos-preview.md). The Mac preview runs SAM on CPU; CUDA is only for the separate Windows YOLOX fine-tuning bundle.
+
 In this workspace, use the neutral development runtime at `/Users/lioron/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3` if system Python is older than 3.11.
 
 Fintraffic samples supplied by the user are imported locally into `workspace/sample-review`. They are not installer defaults. The initial failed development import is retained as a separate empty mission/run record for diagnosis; select the mission containing 143 images.
