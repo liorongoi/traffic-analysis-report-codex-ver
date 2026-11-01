@@ -91,6 +91,12 @@ jobs:
           }
           $uninstaller = Join-Path $install 'unins000.exe'
           if (-not (Test-Path $uninstaller)) { throw 'Current-user uninstall entry point is missing.' }
+          $validationReport = Join-Path $install 'inference-runtime-validation.txt'
+          if (-not (Test-Path $validationReport)) { throw 'Installer did not save its offline runtime report.' }
+          $validationText = Get-Content -Raw $validationReport
+          foreach ($requiredField in @('"python_socket_connect_blocked": true', '"vehicle_model"', '"plate_region_model"', '"selected_provider"', '"blank_frame_inference_ms"')) {
+            if ($validationText -notmatch [regex]::Escape($requiredField)) { throw "Offline runtime report is missing $requiredField" }
+          }
 
           $workspace = Join-Path $env:LOCALAPPDATA 'RoadTrafficAnalysis\\Workspace'
           New-Item -ItemType Directory -Path $workspace -Force | Out-Null
@@ -135,6 +141,7 @@ jobs:
             $appProcess.Refresh()
             if (-not $appProcess.HasExited) { throw 'Reinstall did not close the running RoadLoom app.' }
             if (-not (Test-Path $receipt)) { throw 'Reinstall removed the verified payload receipt.' }
+            if (-not (Test-Path $validationReport)) { throw 'Reinstall removed the offline runtime report.' }
             if ((Get-Content -Raw $sentinel) -ne $env:GITHUB_RUN_ID) { throw 'Reinstall changed existing workspace data.' }
             foreach ($name in $obsoleteOcrFiles) {
               if (Test-Path (Join-Path $plateModelDir $name)) { throw "Reinstall left obsolete OCR file: $name" }

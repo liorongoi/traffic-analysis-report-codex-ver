@@ -64,6 +64,9 @@ _WEEKDAY_GROUP_FORMS = {
 _WEEKDAY_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _WEEKDAY_FORMS), key=len, reverse=True)) + r')(?!\w)', re.I)
 _WEEKDAY_ALTERNATION = '|'.join(sorted(map(re.escape, _WEEKDAY_FORMS), key=len, reverse=True))
 _WEEKDAY_GROUP_PATTERN = re.compile(r'(?<!\w)(' + '|'.join(sorted(map(re.escape, _WEEKDAY_GROUP_FORMS), key=len, reverse=True)) + r')(?!\w)', re.I)
+_WEEKDAY_RANGE_PATTERN = re.compile(r'(?<!\w)(?:(?:from|between|on)\s+|בין\s+|מ(?:יום\s+)?)?('
+    + _WEEKDAY_ALTERNATION + r')\s+(?:(?:through|to|until|and|-)\s+|עד\s+|ל\s*)('
+    + _WEEKDAY_ALTERNATION + r')(?!\w)', re.I)
 _TIME_TOKEN = r'\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?'
 _WEEKDAY_OVERNIGHT_PATTERN = re.compile(
     r'(?<!\w)(?:(?:from|on)\s+|מיום\s+)?(?P<start_day>' + _WEEKDAY_ALTERNATION + r')\s+'
@@ -215,7 +218,21 @@ def _extract_temporal_filter(query, relative_today=None):
     if relative_day is not None:
         result['start_date'] = result['end_date'] = relative_day.isoformat()
 
+    weekday_ranges = list(_WEEKDAY_RANGE_PATTERN.finditer(text))
+    if len(weekday_ranges) > 1:
+        raise ValueError('Use one weekday range per search')
     weekdays = set()
+    if weekday_ranges:
+        match = weekday_ranges[0]
+        start_day = _WEEKDAY_FORMS[match.group(1).casefold()]
+        end_day = _WEEKDAY_FORMS[match.group(2).casefold()]
+        day = start_day
+        while True:
+            weekdays.add(day)
+            if day == end_day:
+                break
+            day = (day + 1) % 7
+        text = text[:match.start()] + ' ' + text[match.end():]
     for match in _WEEKDAY_GROUP_PATTERN.finditer(text):
         weekdays.update(_WEEKDAY_GROUP_FORMS[match.group(1).casefold()])
     text = _WEEKDAY_GROUP_PATTERN.sub(' ', text)

@@ -244,6 +244,17 @@ class ObjectSearchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'valid time'):
             interpret('Find cars after 13 pm',run_id='run-1',scope_snapshot=scope)
 
+    def test_weekday_ranges_expand_inclusive_across_week_boundaries(self):
+        scope={'run_id':'run-1','schedule':{'timezone':'Asia/Jerusalem'},
+            'view_assignments':[],'regions_by_view':{}}
+        cases=(('Find cars Monday through Friday',[0,1,2,3,4]),
+            ('Find trucks from Friday to Monday',[0,4,5,6]),
+            ('מצא משאיות בין ראשון לחמישי',[0,1,2,3,6]))
+        for query,expected in cases:
+            with self.subTest(query=query):
+                spec=interpret(query,run_id='run-1',scope_snapshot=scope)
+                self.assertEqual(spec['schedule_filter']['weekdays'],expected)
+
     def test_overnight_weekday_filter_uses_start_day_and_hebrew_query(self):
         scope = {'run_id': 'run-1', 'schedule': {'timezone': 'Asia/Jerusalem'},
             'view_assignments': [], 'regions_by_view': {}}

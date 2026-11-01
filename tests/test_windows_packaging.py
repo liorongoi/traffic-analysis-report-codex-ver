@@ -37,6 +37,9 @@ class WindowsPackagingTests(unittest.TestCase):
         self.assertIn("'upgrade-preservation-check.txt'", workflow)
         self.assertIn("if ((Get-Content -Raw $sentinel) -ne $env:GITHUB_RUN_ID)", workflow)
         self.assertIn('Reinstall changed existing workspace data.', workflow)
+        self.assertIn("$validationReport = Join-Path $install 'inference-runtime-validation.txt'", workflow)
+        self.assertIn('Offline runtime report is missing', workflow)
+        self.assertIn('Reinstall removed the offline runtime report.', workflow)
         self.assertIn('obsolete OCR cleanup fixture', workflow)
         self.assertIn('Reinstall left obsolete OCR file:', workflow)
         self.assertIn('Uninstall removed existing workspace data.', workflow)
@@ -163,6 +166,7 @@ class WindowsPackagingTests(unittest.TestCase):
             (cache / 'unused.cpython-312.pyc').write_bytes(b'cache')
             staged = STAGER['stage'](project, runtime)
             expected = ('scripts/run-inference.py', 'scripts/run-video-analysis.py',
+                'scripts/check-inference-runtime.py',
                 'model-packs/license-plate-yolox/plate_yolox_tiny_640.onnx',
                 'model-packs/license-plate-yolox/NOTICE', 'web/app.js', 'docs/07-deployment.md',
                 'requirements-inference-windows.lock.txt', 'web/data/timezone-cities.json',
